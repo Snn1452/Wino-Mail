@@ -23,7 +23,7 @@ public static class CoreUWPContainerSetup
         services.AddSingleton<INativeAppService>(provider => provider.GetRequiredService<NativeAppService>());
         services.AddSingleton<IAppMetadataService>(provider => provider.GetRequiredService<NativeAppService>());
         services.AddSingleton<IStoreManagementService, StoreManagementService>();
-        services.AddSingleton<IPreferencesService, PreferencesService>();
+        services.AddSingleton<IPreferencesService, Wino.Services.PreferencesService>();
         services.AddSingleton<IUserPresenceStateProvider, ShellUserPresenceStateProvider>();
         services.AddSingleton<INewThemeService, NewThemeService>();
         services.AddSingleton<IStatePersistanceService, StatePersistenceService>();
@@ -31,7 +31,7 @@ public static class CoreUWPContainerSetup
 
         services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddSingleton<IDialogServiceBase, DialogServiceBase>();
-        services.AddTransient<IConfigurationService, ConfigurationService>();
+        services.AddTransient<IConfigurationService, Wino.Services.ConfigurationService>();
         services.AddTransient<IFileService, FileService>();
         services.AddTransient<IStoreRatingService, StoreRatingService>();
         services.AddSingleton<IStoreUpdateService, StoreUpdateService>();
