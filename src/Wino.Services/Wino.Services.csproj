@@ -18,6 +18,7 @@
 		<PackageReference Include="HtmlAgilityPack" />
 		<PackageReference Include="Ical.Net" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+		<PackageReference Include="CommunityToolkit.Mvvm" />
 		<PackageReference Include="Microsoft.Extensions.Logging" />
 		<PackageReference Include="Sentry.Serilog" />
 		<PackageReference Include="Serilog" />
