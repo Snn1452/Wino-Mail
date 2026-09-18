@@ -26,7 +26,13 @@ public static class NotificationHostRuntime
                 return RunActivationBridge(localCachePath);
 
             if (!TryParseRequestId(args, out var requestId))
+            {
+                var currentAumid = CurrentAppIdentity.GetAppUserModelId();
+                if (currentAumid.EndsWith("!" + NotificationHostApplicationIds.Background, StringComparison.Ordinal))
+                    return BackgroundHostRuntime.Run();
+
                 throw new ArgumentException("Notification host requires a valid request ID.");
+            }
 
             ProcessRequest(localCachePath, requestId);
             return 0;
