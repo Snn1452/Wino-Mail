@@ -17,6 +17,8 @@ public sealed class ReleaseIdentity
     public bool AllowsLegacyMigration => Distribution is "Store" or "Sideload";
     public string SingleInstanceKey => $"WinoMail.{PackageFamilyName}.SingleInstance";
     public string MailHostMutexName => $"Local\\WinoMail.{PackageFamilyName}.MailHostRunning";
+    public string BackgroundHostMutexName => $"Local\\WinoMail.{PackageFamilyName}.BackgroundHost";
+    public string MailSynchronizationMutexName => $"Local\\WinoMail.{PackageFamilyName}.MailSynchronization";
     public string AlternateModeEventName => $"Local\\WinoMail.{PackageFamilyName}.ForceAlternateMode";
 
     private ReleaseIdentity(string distribution, string familyName, Dictionary<string, string> names, Dictionary<string, Guid> ids)
