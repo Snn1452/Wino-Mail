@@ -33,7 +33,12 @@ internal static class Program
             services.AddSingleton<AutoSynchronizationService>();services.AddSingleton<CalendarReminderService>();
             using var sp=services.BuildServiceProvider();SentrySdk.Init(o=>o.Dsn=sp.GetRequiredService<IApplicationConfiguration>().SentryDNS);
             sp.GetRequiredService<SynchronizationManagerInitializer>().InitializeAsync().GetAwaiter().GetResult();
-            return Task.WhenAll(sp.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),sp.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None)).GetAwaiter().GetResult()==null?0:0;
+            Task.WhenAll(
+    sp.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
+    sp.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None))
+    .GetAwaiter()
+    .GetResult();
+return 0;
         }
         catch(Exception ex){Serilog.Log.Error(ex,"Background synchronization host failed.");return 1;}
     }
