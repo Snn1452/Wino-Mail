@@ -7,7 +7,4 @@
   <assembly fullname="MimeKit">
     <type fullname="MimeKit.Cryptography.WindowsSecureMimeContext" preserve="all" />
   </assembly>
-  <assembly fullname="Wino.Core.Domain">
-    <type fullname="Wino.Core.Domain.Entities.Mail.MailCopy" preserve="all" />
-  </assembly>
 </linker>
