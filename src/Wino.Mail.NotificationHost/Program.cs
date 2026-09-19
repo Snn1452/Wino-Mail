@@ -2,6 +2,7 @@ using System;
 using Windows.ApplicationModel;
 using Wino.NotificationHost;
 using Wino.NotificationHost.Contracts;
+using Wino.Mail.NotificationHost;
 
 internal static class Program
 {
