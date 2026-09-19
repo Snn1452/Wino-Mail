@@ -69,6 +69,8 @@ jobs:
 
       - name: Publish and run SQLite Native AOT smoke harness
         shell: pwsh
+        env:
+          WINO_MAGIKA_DIAGNOSTICS: '1'
         run: |
           dotnet publish tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj `
             --configuration Release `
