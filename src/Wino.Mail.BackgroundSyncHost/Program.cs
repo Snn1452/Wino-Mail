@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel;
@@ -99,6 +100,13 @@ internal static class Program
             .InitializeAsync()
             .ConfigureAwait(false);
 
+        var accountService = provider.GetRequiredService<IAccountService>();
+        if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
+        {
+            Serilog.Log.Information("Background synchronization host is exiting because no accounts are configured.");
+            return 0;
+        }
+
         await provider
             .GetRequiredService<ITranslationService>()
             .InitializeAsync()
@@ -117,8 +125,9 @@ internal static class Program
         var reminderTask = provider
             .GetRequiredService<CalendarReminderService>()
             .RunAsync(hostCts.Token);
-        var closeBehaviorMonitorTask = MonitorCloseBehaviorAsync(
+        var lifetimeMonitorTask = MonitorHostLifetimeAsync(
             preferences,
+            accountService,
             hostCts.Token);
 
         try
@@ -126,7 +135,7 @@ internal static class Program
             await Task.WhenAll(
                     synchronizationTask,
                     reminderTask,
-                    closeBehaviorMonitorTask)
+                    lifetimeMonitorTask)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (hostCts.IsCancellationRequested)
@@ -137,21 +146,28 @@ internal static class Program
         return 0;
     }
 
-    private static async Task MonitorCloseBehaviorAsync(
+    private static async Task MonitorHostLifetimeAsync(
         IPreferencesService preferences,
+        IAccountService accountService,
         CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
 
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
-                continue;
+            if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
+            {
+                Serilog.Log.Information(
+                    "Background synchronization host is stopping because AppCloseBehavior changed to {AppCloseBehavior}.",
+                    preferences.AppCloseBehavior);
+                return;
+            }
 
-            Serilog.Log.Information(
-                "Background synchronization host is stopping because AppCloseBehavior changed to {AppCloseBehavior}.",
-                preferences.AppCloseBehavior);
-            return;
+            if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
+            {
+                Serilog.Log.Information("Background synchronization host is stopping because no accounts remain.");
+                return;
+            }
         }
     }
 
