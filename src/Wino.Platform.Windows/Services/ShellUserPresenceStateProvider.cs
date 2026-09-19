@@ -4,7 +4,7 @@ using Wino.Core.Domain.Interfaces;
 
 namespace Wino.Platform.Windows.Services;
 
-public sealed partial class ShellUserPresenceStateProvider : IUserPresenceStateProvider
+public sealed class ShellUserPresenceStateProvider : IUserPresenceStateProvider
 {
     private enum UserNotificationState
     {
