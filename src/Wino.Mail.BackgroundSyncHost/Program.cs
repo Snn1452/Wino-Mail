@@ -7,6 +7,7 @@ using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
 using Wino.Core.Domain;
+using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Services;
 using Wino.NotificationHost.Contracts;
@@ -84,9 +85,12 @@ internal static class Program
             return 0;
         }
 
-        if (provider.GetRequiredService<IPreferencesService>().AppCloseBehavior == Wino.Core.Domain.Enums.AppCloseBehavior.Terminate)
+        var preferences = provider.GetRequiredService<IPreferencesService>();
+        if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
         {
-            Serilog.Log.Information("Background synchronization host is disabled because AppCloseBehavior is Terminate.");
+            Serilog.Log.Information(
+                "Background synchronization host is disabled because AppCloseBehavior is {AppCloseBehavior}.",
+                preferences.AppCloseBehavior);
             return 0;
         }
 
@@ -105,13 +109,55 @@ internal static class Program
             .InitializeAsync()
             .ConfigureAwait(false);
 
-        await Task.WhenAll(
-                provider.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
-                provider.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None))
-            .ConfigureAwait(false);
+        using var hostCts = new CancellationTokenSource();
+
+        var synchronizationTask = provider
+            .GetRequiredService<AutoSynchronizationService>()
+            .RunAsync(hostCts.Token);
+        var reminderTask = provider
+            .GetRequiredService<CalendarReminderService>()
+            .RunAsync(hostCts.Token);
+        var closeBehaviorMonitorTask = MonitorCloseBehaviorAsync(
+            preferences,
+            hostCts.Token);
+
+        try
+        {
+            await Task.WhenAll(
+                    synchronizationTask,
+                    reminderTask,
+                    closeBehaviorMonitorTask)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (hostCts.IsCancellationRequested)
+        {
+            Serilog.Log.Information("Background synchronization host is stopping.");
+        }
 
         return 0;
     }
+
+    private static async Task MonitorCloseBehaviorAsync(
+        IPreferencesService preferences,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
+                continue;
+
+            Serilog.Log.Information(
+                "Background synchronization host is stopping because AppCloseBehavior changed to {AppCloseBehavior}.",
+                preferences.AppCloseBehavior);
+            return;
+        }
+    }
+
+    private static bool IsBackgroundSyncEnabled(AppCloseBehavior behavior)
+        => behavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
+            or AppCloseBehavior.RunInBackgroundWithoutTrayIcon;
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
     {
