@@ -5,10 +5,19 @@ using Wino.Core.Domain.Interfaces;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
-internal sealed class BackgroundStatePersistenceService : IStatePersistanceService
+internal sealed partial class BackgroundStatePersistenceService : IStatePersistanceService
 {
-    public event EventHandler<string>? StatePropertyChanged;
-    public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler<string>? StatePropertyChanged
+    {
+        add { }
+        remove { }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged
+    {
+        add { }
+        remove { }
+    }
     public bool IsReadingMail { get; set; }
     public string CoreWindowTitle { get; set; } = string.Empty;
     public string AppModeTitle { get; set; } = "Wino Mail";
