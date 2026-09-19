@@ -90,37 +90,6 @@
 			GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="Wino.Mail.AI.Abstractions" Condition="'$(WinoLightweightHost)' != 'true'" />
-	</ItemGroup>
-	<ItemGroup Condition="'$(WinoLightweightHost)' == 'true'">
-		<Compile Remove="Models\Intelligence\DailyBriefingModels.cs" />
-		<Compile Remove="Models\Intelligence\IntelligenceMessageCandidate.cs" />
-		<Compile Remove="Models\Intelligence\MailIntelligenceMetadata.cs" />
-		<Compile Remove="Models\Intelligence\RemoteMessageIdentity.cs" />
-		<Compile Remove="Models\Intelligence\WinoAccountIntelligenceSnapshot.cs" />
-		<Compile Remove="Models\Intelligence\WinoIntelligenceEntitlementSnapshot.cs" />
-		<Compile Remove="Models\Intelligence\WinoIntelligenceFeatureModels.cs" />
-		<Compile Remove="Models\Intelligence\WinoIntelligenceModels.cs" />
-		<Compile Remove="Entities\Intelligence\**\*.cs" />
-		<Compile Remove="Interfaces\IAiActionOptionsService.cs" />
-		<Compile Remove="Interfaces\IIntelligenceBackend.cs" />
-		<Compile Remove="Interfaces\IIntelligenceCoverageHandoff.cs" />
-		<Compile Remove="Interfaces\IIntelligenceMessageContextResolver.cs" />
-		<Compile Remove="Interfaces\IIntelligenceSearchEligibilityService.cs" />
-		<Compile Remove="Interfaces\IIntelligenceSearchService.cs" />
-		<Compile Remove="Interfaces\ILocalIntelligenceSearchEngine.cs" />
-		<Compile Remove="Interfaces\ILocalIntelligenceService.cs" />
-		<Compile Remove="Interfaces\ILocalIntelligenceStore.cs" />
-		<Compile Remove="Interfaces\ISemanticIndexCoordinator.cs" />
-		<Compile Remove="Interfaces\ISemanticIndexJobRegistry.cs" />
-		<Compile Remove="Interfaces\IWinoAccountIntelligenceSnapshotService.cs" />
-		<Compile Remove="Interfaces\IWinoAccountProfileService.cs" />
-		<Compile Remove="Interfaces\IWinoAccountApiClient.cs" />
-		<Compile Remove="Models\Accounts\WinoPurchaseRefreshResult.cs" />
-		<Compile Remove="Interfaces\IWinoIntelligenceCoordinator.cs" />
-		<Compile Remove="Interfaces\IWinoIntelligenceEntitlementService.cs" />
-		<Compile Remove="Interfaces\IWinoBillingService.cs" />
-		<Compile Remove="Interfaces\IWinoPendingCheckoutStore.cs" />
-		<Compile Remove="Interfaces\IWinoPurchaseReconciliationService.cs" />
+		<PackageReference Include="Wino.Mail.AI.Abstractions" />
 	</ItemGroup>
 </Project>
