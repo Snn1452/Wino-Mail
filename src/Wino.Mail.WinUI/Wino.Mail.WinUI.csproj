@@ -35,7 +35,7 @@
       Ordinary Release analyzer builds remain unsuppressed and continue to reject
       first-party IL warnings.
     -->
-    <NoWarn Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">$(NoWarn);IL2026;IL2070;IL2072;IL2075;IL2077;IL2080;IL2081;IL2087;IL3053</NoWarn>
+    <NoWarn Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">$(NoWarn);IL2026;IL2070;IL2072;IL2075;IL2077;IL2080;IL2081;IL2087;IL3050;IL3053</NoWarn>
     <Nullable>enable</Nullable>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<!-- Single instancing -->
