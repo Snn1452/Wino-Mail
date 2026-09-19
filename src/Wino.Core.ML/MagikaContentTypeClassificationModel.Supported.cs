@@ -100,9 +100,14 @@ public sealed class MagikaContentTypeClassificationModel : IContentTypeClassific
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
-            return new ContentTypeClassificationResult(ContentTypeClassificationStatus.Failed);
+            var diagnostics = Environment.GetEnvironmentVariable("WINO_MAGIKA_DIAGNOSTICS");
+            return new ContentTypeClassificationResult(
+                ContentTypeClassificationStatus.Failed,
+                Description: string.Equals(diagnostics, "1", StringComparison.Ordinal)
+                    ? ex.ToString()
+                    : null);
         }
     }
 
