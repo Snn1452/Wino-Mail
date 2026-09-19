@@ -628,13 +628,9 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
-            if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
-                return;
-
             PrepareForClose();
 
-            // PrepareForClose removes this handler and permits the real close. The managed
-            // app and tray keep running, but this HWND and its complete XAML tree do not.
+            // The background host owns synchronization now, so WinUI can terminate completely.
             Close();
         }
         finally
