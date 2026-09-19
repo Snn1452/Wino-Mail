@@ -558,6 +558,14 @@
   </Target>
 
   <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;OutputPath=$(BackgroundSyncHostOutput);AssemblyName=Wino.Mail.BackgroundSyncHost" />
+    <!--
+      Do not override OutputPath or AssemblyName here. MSBuild propagates global properties
+      to project references, so doing so corrupts every dependency's output assembly name/path.
+      The host already has a deterministic per-configuration/platform output directory, exposed
+      above as BackgroundSyncHostOutput for packaging.
+    -->
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
   </Target>
 </Project>
