@@ -8,6 +8,7 @@ using Sentry;
 using Windows.ApplicationModel;
 using Wino.Core;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Services;
 using Wino.NotificationHost.Contracts;
 using Wino.Platform.Windows.Services;
 using Wino.Services;
