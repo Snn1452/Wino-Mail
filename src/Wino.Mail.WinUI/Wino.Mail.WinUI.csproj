@@ -270,6 +270,7 @@
     <Content Include="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.exe" Link="Wino.Calendar.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.exe" Link="Wino.People.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.exe" Link="Wino.Tasks.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe" Link="Wino.Mail.BackgroundSyncHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(MailNotificationHostOutput)Wino.NotificationHost.dll" Link="Wino.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.dll" Link="Wino.Mail.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.deps.json" Link="Wino.Mail.NotificationHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
@@ -349,6 +350,11 @@
     <ProjectReference Include="..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <!-- Build the headless sync host as part of the WinUI build, without inheriting the app's Native AOT/MSIX properties. -->
+    <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;WindowsAppSDKSelfContained;UseNativeAot;GenerateAppxPackageOnBuild;EnableMsixTooling" />
   </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Ical.Net" />
