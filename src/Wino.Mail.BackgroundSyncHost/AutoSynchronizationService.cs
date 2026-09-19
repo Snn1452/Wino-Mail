@@ -23,13 +23,18 @@ internal sealed class AutoSynchronizationService(
     {
         using var lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
 
+        var mailLoop = RunMailLoopAsync(lifetimeCts.Token);
+        var calendarLoop = RunCalendarLoopAsync(lifetimeCts.Token);
+        var monitor = MonitorBackgroundModeAsync(lifetimeCts.Token);
+
         try
         {
-            await Task.WhenAll(
-                    RunMailLoopAsync(lifetimeCts.Token),
-                    RunCalendarLoopAsync(lifetimeCts.Token),
-                    MonitorBackgroundModeAsync(lifetimeCts.Token))
-                .ConfigureAwait(false);
+            var completed = await Task.WhenAny(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
+
+            if (completed == monitor)
+                lifetimeCts.Cancel();
+
+            await Task.WhenAll(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
         {
