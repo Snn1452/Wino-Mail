@@ -11,7 +11,6 @@
     <type fullname="Wino.Core.Domain.Entities.Mail.MailAccountAlias" preserve="all" />
     <type fullname="Wino.Core.Domain.Entities.Mail.MailCategory" preserve="all" />
     <type fullname="Wino.Core.Domain.Entities.Mail.MailCategoryAssignment" preserve="all" />
-    <type fullname="Wino.Core.Domain.Entities.Mail.MailCopy" preserve="all" />
     <type fullname="Wino.Core.Domain.Entities.Mail.MailInvitationCalendarMapping" preserve="all" />
     <type fullname="Wino.Core.Domain.Entities.Mail.MailItemFolder" preserve="all" />
     <type fullname="Wino.Core.Domain.Entities.Mail.MergedInbox" preserve="all" />
