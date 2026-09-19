@@ -354,11 +354,6 @@
     <ProjectReference Include="..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <!-- Build the headless sync host as part of the WinUI build, without inheriting the app's Native AOT/MSIX properties. -->
-    <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-                      ReferenceOutputAssembly="false"
-                      Private="false"
-                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;WindowsAppSDKSelfContained;UseNativeAot;GenerateAppxPackageOnBuild;EnableMsixTooling" />
   </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Ical.Net" />
@@ -555,6 +550,12 @@
 
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
+  </Target>
+
+  <Target Name="RestoreBackgroundSyncHost" BeforeTargets="Restore">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+            Targets="Restore"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
 
   <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
