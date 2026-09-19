@@ -80,8 +80,6 @@ public partial class App : WinoApplication,
     private bool _appHostInfrastructureInitialized;
     private int _initialNotificationActivationHandled;
     private int _initialShareActivationHandled;
-    private CancellationTokenSource? _autoSynchronizationLoopCts;
-    private CancellationTokenSource? _calendarAutoSynchronizationLoopCts;
     private readonly SemaphoreSlim _activationInfrastructureSemaphore = new(1, 1);
     private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);
     private readonly AppNotificationHandler _notificationHandler;
@@ -782,11 +780,6 @@ public partial class App : WinoApplication,
 
             EnsureWindowManagerConfigured();
             EnsurePreferenceChangedSubscription();
-
-            if (_hasConfiguredAccounts)
-            {
-                RestartAutoSynchronizationLoops();
-            }
 
             _appHostInfrastructureInitialized = true;
         }
@@ -1915,7 +1908,6 @@ public partial class App : WinoApplication,
 
             await SynchronizeCreatedAccountAsync(message.Account);
 
-            RestartAutoSynchronizationLoops();
         });
     }
 
