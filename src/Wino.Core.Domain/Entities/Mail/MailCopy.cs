@@ -210,7 +210,9 @@ public class MailCopy
     /// Passive intelligence artifacts loaded from the separate local intelligence store.
     /// </summary>
     [Ignore]
-#if !WINO_LIGHTWEIGHT_HOST
+#if WINO_LIGHTWEIGHT_HOST
+    public object? IntelligenceMetadata { get; set; }
+#else
     public MailIntelligenceMetadata IntelligenceMetadata { get; set; }
 #endif
 
