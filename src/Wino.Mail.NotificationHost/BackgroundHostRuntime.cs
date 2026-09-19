@@ -1,3 +1,9 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Wino.Core.Domain.Entities.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel;
 using Windows.Storage;
