@@ -17,8 +17,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.NotificationHost\Wino.NotificationHost.csproj" />
-    <ProjectReference Include="..\Wino.Core\Wino.Core.csproj" />
-    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
-    <ProjectReference Include="..\Wino.Authentication\Wino.Authentication.csproj" />
+    <ProjectReference Include="..\Wino.Core\Wino.Core.csproj" AdditionalProperties="WinoLightweightHost=true" />
+    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" AdditionalProperties="WinoLightweightHost=true" />
+    <ProjectReference Include="..\Wino.Authentication\Wino.Authentication.csproj" AdditionalProperties="WinoLightweightHost=true" />
   </ItemGroup>
 </Project>
