@@ -84,6 +84,12 @@ internal static class Program
             return 0;
         }
 
+        if (provider.GetRequiredService<IPreferencesService>().AppCloseBehavior == Wino.Core.Domain.Enums.AppCloseBehavior.Terminate)
+        {
+            Serilog.Log.Information("Background synchronization host is disabled because AppCloseBehavior is Terminate.");
+            return 0;
+        }
+
         await provider
             .GetRequiredService<IDatabaseService>()
             .InitializeAsync()
