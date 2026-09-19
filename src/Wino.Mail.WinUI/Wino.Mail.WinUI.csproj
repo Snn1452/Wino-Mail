@@ -272,10 +272,25 @@
     <Content Include="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.exe" Link="Wino.Calendar.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.exe" Link="Wino.People.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.exe" Link="Wino.Tasks.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(BackgroundSyncHostOutput)**\*"
+    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe"
+             Link="Wino.Mail.BackgroundSyncHost.exe"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.dll"
+             Link="Wino.Mail.BackgroundSyncHost.dll"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest"
-             Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
+             Condition="'$(WinoIsReleaseBuild)' != 'true'" />
+    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.deps.json"
+             Link="Wino.Mail.BackgroundSyncHost.deps.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Condition="'$(WinoIsReleaseBuild)' != 'true'" />
+    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
+             Link="Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Condition="'$(WinoIsReleaseBuild)' != 'true'" />
 
 
 
