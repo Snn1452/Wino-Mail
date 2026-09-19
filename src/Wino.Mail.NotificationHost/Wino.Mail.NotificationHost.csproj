@@ -13,6 +13,7 @@
     <TrimMode>full</TrimMode>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.NotificationHost\Wino.NotificationHost.csproj" />
