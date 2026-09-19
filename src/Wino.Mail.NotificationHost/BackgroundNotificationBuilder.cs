@@ -11,6 +11,7 @@ using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.NotificationHost.Contracts;
+using Wino.NotificationHost;
 
 namespace Wino.Mail.NotificationHost;
 
