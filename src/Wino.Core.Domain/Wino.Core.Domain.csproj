@@ -115,6 +115,8 @@
 		<Compile Remove="Interfaces\ISemanticIndexJobRegistry.cs" />
 		<Compile Remove="Interfaces\IWinoAccountIntelligenceSnapshotService.cs" />
 		<Compile Remove="Interfaces\IWinoAccountProfileService.cs" />
+		<Compile Remove="Interfaces\IWinoAccountApiClient.cs" />
+		<Compile Remove="Models\Accounts\WinoPurchaseRefreshResult.cs" />
 		<Compile Remove="Interfaces\IWinoIntelligenceCoordinator.cs" />
 		<Compile Remove="Interfaces\IWinoIntelligenceEntitlementService.cs" />
 		<Compile Remove="Interfaces\IWinoBillingService.cs" />
