@@ -31,7 +31,7 @@ public static class CoreUWPContainerSetup
 
         services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddSingleton<IDialogServiceBase, DialogServiceBase>();
-        services.AddTransient<IConfigurationService, Wino.Services.ConfigurationService>();
+        services.AddTransient<IConfigurationService, ConfigurationService>();
         services.AddTransient<IFileService, FileService>();
         services.AddTransient<IStoreRatingService, StoreRatingService>();
         services.AddSingleton<IStoreUpdateService, StoreUpdateService>();
