@@ -425,8 +425,8 @@ internal sealed class HeadlessNotificationBuilder(
         return string.Format(Translator.CalendarReminder_StartedMinutesAgo, minutesSinceStart);
     }
 
-    private static string GetNotificationIconUri(string name)
-        => $"ms-appx:///Assets/NotificationIcons/{name}.png";
+    private static Uri GetNotificationIconUri(string name)
+        => new($"ms-appx:///Assets/NotificationIcons/{name}.png");
 
     private static void UpdateBadge(string applicationId, int? count)
     {
