@@ -123,20 +123,38 @@ public partial class App : WinoApplication,
         if (_isExiting || !isBackgroundBehavior)
             return false;
 
-        var createdLifetimeWindow = false;
+        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            DisposeTrayIcon();
+            ReleaseBackgroundLifetimeWindow();
+
+            try
+            {
+                var launcher = Services.GetRequiredService<PackagedAppEntryLauncher>();
+                if (!launcher.LaunchMailNotificationHostAsync().GetAwaiter().GetResult())
+                {
+                    Log.Error("Could not start the lightweight mail background host. Shell close was canceled.");
+                    return false;
+                }
+
+                LogActivation("Background shell close prepared without a system tray icon. WinUI will exit.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to start the lightweight mail background host. Shell close was canceled.");
+                return false;
+            }
+        }
 
         if (_backgroundLifetimeWindow == null)
         {
             try
             {
-                // Closing the last WinUI Window ends the XAML application loop. Keep a contentless,
-                // never-activated window alive so background services can continue without retaining
-                // ShellWindow or any part of its XAML tree.
                 var lifetimeWindow = new Window();
                 lifetimeWindow.AppWindow.IsShownInSwitchers = false;
                 lifetimeWindow.Closed += BackgroundLifetimeWindowClosed;
                 _backgroundLifetimeWindow = lifetimeWindow;
-                createdLifetimeWindow = true;
             }
             catch (Exception ex)
             {
@@ -144,13 +162,6 @@ public partial class App : WinoApplication,
                     "Failed to create the background lifetime window. Shell close was canceled to preserve the running application.");
                 return false;
             }
-        }
-
-        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
-        {
-            DisposeTrayIcon();
-            LogActivation("Background shell close prepared without a system tray icon.");
-            return true;
         }
 
         EnsureTrayIconCreated();
@@ -161,8 +172,7 @@ public partial class App : WinoApplication,
             return true;
         }
 
-        if (createdLifetimeWindow)
-            ReleaseBackgroundLifetimeWindow();
+        ReleaseBackgroundLifetimeWindow();
 
         Log.Error(
             "System tray mode is selected, but the tray icon could not be created. Shell close was canceled to avoid leaving the application inaccessible.");
