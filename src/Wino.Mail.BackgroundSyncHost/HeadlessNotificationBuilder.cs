@@ -207,7 +207,7 @@ internal sealed class HeadlessNotificationBuilder(
             var builder = new AppNotificationBuilder()
                 .SetScenario(AppNotificationScenario.Reminder)
                 .AddText(calendarItem.Title)
-                .AddText($\"{GetCalendarReminderContext(localStart, DateTime.Now)} - {localStart:g}\");
+                .AddText($"{GetCalendarReminderContext(localStart, DateTime.Now)} - {localStart:g}");
 
             if (!string.IsNullOrWhiteSpace(calendarItem.Location))
                 builder.AddText(calendarItem.Location);
@@ -272,7 +272,7 @@ internal sealed class HeadlessNotificationBuilder(
             await ShowAsync(
                     NotificationHostApplication.Calendar,
                     builder,
-                    $\"calendar-reminder-{calendarItem.Id:N}-{duration}\",
+                    $"calendar-reminder-{calendarItem.Id:N}-{duration}",
                     accountPreferences)
                 .ConfigureAwait(false);
         }
@@ -426,12 +426,12 @@ internal sealed class HeadlessNotificationBuilder(
     }
 
     private static string GetNotificationIconUri(string name)
-        => $\"ms-appx:///Assets/NotificationIcons/{name}.png\";
+        => $"ms-appx:///Assets/NotificationIcons/{name}.png";
 
     private static void UpdateBadge(string applicationId, int? count)
     {
         var updater = BadgeUpdateManager.CreateBadgeUpdaterForApplication(
-            $\"{Package.Current.Id.FamilyName}!{applicationId}\");
+            $"{Package.Current.Id.FamilyName}!{applicationId}");
 
         if (!count.HasValue || count.Value <= 0)
         {
@@ -440,7 +440,7 @@ internal sealed class HeadlessNotificationBuilder(
         }
 
         var document = BadgeUpdateManager.GetTemplateContent(BadgeTemplateType.BadgeNumber);
-        if (document.SelectSingleNode(\"/badge\") is not XmlElement badgeElement)
+        if (document.SelectSingleNode("/badge") is not XmlElement badgeElement)
         {
             updater.Clear();
             return;
