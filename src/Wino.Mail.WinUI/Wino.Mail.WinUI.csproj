@@ -578,5 +578,5 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;PublishDir=$(BackgroundSyncHostOutput)" />
-  </Target>t>
+  </Target>
 </Project>
