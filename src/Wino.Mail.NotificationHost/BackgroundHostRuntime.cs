@@ -174,6 +174,7 @@ internal static class BackgroundHostRuntime
         services.RegisterCoreServices();
         services.RegisterSharedServices();
 
+        services.AddSingleton<IConfigurationService, BackgroundConfigurationService>();
         services.AddSingleton<INativeAppService, BackgroundNativeAppService>();
         services.AddSingleton<IUserPresenceStateProvider, BackgroundPresenceStateProvider>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
