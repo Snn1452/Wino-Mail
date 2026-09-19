@@ -2,7 +2,7 @@ using Windows.Storage;
 
 namespace Wino.NotificationHost;
 
-internal static class NotificationHostLogger
+public static class NotificationHostLogger
 {
     private static readonly object SyncRoot = new();
 
