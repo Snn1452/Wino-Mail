@@ -83,6 +83,7 @@ public static class ServicesContainerSetup
         services.AddSingleton<IUpdateManager, UpdateManager>();
     }
 
+#if !WINO_LIGHTWEIGHT_HOST
     public static void RegisterIntelligenceServices(this IServiceCollection services)
     {
         services.AddSingleton<IWinoAccountSessionService>(provider =>
@@ -105,5 +106,6 @@ public static class ServicesContainerSetup
             new PemContentEnvelopeEncryptor(EmbeddedIntelligencePublicKeyProvider.Load()));
         services.AddTransient<IWinoAccountDataSyncService, WinoAccountDataSyncService>();
     }
+#endif
 
 }
