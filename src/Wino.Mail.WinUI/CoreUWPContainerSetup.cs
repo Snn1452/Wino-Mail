@@ -5,6 +5,7 @@ using Wino.Core.ViewModels;
 using Wino.Core.WinUI.Services;
 using Wino.Mail.WinUI.Interfaces;
 using Wino.Mail.WinUI.Services;
+using Wino.Platform.Windows.Services;
 using Wino.Services;
 
 namespace Wino.Mail.WinUI;
