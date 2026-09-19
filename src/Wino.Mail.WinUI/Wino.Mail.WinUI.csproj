@@ -42,6 +42,9 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
 	<NotificationHostBuildSuffix>bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</NotificationHostBuildSuffix>
 	<BackgroundSyncHostBuildSuffix>bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</BackgroundSyncHostBuildSuffix>
+	<BackgroundSyncHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\BackgroundSyncHost'))</BackgroundSyncHostPublishRoot>
+	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' == 'true'">$(BackgroundSyncHostPublishRoot)\</BackgroundSyncHostOutput>
+	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)</BackgroundSyncHostOutput>
 	<BackgroundSyncHostOutput>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)'))</BackgroundSyncHostOutput>
 	<NotificationHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\NotificationHosts'))</NotificationHostPublishRoot>
 	<MailNotificationHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\$(NotificationHostBuildSuffix)</MailNotificationHostOutput>
@@ -271,9 +274,9 @@
     <Content Include="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.exe" Link="Wino.People.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.exe" Link="Wino.Tasks.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe" Link="Wino.Mail.BackgroundSyncHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.dll" Link="Wino.Mail.BackgroundSyncHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.deps.json" Link="Wino.Mail.BackgroundSyncHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json" Link="Wino.Mail.BackgroundSyncHost.runtimeconfig.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+
+
+
     <Content Include="$(MailNotificationHostOutput)Wino.NotificationHost.dll" Link="Wino.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.dll" Link="Wino.Mail.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.deps.json" Link="Wino.Mail.NotificationHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
@@ -563,14 +566,9 @@
   </Target>
 
   <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
-    <!--
-      Do not override OutputPath or AssemblyName here. MSBuild propagates global properties
-      to project references, so doing so corrupts every dependency's output assembly name/path.
-      The host already has a deterministic per-configuration/platform output directory, exposed
-      above as BackgroundSyncHostOutput for packaging.
-    -->
+    <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
+            Targets="$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true') ? 'Publish' : 'Build')"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true'));PublishSingleFile=$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true'));PublishTrimmed=false;PublishAot=false;PublishDir=$(BackgroundSyncHostOutput)" />
   </Target>
 </Project>
