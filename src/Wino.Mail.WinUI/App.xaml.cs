@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -70,7 +69,6 @@ public partial class App : WinoApplication,
     IRecipient<GetStartedFromWelcomeRequested>,
     IRecipient<WelcomeImportCompletedMessage>
 {
-    private const int InboxSyncsPerFullSync = 20;
     private const string ToggleDefaultModeLaunchArgument = "--mode=toggle-default";
     private ISynchronizationManager? _synchronizationManager;
     private IPreferencesService? _preferencesService;
@@ -84,10 +82,8 @@ public partial class App : WinoApplication,
     private int _initialShareActivationHandled;
     private CancellationTokenSource? _autoSynchronizationLoopCts;
     private CancellationTokenSource? _calendarAutoSynchronizationLoopCts;
-    private readonly SemaphoreSlim _autoSynchronizationSemaphore = new(1, 1);
     private readonly SemaphoreSlim _activationInfrastructureSemaphore = new(1, 1);
     private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);
-    private readonly ConcurrentDictionary<Guid, int> _inboxSyncCounters = [];
     private readonly AppNotificationHandler _notificationHandler;
     private readonly AppActivationHandler _activationHandler;
     private readonly DispatcherQueue? _applicationDispatcherQueue;
@@ -107,11 +103,17 @@ public partial class App : WinoApplication,
 
         LogActivation($"Shell window close requested. AppCloseBehavior: {closeBehavior}.");
 
+        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            DisposeTrayIcon();
+            ExitApplication();
+            return true;
+        }
+
         if (closeBehavior != AppCloseBehavior.Terminate)
             return false;
 
         ExitApplication();
-
         return true;
     }
 
@@ -1880,7 +1882,7 @@ public partial class App : WinoApplication,
         // Only transition when the account was created from the WelcomeWindow.
         if (windowManager.GetWindow(WinoWindowKind.Welcome) == null)
         {
-            _ = SynchronizeCreatedAccountAndStartAutoSynchronizationAsync(message.Account);
+            _ = SynchronizeCreatedAccountAsync(message.Account);
             return;
         }
 
@@ -1916,14 +1918,7 @@ public partial class App : WinoApplication,
         });
     }
 
-    private async Task SynchronizeCreatedAccountAndStartAutoSynchronizationAsync(
-        Wino.Core.Domain.Entities.Shared.MailAccount account)
-    {
-        await SynchronizeCreatedAccountAsync(account).ConfigureAwait(false);
-        EnsureAutoSynchronizationLoops();
-    }
-
-    private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
+private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
     {
         if (account.IsMailAccessGranted)
         {
@@ -1962,16 +1957,7 @@ public partial class App : WinoApplication,
         }
     }
 
-    private void EnsureAutoSynchronizationLoops()
-    {
-        if (_autoSynchronizationLoopCts == null)
-            RestartAutoSynchronizationLoop();
-
-        if (_calendarAutoSynchronizationLoopCts == null)
-            RestartCalendarAutoSynchronizationLoop();
-    }
-
-    public void Receive(WelcomeImportCompletedMessage message)
+public void Receive(WelcomeImportCompletedMessage message)
     {
         _hasConfiguredAccounts = message.ImportedMailboxCount > 0;
         _ = _companionIntegration?.SetReadinessAsync(_hasConfiguredAccounts
@@ -2041,7 +2027,6 @@ public partial class App : WinoApplication,
             return;
 
         Services.GetRequiredService<WelcomeWizardContext>().Reset();
-        StopAutoSynchronizationLoops();
         UpdateTrayIconState(allowCreation: true);
 
         // Keep an active XAML window throughout the shell-to-welcome handoff. Closing
@@ -2216,85 +2201,13 @@ public partial class App : WinoApplication,
             return;
         }
 
-        if (propertyName == nameof(IPreferencesService.EmailSyncIntervalMinutes))
-        {
-            RestartAutoSynchronizationLoop();
-            return;
-        }
-
-        if (propertyName == nameof(IPreferencesService.CalendarSyncIntervalMinutes))
-        {
-            RestartCalendarAutoSynchronizationLoop();
-            return;
-        }
-
         if (propertyName is nameof(IPreferencesService.AppCloseBehavior) or nameof(IPreferencesService.IsSystemTrayIconEnabled))
         {
             UpdateTrayIconState(allowCreation: true);
         }
     }
 
-    private void RestartAutoSynchronizationLoop()
-    {
-        if (_preferencesService == null)
-            return;
-
-        StopAutoSynchronizationLoop();
-
-        int intervalMinutes = Math.Max(1, _preferencesService.EmailSyncIntervalMinutes);
-        _autoSynchronizationLoopCts = new CancellationTokenSource();
-
-        _ = RunAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), _autoSynchronizationLoopCts.Token);
-        LogActivation($"Automatic sync loop started. Interval: {intervalMinutes} minute(s).");
-    }
-
-    private void RestartCalendarAutoSynchronizationLoop()
-    {
-        if (_preferencesService == null)
-            return;
-
-        StopCalendarAutoSynchronizationLoop();
-
-        int intervalMinutes = Math.Max(1, _preferencesService.CalendarSyncIntervalMinutes);
-        _calendarAutoSynchronizationLoopCts = new CancellationTokenSource();
-
-        _ = RunCalendarAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), _calendarAutoSynchronizationLoopCts.Token);
-        LogActivation($"Automatic calendar sync loop started. Interval: {intervalMinutes} minute(s).");
-    }
-
-    private void RestartAutoSynchronizationLoops()
-    {
-        RestartAutoSynchronizationLoop();
-        RestartCalendarAutoSynchronizationLoop();
-    }
-
-    private void StopAutoSynchronizationLoop()
-    {
-        if (_autoSynchronizationLoopCts == null)
-            return;
-
-        _autoSynchronizationLoopCts.Cancel();
-        _autoSynchronizationLoopCts.Dispose();
-        _autoSynchronizationLoopCts = null;
-    }
-
-    private void StopCalendarAutoSynchronizationLoop()
-    {
-        if (_calendarAutoSynchronizationLoopCts == null)
-            return;
-
-        _calendarAutoSynchronizationLoopCts.Cancel();
-        _calendarAutoSynchronizationLoopCts.Dispose();
-        _calendarAutoSynchronizationLoopCts = null;
-    }
-
-    private void StopAutoSynchronizationLoops()
-    {
-        StopAutoSynchronizationLoop();
-        StopCalendarAutoSynchronizationLoop();
-    }
-
-    private async Task LoadInitialWinoAccountAsync()
+private async Task LoadInitialWinoAccountAsync()
     {
         var winoAccountProfileService = Services.GetRequiredService<IWinoAccountProfileService>();
         var winoAccount = await winoAccountProfileService.GetActiveAccountAsync();
@@ -2305,203 +2218,7 @@ public partial class App : WinoApplication,
         }
     }
 
-    private async Task RunAutoSynchronizationLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await ExecuteAutoSynchronizationAsync(cancellationToken);
-
-            using var timer = new PeriodicTimer(interval);
-
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await ExecuteAutoSynchronizationAsync(cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // no-op
-        }
-        catch (Exception ex)
-        {
-            LogActivation($"Automatic sync loop failed: {ex.Message}");
-        }
-    }
-
-    private async Task RunCalendarAutoSynchronizationLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await ExecuteCalendarAutoSynchronizationAsync(cancellationToken);
-
-            using var timer = new PeriodicTimer(interval);
-
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await ExecuteCalendarAutoSynchronizationAsync(cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // no-op
-        }
-        catch (Exception ex)
-        {
-            LogActivation($"Automatic calendar sync loop failed: {ex.Message}");
-        }
-    }
-
-    private async Task ExecuteAutoSynchronizationAsync(CancellationToken cancellationToken)
-    {
-        if (_synchronizationManager == null || _accountService == null)
-            return;
-
-        bool lockTaken = false;
-
-        try
-        {
-            lockTaken = await _autoSynchronizationSemaphore.WaitAsync(0, cancellationToken);
-            if (!lockTaken)
-                return;
-
-            var accounts = await _accountService.GetAccountsAsync();
-            var currentAccountIds = accounts.Select(a => a.Id).ToHashSet();
-            foreach (var staleAccountId in _inboxSyncCounters.Keys.Where(a => !currentAccountIds.Contains(a)).ToList())
-            {
-                _inboxSyncCounters.TryRemove(staleAccountId, out _);
-            }
-
-            var synchronizationTasks = accounts
-                .Select(account => ExecuteAutoSynchronizationForAccountAsync(account, cancellationToken))
-                .ToList();
-
-            await Task.WhenAll(synchronizationTasks);
-        }
-        finally
-        {
-            if (lockTaken)
-            {
-                _autoSynchronizationSemaphore.Release();
-            }
-        }
-    }
-
-    private async Task ExecuteCalendarAutoSynchronizationAsync(CancellationToken cancellationToken)
-    {
-        if (_synchronizationManager == null || _accountService == null)
-            return;
-
-        await _autoSynchronizationSemaphore.WaitAsync(cancellationToken);
-
-        try
-        {
-            var accounts = await _accountService.GetAccountsAsync();
-            var synchronizationTasks = accounts
-                .Where(account => account.IsCalendarAccessGranted)
-                .Select(account => ExecuteCalendarAutoSynchronizationForAccountAsync(account, cancellationToken))
-                .ToList();
-
-            await Task.WhenAll(synchronizationTasks);
-        }
-        finally
-        {
-            _autoSynchronizationSemaphore.Release();
-        }
-    }
-
-    private async Task ExecuteCalendarAutoSynchronizationForAccountAsync(
-        Wino.Core.Domain.Entities.Shared.MailAccount account,
-        CancellationToken cancellationToken)
-    {
-        if (_synchronizationManager == null)
-            return;
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (_synchronizationManager.IsAccountSynchronizing(account.Id))
-            return;
-
-        await _synchronizationManager.SynchronizeCalendarAsync(new CalendarSynchronizationOptions
-        {
-            AccountId = account.Id,
-            Type = CalendarSynchronizationType.CalendarMetadata
-        }, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task ExecuteAutoSynchronizationForAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account, CancellationToken cancellationToken)
-    {
-        if (_synchronizationManager == null)
-            return;
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (_synchronizationManager.IsAccountSynchronizing(account.Id))
-            return;
-
-        if (account.IsContactAccessGranted)
-        {
-            await _synchronizationManager.SynchronizeContactsAsync(new ContactSynchronizationOptions
-            {
-                AccountId = account.Id,
-                Type = ContactSynchronizationType.Delta
-            }, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (account.IsTaskAccessGranted && !account.IsTaskReauthorizationRequired)
-        {
-            await _synchronizationManager.SynchronizeTasksAsync(new TaskSynchronizationOptions
-            {
-                AccountId = account.Id,
-                Type = TaskSynchronizationType.Delta
-            }, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!account.IsMailAccessGranted)
-            return;
-
-        var inboxSyncOptions = new MailSynchronizationOptions
-        {
-            AccountId = account.Id,
-            Type = MailSynchronizationType.InboxOnly
-        };
-
-        var inboxSyncResult = await _synchronizationManager.SynchronizeMailAsync(inboxSyncOptions, cancellationToken);
-
-        if (inboxSyncResult.CompletedState is SynchronizationCompletedState.Success or SynchronizationCompletedState.PartiallyCompleted)
-        {
-            await ClearInvalidCredentialAttentionIfNeededAsync(account.Id);
-
-            var inboxSyncCount = _inboxSyncCounters.AddOrUpdate(account.Id, 1, (_, currentCount) => currentCount + 1);
-
-            if (inboxSyncCount >= InboxSyncsPerFullSync)
-            {
-                var fullSyncOptions = new MailSynchronizationOptions
-                {
-                    AccountId = account.Id,
-                    Type = MailSynchronizationType.FullFolders
-                };
-
-                await _synchronizationManager.SynchronizeMailAsync(fullSyncOptions, cancellationToken);
-                _inboxSyncCounters[account.Id] = 0;
-            }
-        }
-
-    }
-
-    private async Task ClearInvalidCredentialAttentionIfNeededAsync(Guid accountId)
-    {
-        if (_accountService == null)
-            return;
-
-        var account = await _accountService.GetAccountAsync(accountId);
-
-        if (account?.AttentionReason != AccountAttentionReason.InvalidCredentials)
-            return;
-
-        await _accountService.ClearAccountAttentionAsync(accountId);
-    }
-
-    /// <summary>
+/// <summary>
     /// Handles activation redirected from another instance (single-instancing).
     /// This is called when a second instance tries to launch and redirects to this existing instance.
     /// </summary>
