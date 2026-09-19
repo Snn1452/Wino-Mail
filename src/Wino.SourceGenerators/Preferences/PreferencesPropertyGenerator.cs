@@ -16,12 +16,6 @@ namespace Wino.SourceGenerators.Preferences;
 public sealed class PreferencesPropertyGenerator : IIncrementalGenerator
 {
     private const string InterfaceMetadataName = "Wino.Core.Domain.Interfaces.IPreferencesService";
-    private static readonly string[] ServiceMetadataNames =
-    [
-        "Wino.Mail.WinUI.Services.PreferencesService",
-        "Wino.Platform.Windows.Services.PreferencesService"
-    ];
-
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var model = context.CompilationProvider.Select(static (compilation, _) =>
