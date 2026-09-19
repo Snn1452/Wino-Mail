@@ -14,6 +14,13 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      Wino.Mail.AI.Abstractions is referenced by shared domain/API contracts, but the mail
+      background host does not invoke its AI payload converters. Its converter uses dynamic
+      System.Text.Json APIs that are currently not AOT-analyzable. Keep the strict AOT gate for
+      our own code and suppress only these third-party converter diagnostics in this host.
+    -->
+    <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.NotificationHost\Wino.NotificationHost.csproj" />
