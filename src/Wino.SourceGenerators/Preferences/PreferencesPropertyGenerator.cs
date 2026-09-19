@@ -27,10 +27,15 @@ public sealed class PreferencesPropertyGenerator : IIncrementalGenerator
         var model = context.CompilationProvider.Select(static (compilation, _) =>
         {
             var preferenceInterface = compilation.GetTypeByMetadataName(InterfaceMetadataName);
-            var preferenceService = ServiceMetadataNames
-                .Select(compilation.GetTypeByMetadataName)
-                .FirstOrDefault(static symbol =>
-                    symbol != null && symbol.Locations.Any(static location => location.IsInSource));
+            var serviceMetadataName = compilation.AssemblyName == "Wino.Platform.Windows"
+                ? "Wino.Platform.Windows.Services.PreferencesService"
+                : compilation.AssemblyName == "Wino.Mail.WinUI"
+                    ? "Wino.Mail.WinUI.Services.PreferencesService"
+                    : null;
+
+            var preferenceService = serviceMetadataName == null
+                ? null
+                : compilation.GetTypeByMetadataName(serviceMetadataName);
 
             if (preferenceInterface == null || preferenceService == null)
             {
