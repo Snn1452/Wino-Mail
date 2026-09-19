@@ -64,12 +64,6 @@
       </uap:VisualElements>
 
 		<Extensions>
-			<uap5:Extension Category="windows.startupTask">
-				<uap5:StartupTask
-					TaskId="WinoStartupId"
-					Enabled="true"
-					DisplayName="Wino Startup Service" />
-			</uap5:Extension>
 
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
@@ -198,6 +192,14 @@
     <Application Id="MailNotificationHost"
       Executable="Wino.Mail.NotificationHost.exe"
       EntryPoint="Windows.FullTrustApplication">
+      <Extensions>
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask
+            TaskId="WinoStartupId"
+            Enabled="true"
+            DisplayName="Wino Startup Service" />
+        </uap5:Extension>
+        <desktop:Extension Category="windows.toastNotificationActivation">
       <uap:VisualElements
         AppListEntry="none"
         DisplayName="Wino Mail"
