@@ -2122,6 +2122,19 @@ public void Receive(WelcomeImportCompletedMessage message)
         }
     }
 
+    private async Task ClearInvalidCredentialAttentionIfNeededAsync(Guid accountId)
+    {
+        if (_accountService == null)
+            return;
+
+        var account = await _accountService.GetAccountAsync(accountId);
+
+        if (account?.AttentionReason != AccountAttentionReason.InvalidCredentials)
+            return;
+
+        await _accountService.ClearAccountAttentionAsync(accountId);
+    }
+
 private async Task LoadInitialWinoAccountAsync()
     {
         var winoAccountProfileService = Services.GetRequiredService<IWinoAccountProfileService>();
