@@ -61,6 +61,12 @@ jobs:
           $nativeExecutable = Get-ChildItem src/Wino.Mail.WinUI/bin/Release -Recurse -Filter Wino.Mail.WinUI.exe | Select-Object -First 1
           if (-not $nativeExecutable) { throw 'WinUI Native AOT executable was not generated.' }
 
+          $backgroundHost = Get-ChildItem src/Wino.Mail.WinUI/bin/Release -Recurse -Filter Wino.Mail.BackgroundSyncHost.exe |
+            Where-Object { $_.FullName -match '[\\/]BackgroundSyncHost[\\/]' } |
+            Select-Object -First 1
+          if (-not $backgroundHost) { throw 'Packaged BackgroundSyncHost executable was not generated.' }
+          Write-Host "BackgroundSyncHost payload: $($backgroundHost.Directory.FullName)"
+
       - name: Publish and run SQLite Native AOT smoke harness
         shell: pwsh
         run: |
