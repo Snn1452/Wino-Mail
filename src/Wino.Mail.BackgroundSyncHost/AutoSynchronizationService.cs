@@ -26,39 +26,62 @@ internal sealed class AutoSynchronizationService(
 
     private async Task RunMailLoopAsync(CancellationToken token)
     {
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-
-            try
-            {
-                await MailTickAsync(token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Automatic mail/contact/task synchronization tick failed.");
-            }
-
-            await Task.Delay(
-                    TimeSpan.FromMinutes(Math.Max(1, preferencesService.EmailSyncIntervalMinutes)),
-                    token)
-                .ConfigureAwait(false);
-        }
+        await RunIntervalLoopAsync(
+            () => TimeSpan.FromMinutes(Math.Max(1, preferencesService.EmailSyncIntervalMinutes)),
+            MailTickAsync,
+            "Automatic mail/contact/task synchronization",
+            token).ConfigureAwait(false);
     }
 
     private async Task RunCalendarLoopAsync(CancellationToken token)
     {
+        await RunIntervalLoopAsync(
+            () => TimeSpan.FromMinutes(Math.Max(1, preferencesService.CalendarSyncIntervalMinutes)),
+            CalendarTickAsync,
+            "Automatic calendar synchronization",
+            token).ConfigureAwait(false);
+    }
+
+    private static async Task RunIntervalLoopAsync(
+        Func<TimeSpan> intervalProvider,
+        Func<CancellationToken, Task> tick,
+        string operationName,
+        CancellationToken token)
+    {
+        var pollInterval = TimeSpan.FromSeconds(30);
+        DateTimeOffset? nextRunAt = null;
+        TimeSpan? activeInterval = null;
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
 
+            var now = DateTimeOffset.UtcNow;
+            var configuredInterval = intervalProvider();
+
+            if (activeInterval != configuredInterval)
+            {
+                var lastRunAt = nextRunAt.HasValue && activeInterval.HasValue
+                    ? nextRunAt.Value - activeInterval.Value
+                    : now;
+
+                nextRunAt = lastRunAt + configuredInterval;
+                activeInterval = configuredInterval;
+            }
+
+            var delay = nextRunAt!.Value - now;
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(
+                        delay < pollInterval ? delay : pollInterval,
+                        token)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
             try
             {
-                await CalendarTickAsync(token).ConfigureAwait(false);
+                await tick(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -66,13 +89,11 @@ internal sealed class AutoSynchronizationService(
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Automatic calendar synchronization tick failed.");
+                Log.Error(ex, "{OperationName} tick failed.", operationName);
             }
 
-            await Task.Delay(
-                    TimeSpan.FromMinutes(Math.Max(1, preferencesService.CalendarSyncIntervalMinutes)),
-                    token)
-                .ConfigureAwait(false);
+            activeInterval = intervalProvider();
+            nextRunAt = DateTimeOffset.UtcNow + activeInterval.Value;
         }
     }
 
