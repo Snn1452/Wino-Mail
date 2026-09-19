@@ -272,13 +272,6 @@
     <Content Include="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.exe" Link="Wino.Calendar.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.exe" Link="Wino.People.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.exe" Link="Wino.Tasks.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <!-- The background host is a self-contained packaged executable. Keep its complete
-         publish payload together under the path declared by Package.appxmanifest. -->
-    <Content Include="$(BackgroundSyncHostOutput)**\*"
-             Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
-
 
 
     <Content Include="$(MailNotificationHostOutput)Wino.NotificationHost.dll" Link="Wino.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
@@ -574,6 +567,13 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
+    <ItemGroup>
+      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
+      <Content Include="@(_BackgroundSyncHostPayload)"
+               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
   </Target>
 
   <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
@@ -584,5 +584,12 @@
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
+    <ItemGroup>
+      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
+      <Content Include="@(_BackgroundSyncHostPayload)"
+               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
   </Target>
 </Project>
