@@ -628,9 +628,13 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
+            if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
+                return;
+
             PrepareForClose();
 
-            // The background host owns synchronization now, so WinUI can terminate completely.
+            // PrepareForClose removes this handler and permits the real close. The managed
+            // app and tray stay alive only when tray mode was explicitly selected.
             Close();
         }
         finally
