@@ -481,7 +481,6 @@ public partial class App : WinoApplication,
                 _companionIntegration = null;
                 await companion.ShutdownAsync();
             }
-            ReleaseBackgroundLifetimeWindow();
             Application.Current.Exit();
         }
     }
@@ -1052,7 +1051,6 @@ public partial class App : WinoApplication,
         // needed while every user-facing window is gone.
         if (shellWindow != null)
         {
-            ReleaseBackgroundLifetimeWindow();
         }
 
         return new ShellWindowActivationResult(shellWindow, wasCreated);
@@ -1908,7 +1906,6 @@ public void Receive(WelcomeImportCompletedMessage message)
 
             CloseWelcomeWindowIfPresent();
 
-            RestartAutoSynchronizationLoops();
             await UpdateJumpListOptionsSafeAsync();
 
             Services.GetRequiredService<IMailDialogService>().InfoBarMessage(
