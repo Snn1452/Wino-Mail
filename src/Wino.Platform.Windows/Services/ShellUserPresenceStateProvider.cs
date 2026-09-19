@@ -17,8 +17,8 @@ public sealed class ShellUserPresenceStateProvider : IUserPresenceStateProvider
         App = 7
     }
 
-    [LibraryImport("shell32.dll")]
-    private static partial int SHQueryUserNotificationState(out UserNotificationState state);
+    [DllImport("shell32.dll")]
+    private static extern int SHQueryUserNotificationState(out UserNotificationState state);
 
     public bool IsPresenting()
     {
