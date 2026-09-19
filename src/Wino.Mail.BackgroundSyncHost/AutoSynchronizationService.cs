@@ -19,10 +19,36 @@ internal sealed class AutoSynchronizationService(
     private const int InboxSyncsPerFullSync = 20;
     private readonly ConcurrentDictionary<Guid, int> _counters = new();
 
-    public Task RunAsync(CancellationToken token)
-        => Task.WhenAll(
-            RunMailLoopAsync(token),
-            RunCalendarLoopAsync(token));
+    public async Task RunAsync(CancellationToken token)
+    {
+        using var lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+        try
+        {
+            await Task.WhenAll(
+                    RunMailLoopAsync(lifetimeCts.Token),
+                    RunCalendarLoopAsync(lifetimeCts.Token),
+                    MonitorBackgroundModeAsync(lifetimeCts.Token))
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
+        {
+            // Background mode was disabled or the host was asked to stop.
+        }
+    }
+
+    private async Task MonitorBackgroundModeAsync(CancellationToken token)
+    {
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+
+            if (preferencesService.AppCloseBehavior == AppCloseBehavior.Terminate)
+                return;
+
+            await Task.Delay(TimeSpan.FromSeconds(30), token).ConfigureAwait(false);
+        }
+    }
 
     private async Task RunMailLoopAsync(CancellationToken token)
     {
