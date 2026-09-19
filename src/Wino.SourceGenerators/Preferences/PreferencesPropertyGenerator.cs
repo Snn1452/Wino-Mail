@@ -27,7 +27,8 @@ public sealed class PreferencesPropertyGenerator : IIncrementalGenerator
         var model = context.CompilationProvider.Select(static (compilation, _) =>
         {
             var preferenceInterface = compilation.GetTypeByMetadataName(InterfaceMetadataName);
-            var preferenceService = ServiceMetadataNames\n                .Select(compilation.GetTypeByMetadataName)\n                .FirstOrDefault(static symbol => symbol != null);
+            var preferenceService = ServiceMetadataNames
+                .Select(compilation.GetTypeByMetadataName)\n                .FirstOrDefault(static symbol => symbol != null);
 
             if (preferenceInterface == null || preferenceService == null)
             {
