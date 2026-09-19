@@ -685,6 +685,7 @@ public partial class App : WinoApplication,
 
         services.RegisterCoreServices();
         services.RegisterSharedServices();
+        services.RegisterIntelligenceServices();
         services.RegisterCoreUWPServices();
         services.RegisterCoreViewModels();
 
