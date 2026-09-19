@@ -84,7 +84,11 @@ internal sealed class HeadlessNotificationBuilder : INotificationBuilder
     public Task UpdateTaskbarIconBadgeAsync()=>UpdateBadgeAsync();
     public Task AddCalendarTaskbarBadgeCountAsync(int count){if(count>0)UpdateBadge("CalendarApp",count);return Task.CompletedTask;}
     public Task ClearCalendarTaskbarBadgeAsync()=>Task.CompletedTask;
-    public void RemoveNotification(Guid id)=>_ = _notificationHostClient.ShowAsync(NotificationHostApplication.Mail,new AppNotificationBuilder().BuildNotification());
+    public void RemoveNotification(Guid id)
+    {
+        // Toast removal is intentionally a no-op here; the existing notification host owns removal
+        // semantics and the headless sync path never receives UI-only read-state messages.
+    }
     public void CreateAttentionRequiredNotification(MailAccount account)=>_ = Task.Run(()=>ShowAttentionAsync(account));
     public void CreateWebView2RuntimeMissingNotification(){}
     public Task CreateTestNotificationsAsync(IEnumerable<MailCopy> mailItems)=>Task.CompletedTask;
