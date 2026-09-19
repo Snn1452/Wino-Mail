@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel;
+using Windows.Storage;
 using Wino.Core;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
@@ -75,13 +76,14 @@ internal static class BackgroundHostRuntime
 
         var accountService = provider.GetRequiredService<IAccountService>();
         var synchronizationManager = provider.GetRequiredService<ISynchronizationManager>();
+        var configuration = provider.GetRequiredService<IConfigurationService>();
 
         WriteLog("started");
 
         await SynchronizeAllAccountsAsync(
             accountService,
             synchronizationManager,
-            preferences,
+            configuration,
             CancellationToken.None).ConfigureAwait(false);
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(
@@ -95,7 +97,7 @@ internal static class BackgroundHostRuntime
             await SynchronizeAllAccountsAsync(
                 accountService,
                 synchronizationManager,
-                preferences,
+                configuration,
                 CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -105,7 +107,7 @@ internal static class BackgroundHostRuntime
     private static async Task SynchronizeAllAccountsAsync(
         IAccountService accountService,
         ISynchronizationManager synchronizationManager,
-        IPreferencesService preferences,
+        IConfigurationService configuration,
         CancellationToken cancellationToken)
     {
         var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
@@ -134,8 +136,8 @@ internal static class BackgroundHostRuntime
                 continue;
 
             var fullSyncCounterKey = $"BackgroundHost.FullSyncCount.{account.Id:N}";
-            var count = preferences.GetBackgroundCounter(fullSyncCounterKey) + 1;
-            preferences.SetBackgroundCounter(fullSyncCounterKey, count);
+            var count = configuration.Get(fullSyncCounterKey, 0) + 1;
+            configuration.Set(fullSyncCounterKey, count);
 
             if (count < InboxSyncsPerFullSync)
                 continue;
@@ -148,7 +150,7 @@ internal static class BackgroundHostRuntime
                 },
                 cancellationToken).ConfigureAwait(false);
 
-            preferences.SetBackgroundCounter(fullSyncCounterKey, 0);
+            configuration.Set(fullSyncCounterKey, 0);
         }
     }
 
@@ -185,13 +187,3 @@ internal static class BackgroundHostRuntime
     }
 }
 
-internal static class BackgroundPreferenceCounters
-{
-    private const string Prefix = "BackgroundHost.Counter.";
-
-    public static int GetBackgroundCounter(this IPreferencesService preferences, string key)
-        => preferences.Get(Prefix + key, 0);
-
-    public static void SetBackgroundCounter(this IPreferencesService preferences, string key, int value)
-        => preferences.Set(Prefix + key, value);
-}
