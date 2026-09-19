@@ -11,6 +11,7 @@ using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Synchronization;
 using Wino.Core.Services;
 using Wino.Services;
+using Wino.NotificationHost.Contracts;
 
 namespace Wino.Mail.NotificationHost;
 
@@ -19,7 +20,10 @@ internal static class BackgroundHostRuntime
     private const int InboxSyncsPerFullSync = 20;
 
     public static int Run()
-        => RunAsync().GetAwaiter().GetResult();
+    {
+        RunAsync().GetAwaiter().GetResult();
+        return 0;
+    }
 
     private static async Task RunAsync()
     {
@@ -178,6 +182,9 @@ internal static class BackgroundHostRuntime
         services.RegisterCoreServices();
         services.RegisterSharedServices();
 
+        services.AddSingleton<ApplicationConfiguration>();
+        services.AddSingleton<IApplicationConfiguration>(provider =>
+            provider.GetRequiredService<ApplicationConfiguration>());
         services.AddSingleton<IConfigurationService, BackgroundConfigurationService>();
         services.AddSingleton<INativeAppService, BackgroundNativeAppService>();
         services.AddSingleton<IUserPresenceStateProvider, BackgroundPresenceStateProvider>();
@@ -191,7 +198,7 @@ internal static class BackgroundHostRuntime
                 ValidateOnBuild = false
             });
 
-        var configuration = provider.GetRequiredService<IApplicationConfiguration>();
+        var configuration = provider.GetRequiredService<ApplicationConfiguration>();
         configuration.ApplicationDataFolderPath =
             Windows.Storage.ApplicationData.Current.LocalFolder.Path;
         configuration.ApplicationTempFolderPath =
