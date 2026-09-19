@@ -2220,6 +2220,9 @@ public void Receive(WelcomeImportCompletedMessage message)
         if (propertyName is nameof(IPreferencesService.AppCloseBehavior) or nameof(IPreferencesService.IsSystemTrayIconEnabled))
         {
             UpdateTrayIconState(allowCreation: true);
+
+            if (propertyName == nameof(IPreferencesService.AppCloseBehavior))
+                StartBackgroundSyncHostIfNeeded();
         }
     }
 
