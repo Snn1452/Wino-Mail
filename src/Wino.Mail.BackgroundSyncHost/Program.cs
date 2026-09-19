@@ -128,7 +128,7 @@ internal static class Program
         var lifetimeMonitorTask = MonitorHostLifetimeAsync(
             preferences,
             accountService,
-            hostCts.Token);
+            hostCts);
 
         try
         {
@@ -149,23 +149,25 @@ internal static class Program
     private static async Task MonitorHostLifetimeAsync(
         IPreferencesService preferences,
         IAccountService accountService,
-        CancellationToken cancellationToken)
+        CancellationTokenSource hostCancellation)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
 
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        while (await timer.WaitForNextTickAsync(hostCancellation.Token).ConfigureAwait(false))
         {
             if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
             {
                 Serilog.Log.Information(
                     "Background synchronization host is stopping because AppCloseBehavior changed to {AppCloseBehavior}.",
                     preferences.AppCloseBehavior);
+                hostCancellation.Cancel();
                 return;
             }
 
             if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
             {
                 Serilog.Log.Information("Background synchronization host is stopping because no accounts remain.");
+                hostCancellation.Cancel();
                 return;
             }
         }
