@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Wino.Core.Domain.Enums;
+using Wino.NotificationHost.Contracts;
 using Wino.Mail.WinUI.Activation;
 
 namespace Wino.Mail.WinUI.Services;
@@ -22,4 +23,16 @@ internal sealed class PackagedAppEntryLauncher
 
         return appEntry != null && await appEntry.LaunchAsync();
     }
+    public async Task<bool> LaunchMailNotificationHostAsync()
+    {
+        var targetApplicationId = NotificationHostApplicationIds.Mail;
+        var targetAppUserModelId = $"{Package.Current.Id.FamilyName}!{targetApplicationId}";
+        var appEntries = await Package.Current.GetAppListEntriesAsync();
+
+        var appEntry = appEntries.FirstOrDefault(entry =>
+            string.Equals(entry.AppUserModelId, targetAppUserModelId, StringComparison.OrdinalIgnoreCase));
+
+        return appEntry != null && await appEntry.LaunchAsync();
+    }
+
 }

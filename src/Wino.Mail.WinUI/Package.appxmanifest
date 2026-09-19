@@ -64,12 +64,6 @@
       </uap:VisualElements>
 
 		<Extensions>
-			<uap5:Extension Category="windows.startupTask">
-				<uap5:StartupTask
-					TaskId="WinoStartupId"
-					Enabled="true"
-					DisplayName="Wino Startup Service" />
-			</uap5:Extension>
 
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
@@ -208,6 +202,12 @@
        <uap:DefaultTile/>
       </uap:VisualElements>
       <Extensions>
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask
+            TaskId="WinoStartupId"
+            Enabled="true"
+            DisplayName="Wino Startup Service" />
+        </uap5:Extension>
         <desktop:Extension Category="windows.toastNotificationActivation">
           <desktop:ToastNotificationActivation ToastActivatorCLSID="b67c209f-9f3b-4220-ad8f-828073616967" />
         </desktop:Extension>

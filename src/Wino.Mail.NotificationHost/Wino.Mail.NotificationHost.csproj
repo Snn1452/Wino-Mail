@@ -16,5 +16,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.NotificationHost\Wino.NotificationHost.csproj" />
+    <ProjectReference Include="..\Wino.Core\Wino.Core.csproj" />
+    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+    <ProjectReference Include="..\Wino.Authentication\Wino.Authentication.csproj" />
   </ItemGroup>
 </Project>
