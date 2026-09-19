@@ -1900,7 +1900,7 @@ public partial class App : WinoApplication,
         // Only transition when the account was created from the WelcomeWindow.
         if (windowManager.GetWindow(WinoWindowKind.Welcome) == null)
         {
-            _ = SynchronizeCreatedAccountAsync(message.Account);
+            _ = SynchronizeCreatedAccountAndStartBackgroundHostAsync(message.Account);
             return;
         }
 
@@ -1930,12 +1930,19 @@ public partial class App : WinoApplication,
 
             CloseWelcomeWindowIfPresent();
 
-            await SynchronizeCreatedAccountAsync(message.Account);
+            await SynchronizeCreatedAccountAndStartBackgroundHostAsync(message.Account);
 
         });
     }
 
-private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
+private async Task SynchronizeCreatedAccountAndStartBackgroundHostAsync(
+        Wino.Core.Domain.Entities.Shared.MailAccount account)
+    {
+        await SynchronizeCreatedAccountAsync(account).ConfigureAwait(false);
+        StartBackgroundSyncHostIfNeeded();
+    }
+
+    private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
     {
         if (account.IsMailAccessGranted)
         {
@@ -1998,6 +2005,7 @@ public void Receive(WelcomeImportCompletedMessage message)
                 });
 
             await LoadInitialWinoAccountAsync();
+            StartBackgroundSyncHostIfNeeded();
 
             // Preserve an active XAML window throughout the welcome-to-shell handoff.
             if (MainWindow != null)
