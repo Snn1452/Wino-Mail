@@ -565,10 +565,18 @@
     <MSBuild Projects="@(NotificationHostProject)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
   </Target>
 
-  <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
+  <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
+  </Target>
+
+  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-            Targets="$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true') ? 'Publish' : 'Build')"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true'));PublishSingleFile=$([System.String]::Copy('$(WinoIsReleaseBuild)').Equals('true'));PublishTrimmed=false;PublishAot=false;PublishDir=$(BackgroundSyncHostOutput)" />
-  </Target>
+            Targets="Publish"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;PublishDir=$(BackgroundSyncHostOutput)" />
+  </Target>t>
 </Project>
