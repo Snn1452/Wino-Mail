@@ -7,6 +7,7 @@ public static class NotificationHostApplicationIds
     public const string Calendar = "CalendarNotificationHost";
     public const string People = "PeopleNotificationHost";
     public const string Tasks = "ToDoNotificationHost";
+    public const string Background = "MailBackgroundHost";
 
     public static string GetApplicationId(NotificationHostApplication application)
         => application switch

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Wino.NotificationHost;
 
-internal static class CurrentAppIdentity
+public static class CurrentAppIdentity
 {
     private const int ErrorInsufficientBuffer = 122;
 

@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace Wino.NotificationHost;
 
-internal static class PackagedApplicationActivator
+public static class PackagedApplicationActivator
 {
     private static readonly Guid ActivationManagerClassId = new("45BA127D-10A8-46EA-8AB7-56EA9078943C");
     private static readonly Guid ActivationManagerInterfaceId = new("2E941141-7F97-4756-BA1D-9DECDE894A3D");

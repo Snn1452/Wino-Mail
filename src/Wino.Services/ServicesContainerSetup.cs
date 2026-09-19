@@ -64,28 +64,6 @@ public static class ServicesContainerSetup
         services.AddSingleton<IKnownImapProviderCatalog, EmbeddedKnownImapProviderCatalog>();
         services.AddTransient<ISpecialImapProviderConfigResolver, SpecialImapProviderConfigResolver>();
         services.AddSingleton<IKeyboardShortcutService, KeyboardShortcutService>();
-        services.AddSingleton<IWinoAccountSessionService>(provider => WinoAccountSessionService.For(provider.GetRequiredService<IDatabaseService>()));
-        services.AddSingleton<IWinoAccountApiClient, WinoAccountApiClient>();
-        services.AddSingleton<IIntelligenceBackend, CloudIntelligenceBackend>();
-        services.AddSingleton<IIntelligenceSearchEligibilityService, IntelligenceSearchEligibilityService>();
-        services.AddSingleton<IIntelligenceSearchService, IntelligenceSearchService>();
-        services.AddSingleton<ILocalIntelligenceSearchEngine, LocalIntelligenceSearchEngine>();
-        services.AddSingleton<IWinoAccountProfileService, WinoAccountProfileService>();
-        services.AddSingleton<IWinoBillingService, WinoBillingService>();
-        services.AddSingleton<IWinoPendingCheckoutStore, WinoPendingCheckoutStore>();
-        services.AddSingleton<IWinoPurchaseReconciliationService, WinoPurchaseReconciliationService>();
-        services.AddSingleton<IWinoAccountIntelligenceSnapshotService, WinoAccountIntelligenceSnapshotService>();
-        services.AddSingleton<IWinoIntelligenceEntitlementService, WinoIntelligenceEntitlementService>();
-        services.AddSingleton<ISemanticIndexJobRegistry, SemanticIndexJobRegistry>();
-        services.AddSingleton<IIntelligenceMessageContextResolver, IntelligenceMessageContextResolver>();
-        services.AddSingleton<ISemanticIndexCoordinator, SemanticIndexCoordinator>();
-        services.AddSingleton<IWinoIntelligenceCoordinator, WinoIntelligenceCoordinator>();
-        services.AddSingleton<IIntelligenceCoverageHandoff, IntelligenceCoverageHandoff>();
-        services.AddSingleton<ILocalIntelligenceStore, LocalIntelligenceStore>();
-        services.AddSingleton<ILocalIntelligenceService, LocalIntelligenceService>();
-        services.AddSingleton<IContentEnvelopeEncryptor>(_ =>
-            new PemContentEnvelopeEncryptor(EmbeddedIntelligencePublicKeyProvider.Load()));
-        services.AddTransient<IWinoAccountDataSyncService, WinoAccountDataSyncService>();
         services.AddSingleton<IContactPictureFileService, ContactPictureFileService>();
         services.AddSingleton<IAccountProfilePictureFileService, AccountProfilePictureFileService>();
         services.AddSingleton<AccountProfilePictureMigrationService>();
@@ -104,4 +82,30 @@ public static class ServicesContainerSetup
             provider.GetRequiredService<IDavResponseHandler>()));
         services.AddSingleton<IUpdateManager, UpdateManager>();
     }
+
+#if !WINO_LIGHTWEIGHT_HOST
+    public static void RegisterIntelligenceServices(this IServiceCollection services)
+    {
+        services.AddSingleton<IWinoAccountSessionService>(provider =>
+            WinoAccountSessionService.For(provider.GetRequiredService<IDatabaseService>()));
+        services.AddSingleton<IWinoAccountApiClient, WinoAccountApiClient>();
+        services.AddSingleton<IWinoAccountProfileService, WinoAccountProfileService>();
+        services.AddSingleton<IWinoBillingService, WinoBillingService>();
+        services.AddSingleton<IWinoPendingCheckoutStore, WinoPendingCheckoutStore>();
+        services.AddSingleton<IWinoPurchaseReconciliationService, WinoPurchaseReconciliationService>();
+        services.AddSingleton<IWinoAccountIntelligenceSnapshotService, WinoAccountIntelligenceSnapshotService>();
+        services.AddSingleton<IWinoIntelligenceEntitlementService, WinoIntelligenceEntitlementService>();
+        services.AddSingleton<ISemanticIndexJobRegistry, SemanticIndexJobRegistry>();
+        services.AddSingleton<IIntelligenceMessageContextResolver, IntelligenceMessageContextResolver>();
+        services.AddSingleton<ISemanticIndexCoordinator, SemanticIndexCoordinator>();
+        services.AddSingleton<IWinoIntelligenceCoordinator, WinoIntelligenceCoordinator>();
+        services.AddSingleton<IIntelligenceCoverageHandoff, IntelligenceCoverageHandoff>();
+        services.AddSingleton<ILocalIntelligenceStore, LocalIntelligenceStore>();
+        services.AddSingleton<ILocalIntelligenceService, LocalIntelligenceService>();
+        services.AddSingleton<IContentEnvelopeEncryptor>(_ =>
+            new PemContentEnvelopeEncryptor(EmbeddedIntelligencePublicKeyProvider.Load()));
+        services.AddTransient<IWinoAccountDataSyncService, WinoAccountDataSyncService>();
+    }
+#endif
+
 }
