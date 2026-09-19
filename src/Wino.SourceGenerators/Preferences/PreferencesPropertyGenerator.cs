@@ -25,7 +25,16 @@ public sealed class PreferencesPropertyGenerator : IIncrementalGenerator
             var preferenceInterface = compilation.GetTypeByMetadataName(InterfaceMetadataName);
             var preferenceService = compilation.GetTypeByMetadataName(ServiceMetadataName);
 
-            if (preferenceInterface == null || preferenceService == null)
+            // A source generator may also see referenced assemblies. The implementation part of
+            // a partial method, however, must be emitted into the same assembly as the defining
+            // partial declaration. Only generate accessors when PreferencesService belongs to the
+            // current compilation; otherwise WinUI would receive an invalid partial declaration
+            // for the PreferencesService type that now lives in Wino.Services.
+            if (preferenceInterface == null ||
+                preferenceService == null ||
+                !SymbolEqualityComparer.Default.Equals(
+                    preferenceService.ContainingAssembly,
+                    compilation.Assembly))
             {
                 return ImmutableArray<IPropertySymbol>.Empty;
             }
