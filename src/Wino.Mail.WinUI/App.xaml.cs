@@ -87,7 +87,6 @@ public partial class App : WinoApplication,
     private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly DateTimeOffset _sessionStartedAtUtc = DateTimeOffset.UtcNow;
     private MainTrayController? _companionIntegration;
-    private Window? _backgroundLifetimeWindow;
     private Microsoft.UI.Xaml.LaunchActivatedEventArgs? _pendingMigrationLaunchArgs;
     private AppActivationArguments? _pendingMigrationActivation;
     private readonly record struct ShellWindowActivationResult(IWinoShellWindow? ShellWindow, bool WasCreated);
@@ -114,80 +113,6 @@ public partial class App : WinoApplication,
 
         ExitApplication();
         return true;
-    }
-
-    internal bool TryPrepareForBackgroundShellWindowClose(AppCloseBehavior closeBehavior)
-    {
-        var isBackgroundBehavior = closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
-            or AppCloseBehavior.RunInBackgroundWithoutTrayIcon;
-
-        if (_isExiting || !isBackgroundBehavior)
-            return false;
-
-        var createdLifetimeWindow = false;
-
-        if (_backgroundLifetimeWindow == null)
-        {
-            try
-            {
-                // Closing the last WinUI Window ends the XAML application loop. Keep a contentless,
-                // never-activated window alive so background services can continue without retaining
-                // ShellWindow or any part of its XAML tree.
-                var lifetimeWindow = new Window();
-                lifetimeWindow.AppWindow.IsShownInSwitchers = false;
-                lifetimeWindow.Closed += BackgroundLifetimeWindowClosed;
-                _backgroundLifetimeWindow = lifetimeWindow;
-                createdLifetimeWindow = true;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex,
-                    "Failed to create the background lifetime window. Shell close was canceled to preserve the running application.");
-                return false;
-            }
-        }
-
-        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
-        {
-            DisposeTrayIcon();
-            LogActivation("Background shell close prepared without a system tray icon.");
-            return true;
-        }
-
-        EnsureTrayIconCreated();
-
-        if (_companionIntegration != null)
-        {
-            LogActivation("Background shell close prepared with the tray companion.");
-            return true;
-        }
-
-        if (createdLifetimeWindow)
-            ReleaseBackgroundLifetimeWindow();
-
-        Log.Error(
-            "System tray mode is selected, but the tray icon could not be created. Shell close was canceled to avoid leaving the application inaccessible.");
-        return false;
-    }
-
-    private void ReleaseBackgroundLifetimeWindow()
-    {
-        var lifetimeWindow = _backgroundLifetimeWindow;
-        if (lifetimeWindow == null)
-            return;
-
-        _backgroundLifetimeWindow = null;
-        lifetimeWindow.Closed -= BackgroundLifetimeWindowClosed;
-        lifetimeWindow.Close();
-    }
-
-    private void BackgroundLifetimeWindowClosed(object sender, WindowEventArgs args)
-    {
-        if (sender is Window lifetimeWindow)
-            lifetimeWindow.Closed -= BackgroundLifetimeWindowClosed;
-
-        if (ReferenceEquals(_backgroundLifetimeWindow, sender))
-            _backgroundLifetimeWindow = null;
     }
 
     public App()
