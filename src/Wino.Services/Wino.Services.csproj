@@ -40,4 +40,8 @@
 		<EmbeddedResource Include="Security\Keys\intelligence-public.pem" />
 		<EmbeddedResource Include="Configuration\known-imap-providers.json" />
 	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+	</ItemGroup>
 </Project>
