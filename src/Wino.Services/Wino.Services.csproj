@@ -27,8 +27,8 @@
 		<PackageReference Include="SkiaSharp" />
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" />
 		<PackageReference Include="Wino.Mail.Contracts" />
-		<PackageReference Include="Wino.Mail.AI.Abstractions" />
-		<PackageReference Include="Wino.Mail.AI.ContentProcessing" />
+		<PackageReference Include="Wino.Mail.AI.Abstractions" Condition="'$(WinoLightweightHost)' != 'true'" />
+		<PackageReference Include="Wino.Mail.AI.ContentProcessing" Condition="'$(WinoLightweightHost)' != 'true'" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
@@ -43,5 +43,25 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(WinoLightweightHost)' == 'true'">
+		<Compile Remove="WinoAccountApiClient.cs" />
+		<Compile Remove="WinoAccountDataSyncService.cs" />
+		<Compile Remove="WinoAccountProfileService.cs" />
+		<Compile Remove="WinoAccountIntelligenceSnapshotService.cs" />
+		<Compile Remove="WinoIntelligenceCoordinator.cs" />
+		<Compile Remove="WinoIntelligenceEntitlementService.cs" />
+		<Compile Remove="CloudIntelligenceBackend.cs" />
+		<Compile Remove="EmbeddedIntelligencePublicKeyProvider.cs" />
+		<Compile Remove="IntelligenceCoverageHandoff.cs" />
+		<Compile Remove="IntelligenceMessageContextResolver.cs" />
+		<Compile Remove="IntelligenceSearchEligibilityService.cs" />
+		<Compile Remove="IntelligenceSearchService.cs" />
+		<Compile Remove="LocalIntelligenceJsonContext.cs" />
+		<Compile Remove="LocalIntelligenceSearchEngine.cs" />
+		<Compile Remove="LocalIntelligenceService.cs" />
+		<Compile Remove="LocalIntelligenceStore.cs" />
+		<Compile Remove="LocalizedAiRequests.cs" />
 	</ItemGroup>
 </Project>
