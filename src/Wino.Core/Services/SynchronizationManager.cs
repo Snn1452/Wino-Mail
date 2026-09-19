@@ -853,12 +853,17 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <returns>Synchronization result</returns>
     public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(CalendarSynchronizationOptions options,
                                                                                CancellationToken cancellationToken = default)
-        => options.Type == CalendarSynchronizationType.Strict
+    {
+        EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
+
+        return options.Type == CalendarSynchronizationType.Strict
             ? await SynchronizeCalendarStrictAsync(options, cancellationToken).ConfigureAwait(false)
             : await RunCalendarSynchronizationWithLockAsync(
                 options.AccountId,
                 cancellationToken,
                 () => SynchronizeCalendarCoreAsync(options, cancellationToken, reportState: true)).ConfigureAwait(false);
+    }
 
     public async Task<ContactSynchronizationResult> SynchronizeContactsAsync(
         ContactSynchronizationOptions options,
