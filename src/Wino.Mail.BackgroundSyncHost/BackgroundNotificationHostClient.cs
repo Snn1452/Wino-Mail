@@ -13,7 +13,20 @@ internal sealed class BackgroundNotificationHostClient
 {
     private static readonly Guid ActivationManagerClassId = new("45BA127D-10A8-46EA-8AB7-56EA9078943C");
     private static readonly Guid ActivationManagerInterfaceId = new("2E941141-7F97-4756-BA1D-9DECDE894A3D");
+    private static readonly TimeSpan StaleEnvelopeAge = TimeSpan.FromHours(24);
     private readonly string _localCachePath = ApplicationData.Current.LocalCacheFolder.Path;
+
+    public BackgroundNotificationHostClient()
+    {
+        try
+        {
+            _ = NotificationHostFileStore.CleanupStaleFiles(_localCachePath, StaleEnvelopeAge);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to clean stale background notification envelopes.");
+        }
+    }
 
     public Task ShowAsync(NotificationHostApplication application, AppNotification notification, CancellationToken cancellationToken = default)
         => DispatchAsync(new NotificationHostRequest(DateTimeOffset.UtcNow, NotificationHostOperation.Show, application, notification.Payload, notification.Tag, notification.Group), cancellationToken);
@@ -25,6 +38,7 @@ internal sealed class BackgroundNotificationHostClient
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var appUserModelId = $"{Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetApplicationId(request.Application)}";
             _ = ActivateApplication(appUserModelId, NotificationHostLaunchArguments.CreateRequest(requestId));
         }
