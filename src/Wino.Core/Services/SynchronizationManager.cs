@@ -1732,6 +1732,33 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         }
     }
 
+    private static async Task<FileStream> AcquireAccountSynchronizationLockAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(SynchronizationLockRoot);
+
+        var lockPath = Path.Combine(SynchronizationLockRoot, $"{accountId:N}.lock");
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    options: FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     private async Task SetInvalidCredentialAttentionAsync(MailAccount account)
         => await SetAttentionAsync(account, AccountAttentionReason.InvalidCredentials).ConfigureAwait(false);
 
