@@ -577,6 +577,6 @@
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;PublishDir=$(BackgroundSyncHostOutput)" />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
   </Target>
 </Project>
