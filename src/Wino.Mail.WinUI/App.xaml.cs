@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -671,6 +672,9 @@ public partial class App : WinoApplication,
 
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
 
+            if (_hasConfiguredAccounts)
+                StartBackgroundSyncHostIfNeeded();
+
             if (_companionIntegration != null)
             {
                 await _companionIntegration.SetReadinessAsync(_hasConfiguredAccounts
@@ -685,6 +689,35 @@ public partial class App : WinoApplication,
         finally
         {
             _activationInfrastructureSemaphore.Release();
+        }
+    }
+
+    private void StartBackgroundSyncHostIfNeeded()
+    {
+        if (_preferencesService?.AppCloseBehavior is not (
+                AppCloseBehavior.RunInBackgroundWithTrayIcon or
+                AppCloseBehavior.RunInBackgroundWithoutTrayIcon))
+            return;
+
+        var hostPath = Path.Combine(AppContext.BaseDirectory, "Wino.Mail.BackgroundSyncHost.exe");
+        if (!File.Exists(hostPath))
+        {
+            LogActivation($"Background sync host executable was not found: {hostPath}");
+            return;
+        }
+
+        try
+        {
+            _ = Process.Start(new ProcessStartInfo
+            {
+                FileName = hostPath,
+                WorkingDirectory = AppContext.BaseDirectory,
+                UseShellExecute = false
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to start background synchronization host.");
         }
     }
 
