@@ -3,9 +3,7 @@ using System.Collections.Generic;
 using SQLite;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
-#if !WINO_LIGHTWEIGHT_HOST
 using Wino.Core.Domain.Models.Intelligence;
-#endif
 
 namespace Wino.Core.Domain.Entities.Mail;
 
@@ -210,11 +208,7 @@ public class MailCopy
     /// Passive intelligence artifacts loaded from the separate local intelligence store.
     /// </summary>
     [Ignore]
-#if WINO_LIGHTWEIGHT_HOST
-    public object? IntelligenceMetadata { get; set; }
-#else
     public MailIntelligenceMetadata IntelligenceMetadata { get; set; }
-#endif
 
     public IEnumerable<Guid> GetContainingIds() => [UniqueId];
     public override string ToString() => $"{Subject} <-> {Id}";
