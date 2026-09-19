@@ -45,7 +45,6 @@
 	<BackgroundSyncHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\BackgroundSyncHost'))</BackgroundSyncHostPublishRoot>
 	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' == 'true'">$(BackgroundSyncHostPublishRoot)\</BackgroundSyncHostOutput>
 	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)</BackgroundSyncHostOutput>
-	<BackgroundSyncHostOutput>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)'))</BackgroundSyncHostOutput>
 	<NotificationHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\NotificationHosts'))</NotificationHostPublishRoot>
 	<MailNotificationHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\$(NotificationHostBuildSuffix)</MailNotificationHostOutput>
 	<CalendarNotificationHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\$(NotificationHostBuildSuffix)</CalendarNotificationHostOutput>
@@ -578,5 +577,7 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
+    <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
+           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
   </Target>
 </Project>
