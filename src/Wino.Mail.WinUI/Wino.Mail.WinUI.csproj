@@ -561,6 +561,12 @@
 
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
+  </Target>
+<Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
+    <MSBuild Projects="@(NotificationHostProject)"
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
+
     <MakeDir Directories="$(TargetDir)AppX" />
     <Copy SourceFiles="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json"
           DestinationFiles="$(TargetDir)AppX\Wino.Mail.NotificationHost.runtimeconfig.json"
@@ -574,11 +580,6 @@
     <Copy SourceFiles="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json"
           DestinationFiles="$(TargetDir)AppX\Wino.Tasks.NotificationHost.runtimeconfig.json"
           SkipUnchangedFiles="true" />
-  </Target>
-<Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
-    <MSBuild Projects="@(NotificationHostProject)"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
   </Target>
   <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
