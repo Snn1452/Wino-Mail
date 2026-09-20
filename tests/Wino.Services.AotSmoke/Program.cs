@@ -105,6 +105,7 @@ try
 
     using var contentTypeModel = new MagikaContentTypeClassificationModel();
     await using var contentTypeStream = new MemoryStream("Native AOT content type smoke test"u8.ToArray());
+    Environment.SetEnvironmentVariable("WINO_MAGIKA_DIAGNOSTICS", "1");
     var classification = await contentTypeModel.ClassifyAsync(contentTypeStream).ConfigureAwait(false);
 
     if (contentTypeModel.IsSupported && classification.Label != "txt")
