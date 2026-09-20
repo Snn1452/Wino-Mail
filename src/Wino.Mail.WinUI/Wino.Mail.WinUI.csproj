@@ -566,6 +566,17 @@
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
+  <!-- Visual Studio solution builds can set BuildProjectReferences=false while orchestrating
+       project nodes. Build the shared Windows platform project explicitly before ResolveReferences
+       so WinUI never sees a missing Wino.Platform.Windows.dll. -->
+  <Target Name="EnsurePlatformWindowsBuiltForVisualStudio"
+          BeforeTargets="ResolveReferences"
+          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(BuildProjectReferences)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true" />
+  </Target>
+
 <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
     <Delete Files="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json;
                    $(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json;
