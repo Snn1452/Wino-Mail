@@ -71,23 +71,23 @@ internal static class Program
         services.AddSingleton<BackgroundNotificationHostClient>();
         services.AddSingleton<INotificationBuilder, HeadlessNotificationBuilder>();
         services.AddSingleton<AutoSynchronizationService>();
-        WriteDiagnostic("Services registered.");\n        services.AddSingleton<CalendarReminderService>();
+        services.AddSingleton<CalendarReminderService>();
 
         await using var provider = services.BuildServiceProvider();
 
         WriteDiagnostic("Service provider built.");
-
-        ConfigureApplicationPaths(provider);\n        ConfigureApplicationPaths(provider);
+        ConfigureApplicationPaths(provider);
         WriteDiagnostic("Application paths configured.");
 
-        ConfigureLogging(provider);\n        ConfigureLogging(provider);
-
+        ConfigureLogging(provider);
         WriteDiagnostic("Logging configured.");
 
-        var migrationPlan = await provider\n        var migrationPlan = await provider
-            .GetRequiredService<IMigrationCoordinator>()
-            .InspectAsync()
+        var migrationPlan = await RetryStartupStepAsync(
+                "Migration inspection",
+                () => provider.GetRequiredService<IMigrationCoordinator>().InspectAsync())
             .ConfigureAwait(false);
+
+        WriteDiagnostic($"Migration inspection completed: {migrationPlan.Status}.");
 
         if (migrationPlan.Status != Wino.Core.Domain.Models.Migration.MigrationStatus.NotRequired)
         {
@@ -97,9 +97,7 @@ internal static class Program
             return 0;
         }
 
-        WriteDiagnostic($"Migration inspection completed: {migrationPlan.Status}.");
-
-        var preferences = provider.GetRequiredService<IPreferencesService>();\n        var preferences = provider.GetRequiredService<IPreferencesService>();
+        var preferences = provider.GetRequiredService<IPreferencesService>();
         if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
         {
             Serilog.Log.Information(
@@ -109,17 +107,22 @@ internal static class Program
         }
 
         WriteDiagnostic("Background mode enabled.");
-
         WriteDiagnostic("Initializing database.");
-        await provider
-            .GetRequiredService<IDatabaseService>()\n        await provider
-            .GetRequiredService<IDatabaseService>()
-            .InitializeAsync()
+
+        await RetryStartupStepAsync(
+                "Database initialization",
+                async () =>
+                {
+                    await provider.GetRequiredService<IDatabaseService>()
+                        .InitializeAsync()
+                        .ConfigureAwait(false);
+                    return true;
+                })
             .ConfigureAwait(false);
 
         WriteDiagnostic("Database initialized.");
 
-        var accountService = provider.GetRequiredService<IAccountService>();\n        var accountService = provider.GetRequiredService<IAccountService>();
+        var accountService = provider.GetRequiredService<IAccountService>();
         if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
         {
             Serilog.Log.Information("Background synchronization host is exiting because no accounts are configured.");
@@ -128,23 +131,33 @@ internal static class Program
 
         WriteDiagnostic("Account service ready.");
 
-        await provider
-            .GetRequiredService<ITranslationService>()\n        await provider
-            .GetRequiredService<ITranslationService>()
-            .InitializeAsync()
+        await RetryStartupStepAsync(
+                "Translation initialization",
+                async () =>
+                {
+                    await provider.GetRequiredService<ITranslationService>()
+                        .InitializeAsync()
+                        .ConfigureAwait(false);
+                    return true;
+                })
             .ConfigureAwait(false);
 
         WriteDiagnostic("Translations initialized.");
 
-        await provider
-            .GetRequiredService<SynchronizationManagerInitializer>()\n        await provider
-            .GetRequiredService<SynchronizationManagerInitializer>()
-            .InitializeAsync()
+        await RetryStartupStepAsync(
+                "Synchronization manager initialization",
+                async () =>
+                {
+                    await provider.GetRequiredService<SynchronizationManagerInitializer>()
+                        .InitializeAsync()
+                        .ConfigureAwait(false);
+                    return true;
+                })
             .ConfigureAwait(false);
 
         WriteDiagnostic("Synchronization manager initialized.");
 
-        using var hostCts = new CancellationTokenSource();\n        using var hostCts = new CancellationTokenSource();
+        using var hostCts = new CancellationTokenSource();
 
         var synchronizationTask = provider
             .GetRequiredService<AutoSynchronizationService>()
@@ -173,36 +186,44 @@ internal static class Program
         return 0;
     }
 
-    private static async Task MonitorHostLifetimeAsync(
-        IPreferencesService preferences,
-        IAccountService accountService,
-        CancellationTokenSource hostCancellation)
+    private static async Task<T> RetryStartupStepAsync<T>(
+        string operationName,
+        Func<Task<T>> operation)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-
-        while (await timer.WaitForNextTickAsync(hostCancellation.Token).ConfigureAwait(false))
+        var delays = new[]
         {
-            if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
-            {
-                Serilog.Log.Information(
-                    "Background synchronization host is stopping because AppCloseBehavior changed to {AppCloseBehavior}.",
-                    preferences.AppCloseBehavior);
-                hostCancellation.Cancel();
-                return;
-            }
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(20),
+            TimeSpan.FromSeconds(30)
+        };
 
-            if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
+        Exception? lastException = null;
+
+        foreach (var delay in delays)
+        {
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay).ConfigureAwait(false);
+
+            try
             {
-                Serilog.Log.Information("Background synchronization host is stopping because no accounts remain.");
-                hostCancellation.Cancel();
-                return;
+                WriteDiagnostic($"Starting {operationName}.");
+                return await operation().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                lastException = ex;
+                WriteDiagnostic($"{operationName} failed and will be retried: {ex.GetType().Name}: {ex.Message}");
+                Serilog.Log.Warning(ex, "{OperationName} failed during background host startup; retrying.", operationName);
             }
         }
-    }
 
-    private static bool IsBackgroundSyncEnabled(AppCloseBehavior behavior)
-        => behavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
-            or AppCloseBehavior.RunInBackgroundWithoutTrayIcon;
+        throw new InvalidOperationException(
+            $"Background synchronization host could not complete {operationName} after multiple attempts.",
+            lastException);
+    }
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
     {
