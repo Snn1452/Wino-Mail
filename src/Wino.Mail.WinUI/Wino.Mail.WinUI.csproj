@@ -581,7 +581,7 @@
   </Target>
   <Target Name="StageDebugHostRuntimeConfigs" AfterTargets="Build"
           Condition="'$(WinoIsReleaseBuild)' != 'true'">
-    <MakeDir Directories="$(TargetDir)AppX;$(TargetDir)AppX\BackgroundSyncHost" />
+    <MakeDir Directories="$(TargetDir)AppX" />
 
     <Copy SourceFiles="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json"
           DestinationFiles="$(TargetDir)AppX\Wino.Mail.NotificationHost.runtimeconfig.json"
@@ -595,9 +595,19 @@
     <Copy SourceFiles="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json"
           DestinationFiles="$(TargetDir)AppX\Wino.Tasks.NotificationHost.runtimeconfig.json"
           SkipUnchangedFiles="false" />
-    <Copy SourceFiles="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
+
+    <ItemGroup>
+      <_BackgroundSyncHostDebugPayload Include="$(BackgroundSyncHostOutput)**\*" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)AppX\BackgroundSyncHost" />
+    <Copy SourceFiles="@(_BackgroundSyncHostDebugPayload)"
+          DestinationFolder="$(TargetDir)AppX\BackgroundSyncHost\%(RecursiveDir)"
           SkipUnchangedFiles="false" />
+
+    <Error Condition="!Exists('$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe')"
+           Text="Debug BackgroundSyncHost payload was not copied into AppX." />
+    <Error Condition="!Exists('$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.runtimeconfig.json')"
+           Text="Debug BackgroundSyncHost runtimeconfig was not copied into AppX." />
   </Target>
 
 <Target Name="PublishBackgroundSyncHost" BeforeTargets="Publish"
