@@ -540,6 +540,18 @@
 
   <Import Project="..\..\scripts\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
 
+  <!--
+    Visual Studio disables automatic ProjectReference builds while it orchestrates a solution.
+    A direct project build therefore needs to materialize the shared platform assembly explicitly.
+  -->
+  <Target Name="BuildPlatformWindowsForDirectVisualStudioBuild"
+          BeforeTargets="ResolveReferences"
+          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true" />
+  </Target>
+
   <Target Name="BuildBackgroundSyncHostForDebug" AfterTargets="Build"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
