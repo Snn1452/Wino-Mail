@@ -29,14 +29,24 @@ internal static class Program
     [STAThread]
     private static int Main()
     {
+        WriteDiagnostic("Process entered.");
+
         WinRT.ComWrappersSupport.InitializeComWrappers();
+        WriteDiagnostic("COM wrappers initialized.");
+
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        WriteDiagnostic("Code pages encoding provider initialized.");
 
         try
         {
             using var instanceLock = AcquireInstanceLock();
             if (instanceLock is null)
+            {
+                WriteDiagnostic("Another background host instance is already running.");
                 return 0;
+            }
+
+            WriteDiagnostic("Instance lock acquired.");
 
             return RunWithRecoveryAsync().GetAwaiter().GetResult();
         }
