@@ -1,9 +1,8 @@
 name: Beta MSIXBundle
 
 on:
-  push:
-    branches:
-      - feature/background-sync-host
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
