@@ -551,18 +551,6 @@
 
   <Import Project="..\..\scripts\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
 
-  <!--
-    Visual Studio disables automatic ProjectReference builds while it orchestrates a solution.
-    A direct project build therefore needs to materialize the shared platform assembly explicitly.
-  -->
-  <Target Name="EnsurePlatformWindowsReferenceAssembly"
-          BeforeTargets="ResolveReferences"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true' and !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true;Restore=false" />
-  </Target>
-
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(MailNotificationHostOutput);$(CalendarNotificationHostOutput);$(PeopleNotificationHostOutput);$(TasksNotificationHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(MailNotificationHostOutput);Restore=false" />
