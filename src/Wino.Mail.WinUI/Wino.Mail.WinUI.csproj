@@ -348,6 +348,13 @@
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
 	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(WinoIsReleaseBuild)' != 'true'">
+    <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;UseNativeAot;WindowsAppSDKSelfContained;EnableMsixTooling;GenerateAppxPackageOnBuild;IncludePublishItemsOutputGroup" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Build the notification hosts before the app's packaging target publishes them. -->
     <ProjectReference Include="..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
