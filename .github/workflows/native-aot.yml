@@ -81,6 +81,21 @@ jobs:
             throw 'Wino.Platform.Windows reference assembly was not regenerated after deletion.'
           }
 
+      - name: Verify Debug packaged host runtime configuration
+        shell: pwsh
+        run: |
+          $packageRoot = "src/Wino.Mail.WinUI/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/AppX"
+          $notificationConfig = Join-Path $packageRoot "Wino.Mail.NotificationHost.runtimeconfig.json"
+          $backgroundConfig = Join-Path $packageRoot "BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
+
+          foreach ($configPath in @($notificationConfig, $backgroundConfig)) {
+            if (-not (Test-Path $configPath)) { throw "Missing Debug runtimeconfig: $configPath" }
+            $runtimeConfig = Get-Content $configPath -Raw | ConvertFrom-Json
+            if (-not $runtimeConfig.runtimeOptions.framework) {
+              throw "Debug framework-dependent runtimeconfig is missing framework metadata: $configPath"
+            }
+          }
+
       - name: Publish warning-clean Native AOT WinUI application
         shell: pwsh
         run: |
