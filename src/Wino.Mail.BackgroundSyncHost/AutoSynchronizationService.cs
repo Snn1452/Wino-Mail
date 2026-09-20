@@ -91,12 +91,14 @@ internal sealed class AutoSynchronizationService(
             var now = DateTimeOffset.UtcNow;
             var configuredInterval = intervalProvider();
 
-            if (activeInterval != configuredInterval)
+            if (activeInterval is null)
             {
-                var lastRunAt = nextRunAt.HasValue && activeInterval.HasValue
-                    ? nextRunAt.Value - activeInterval.Value
-                    : now;
-
+                activeInterval = configuredInterval;
+                nextRunAt = now;
+            }
+            else if (activeInterval != configuredInterval)
+            {
+                var lastRunAt = nextRunAt!.Value - activeInterval.Value;
                 nextRunAt = lastRunAt + configuredInterval;
                 activeInterval = configuredInterval;
             }
