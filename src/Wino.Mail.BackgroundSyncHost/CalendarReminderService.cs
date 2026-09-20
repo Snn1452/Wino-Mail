@@ -11,6 +11,7 @@ namespace Wino.Mail.BackgroundSyncHost;
 internal sealed class CalendarReminderService(
     ICalendarService calendarService,
     IAccountService accountService,
+    IPreferencesService preferencesService,
     INotificationBuilder notificationBuilder)
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
@@ -23,6 +24,9 @@ internal sealed class CalendarReminderService(
 
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (preferencesService.AppCloseBehavior == AppCloseBehavior.Terminate)
+                return;
+
             try
             {
                 await CheckRemindersAsync(cancellationToken).ConfigureAwait(false);
