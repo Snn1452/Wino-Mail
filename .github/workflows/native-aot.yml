@@ -48,6 +48,18 @@ jobs:
           dotnet restore src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj --configfile $env:NUGET_CONFIG_PATH -r win-x64 -p:Platform=x64 -p:Configuration=Debug -p:WinoIsReleaseBuild=false
           if ($LASTEXITCODE -ne 0) { throw 'Background sync host Debug restore failed.' }
 
+      - name: Verify parallel solution build dependency ordering
+        shell: pwsh
+        run: |
+          dotnet build WinoMail.slnx `
+            --configuration Debug `
+            --no-restore `
+            -m:4 `
+            /p:Platform=x64 `
+            /p:UseNativeAot=false `
+            /p:WinoIsReleaseBuild=false
+          if ($LASTEXITCODE -ne 0) { throw 'Parallel solution Debug build failed. Check project dependency ordering.' }
+
       - name: Build x64 Debug WinUI dependency graph
         shell: pwsh
         run: |
