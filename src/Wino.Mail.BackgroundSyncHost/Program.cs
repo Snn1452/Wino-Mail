@@ -34,12 +34,6 @@ internal static class Program
 
         try
         {
-            ReleaseIdentity.Initialize(
-                Package.Current.InstalledLocation.Path,
-                Package.Current.Id.Name,
-                Package.Current.Id.Publisher,
-                Package.Current.Id.FamilyName);
-
             using var instanceLock = AcquireInstanceLock();
             if (instanceLock is null)
                 return 0;
@@ -62,6 +56,7 @@ internal static class Program
         {
             try
             {
+                InitializeReleaseIdentity();
                 return await RunAsync().ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -95,6 +90,18 @@ internal static class Program
                 await Task.Delay(retryDelay).ConfigureAwait(false);
             }
         }
+    }
+
+    private static void InitializeReleaseIdentity()
+    {
+        var package = Package.Current;
+        ReleaseIdentity.Initialize(
+            package.InstalledLocation.Path,
+            package.Id.Name,
+            package.Id.Publisher,
+            package.Id.FamilyName);
+
+        WriteDiagnostic("Release identity initialized.");
     }
 
     private static async Task<int> RunAsync()
