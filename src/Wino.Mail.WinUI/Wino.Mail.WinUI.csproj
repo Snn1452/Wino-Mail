@@ -566,7 +566,7 @@
           Condition="'$(DesignTimeBuild)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true' and !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
             Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true;Restore=$(RestoreIgnoreFailedSources)" />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true;Restore=false" />
   </Target>
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
