@@ -42,6 +42,18 @@ jobs:
             -p:Platform=x64
           if ($LASTEXITCODE -ne 0) { throw 'SQLite smoke harness restore failed.' }
 
+      - name: Build x64 Debug WinUI dependency graph
+        shell: pwsh
+        run: |
+          dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj `
+            --configuration Debug `
+            -r win-x64 `
+            --no-restore `
+            /m:1 `
+            /p:Platform=x64 `
+            /p:UseNativeAot=false `
+            /p:WinoIsReleaseBuild=false
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI Debug build failed.' }
       - name: Publish warning-clean Native AOT WinUI application
         shell: pwsh
         run: |
