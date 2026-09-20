@@ -47,6 +47,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            WriteDiagnostic($"Fatal error: {ex}");
             Serilog.Log.Error(ex, "Background synchronization host failed.");
             return 1;
         }
@@ -54,6 +55,8 @@ internal static class Program
 
     private static async Task<int> RunAsync()
     {
+        WriteDiagnostic("Starting RunAsync.");
+
         var services = new ServiceCollection();
 
         services.AddLogging();
@@ -68,14 +71,20 @@ internal static class Program
         services.AddSingleton<BackgroundNotificationHostClient>();
         services.AddSingleton<INotificationBuilder, HeadlessNotificationBuilder>();
         services.AddSingleton<AutoSynchronizationService>();
-        services.AddSingleton<CalendarReminderService>();
+        WriteDiagnostic("Services registered.");\n        services.AddSingleton<CalendarReminderService>();
 
         await using var provider = services.BuildServiceProvider();
 
-        ConfigureApplicationPaths(provider);
-        ConfigureLogging(provider);
+        WriteDiagnostic("Service provider built.");
 
-        var migrationPlan = await provider
+        ConfigureApplicationPaths(provider);\n        ConfigureApplicationPaths(provider);
+        WriteDiagnostic("Application paths configured.");
+
+        ConfigureLogging(provider);\n        ConfigureLogging(provider);
+
+        WriteDiagnostic("Logging configured.");
+
+        var migrationPlan = await provider\n        var migrationPlan = await provider
             .GetRequiredService<IMigrationCoordinator>()
             .InspectAsync()
             .ConfigureAwait(false);
@@ -88,7 +97,9 @@ internal static class Program
             return 0;
         }
 
-        var preferences = provider.GetRequiredService<IPreferencesService>();
+        WriteDiagnostic($"Migration inspection completed: {migrationPlan.Status}.");
+
+        var preferences = provider.GetRequiredService<IPreferencesService>();\n        var preferences = provider.GetRequiredService<IPreferencesService>();
         if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
         {
             Serilog.Log.Information(
@@ -97,29 +108,43 @@ internal static class Program
             return 0;
         }
 
+        WriteDiagnostic("Background mode enabled.");
+
+        WriteDiagnostic("Initializing database.");
         await provider
+            .GetRequiredService<IDatabaseService>()\n        await provider
             .GetRequiredService<IDatabaseService>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
-        var accountService = provider.GetRequiredService<IAccountService>();
+        WriteDiagnostic("Database initialized.");
+
+        var accountService = provider.GetRequiredService<IAccountService>();\n        var accountService = provider.GetRequiredService<IAccountService>();
         if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
         {
             Serilog.Log.Information("Background synchronization host is exiting because no accounts are configured.");
             return 0;
         }
 
+        WriteDiagnostic("Account service ready.");
+
         await provider
+            .GetRequiredService<ITranslationService>()\n        await provider
             .GetRequiredService<ITranslationService>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
+        WriteDiagnostic("Translations initialized.");
+
         await provider
+            .GetRequiredService<SynchronizationManagerInitializer>()\n        await provider
             .GetRequiredService<SynchronizationManagerInitializer>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
-        using var hostCts = new CancellationTokenSource();
+        WriteDiagnostic("Synchronization manager initialized.");
+
+        using var hostCts = new CancellationTokenSource();\n        using var hostCts = new CancellationTokenSource();
 
         var synchronizationTask = provider
             .GetRequiredService<AutoSynchronizationService>()
@@ -206,6 +231,27 @@ internal static class Program
             Constants.ClientLogFile);
 
         provider.GetRequiredService<IWinoLogger>().SetupLogger(logPath);
+    }
+
+    private static void WriteDiagnostic(string message)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Wino Mail");
+
+            Directory.CreateDirectory(directory);
+
+            var path = Path.Combine(directory, "BackgroundSyncHost.startup.log");
+            File.AppendAllText(
+                path,
+                $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Diagnostics must never prevent the host from starting or stopping.
+        }
     }
 
     private static FileStream? AcquireInstanceLock()
