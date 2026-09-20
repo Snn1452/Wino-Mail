@@ -571,7 +571,7 @@
 <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
   </Target>
-<Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+<Target Name="PublishBackgroundSyncHost" BeforeTargets="Publish"
           Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
