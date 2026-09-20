@@ -50,13 +50,6 @@
       <Platform Solution="*|x64" Project="x64" />
       <Platform Solution="*|x86" Project="x86" />
     </Project>
-    <Project Path="src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj">
-      <BuildDependency Project="src/Wino.Platform.Windows/Wino.Platform.Windows.csproj" />
-      <Platform Solution="*|arm64" Project="ARM64" />
-      <Platform Solution="*|x64" Project="x64" />
-      <Platform Solution="*|x86" Project="x86" />
-      <Deploy />
-    </Project>
     <Project Path="src/Wino.Mail.NotificationHost/Wino.Mail.NotificationHost.csproj">
       <Platform Solution="*|arm64" Project="ARM64" />
       <Platform Solution="*|x64" Project="x64" />
