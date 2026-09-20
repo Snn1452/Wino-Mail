@@ -93,6 +93,14 @@ try {
         $ids = @($profiles | ForEach-Object { $_.NotificationActivatorIds.PSObject.Properties.Value })
         Assert-True (($ids | Sort-Object -Unique).Count -eq 12) 'Notification IDs collide.'
     }
+    Test-Case 'Background sync startup task points to the packaged host executable' {
+        [xml]$manifest = Get-Content (Join-Path $script:ReleaseRepositoryRoot 'src/Wino.Mail.WinUI/Package.appxmanifest')
+        $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
+        Assert-True ($null -ne $startup) 'Background sync startup task is missing.'
+        $extension = $startup.ParentNode.ParentNode
+        Assert-True ($extension.GetAttribute('Executable') -ceq 'Wino.Mail.BackgroundSyncHost.exe') 'Background sync host must be packaged at the package root.'
+        Assert-True ($extension.GetAttribute('EntryPoint') -ceq 'Windows.FullTrustApplication') 'Background sync host entry point is incorrect.'
+    }
     Test-Case 'Beta overlay requires all artwork and keeps protocols unchanged' {
         $plan = New-FixturePlan $false $true
         $layout = Join-Path $script:TestRoot 'overlay'
