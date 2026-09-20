@@ -357,13 +357,6 @@
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
 	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />
   </ItemGroup>
-  <ItemGroup Condition="'$(WinoIsReleaseBuild)' != 'true'">
-    <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-                      ReferenceOutputAssembly="false"
-                      Private="false"
-                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;UseNativeAot;WindowsAppSDKSelfContained;EnableMsixTooling;GenerateAppxPackageOnBuild;IncludePublishItemsOutputGroup" />
-  </ItemGroup>
-
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <!-- Release packaging builds the notification hosts as part of the WinUI packaging graph.
          Debug uses BuildNotificationHost below, avoiding executable ProjectReference self-containment
