@@ -563,6 +563,10 @@
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
 <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
+    <Delete Files="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json;
+                   $(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json;
+                   $(PeopleNotificationHostOutput)Wino.People.NotificationHost.runtimeconfig.json;
+                   $(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json" />
     <MSBuild Projects="@(NotificationHostProject)"
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
@@ -582,6 +586,7 @@
           SkipUnchangedFiles="true" />
   </Target>
   <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
+    <Delete Files="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
