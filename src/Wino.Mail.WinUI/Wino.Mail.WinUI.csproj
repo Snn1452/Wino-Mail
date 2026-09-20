@@ -61,11 +61,9 @@
 </PropertyGroup>
 
   <ItemGroup>
-    <!-- Keep the WinUI application's XAML application definition explicit.
-         Visual Studio/design-time builds can otherwise lose the generated App.xaml
-         intermediate when the solution contains non-UI headless projects. -->
-    <ApplicationDefinition Include="App.xaml"
-                           Condition="'@(ApplicationDefinition)' == ''">
+    <!-- Keep exactly one explicit XAML application definition for both VS and CLI builds. -->
+    <ApplicationDefinition Remove="App.xaml" />
+    <ApplicationDefinition Include="App.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
