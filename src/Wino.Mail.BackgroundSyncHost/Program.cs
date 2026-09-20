@@ -44,13 +44,56 @@ internal static class Program
             if (instanceLock is null)
                 return 0;
 
-            return RunAsync().GetAwaiter().GetResult();
+            return RunWithRecoveryAsync().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
             WriteDiagnostic($"Fatal error: {ex}");
             Serilog.Log.Error(ex, "Background synchronization host failed.");
             return 1;
+        }
+    }
+
+    private static async Task<int> RunWithRecoveryAsync()
+    {
+        var retryDelay = TimeSpan.FromSeconds(30);
+
+        while (true)
+        {
+            try
+            {
+                return await RunAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                WriteDiagnostic($"Background host run failed: {ex}");
+
+                try
+                {
+                    Serilog.Log.Error(ex, "Background synchronization host run failed.");
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    var preferences = new PreferencesService(new ConfigurationService(useCache: false));
+                    if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
+                        return 0;
+                }
+                catch
+                {
+                    // Keep retrying when preferences cannot yet be read. This commonly occurs while
+                    // packaged app infrastructure is still settling after login.
+                }
+
+                await Task.Delay(retryDelay).ConfigureAwait(false);
+            }
         }
     }
 
