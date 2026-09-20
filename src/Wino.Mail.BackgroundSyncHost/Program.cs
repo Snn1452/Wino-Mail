@@ -282,8 +282,14 @@ internal static class Program
                 if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
                     break;
 
-                if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
-                    break;
+                try
+                {
+                    _ = await accountService.GetAccountsAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "Background host account-presence check failed; keeping host alive.");
+                }
 
                 await Task.Delay(TimeSpan.FromSeconds(30), hostCts.Token).ConfigureAwait(false);
             }
