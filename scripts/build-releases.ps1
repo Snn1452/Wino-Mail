@@ -12,6 +12,7 @@ param(
     [switch]$Store,
     [switch]$Beta,
     [switch]$Sideload,
+    [switch]$UnsignedBeta,
     [ValidateSet('x86', 'x64', 'ARM64')][string[]]$Architectures = @('x64'),
     [string]$BetaAssetsPath,
     [string]$StoreTestCertificateThumbprint
@@ -22,6 +23,7 @@ $ErrorActionPreference = 'Stop'
 $script:ReleaseRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:SideloadIdentityName = 'WinoMail.Sideload'
 $script:BetaAssetsPath = $BetaAssetsPath
+$script:UnsignedBeta = [bool]$UnsignedBeta
 $script:SideloadPublisher = 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL'
 
 function Read-ReleaseChoice {
@@ -134,7 +136,7 @@ function Get-ReleaseTools {
 
     $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
     $required = @('makeappx.exe', 'makepri.exe')
-    if ($Selection.Store -or $Selection.Beta -or $Selection.Sideload) { $required += 'signtool.exe' }
+    if ($Selection.Store -or $Selection.Sideload -or ($Selection.Beta -and -not $script:UnsignedBeta)) { $required += 'signtool.exe' }
     $sdk = Get-ChildItem -LiteralPath $sdkRoot -Directory | Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } |
         Sort-Object { [version]$_.Name } -Descending | Where-Object {
             $directory = $_.FullName
@@ -145,7 +147,7 @@ function Get-ReleaseTools {
         # Use the repository-pinned SDK's MSBuild. VS 2022's SDK resolver cannot load .NET 10.
         MSBuild = $dotnet; MakeAppx = Join-Path $sdk.FullName 'x64/makeappx.exe'
         MakePri = Join-Path $sdk.FullName 'x64/makepri.exe'
-        SignTool = if ($Selection.Store -or $Selection.Beta -or $Selection.Sideload) { Join-Path $sdk.FullName 'x64/signtool.exe' } else { $null }
+        SignTool = if ($Selection.Store -or $Selection.Sideload -or ($Selection.Beta -and -not $script:UnsignedBeta)) { Join-Path $sdk.FullName 'x64/signtool.exe' } else { $null }
     }
 }
 
@@ -872,16 +874,28 @@ function Invoke-ReleaseBuild {
                 }
             }
             else { $storeHashes = $hashes }
-            $stage = 'Azure signing'
-            Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
-            $signedHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
             $folder = Join-Path $staging "ready/$($channel.FolderName)"
             $null = New-Item -ItemType Directory -Path $folder -Force
             $channelBundle = Join-Path $folder "$($channel.FolderName).msixbundle"
-            Copy-Item -LiteralPath $bundle -Destination $channelBundle
-            if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $signedHash) { throw 'The final bundle differs from its verified signed package.' }
-            Copy-ReleaseDependencies (Join-Path $staging 'sdk') (Join-Path $folder 'Dependencies')
-            New-SideloadAppInstaller $channelBundle $Plan $Signing.Distributions[$channel.Name] $channel.Name
+            if ($channel.Name -eq 'Beta' -and $script:UnsignedBeta) {
+                $stage = 'finalize unsigned beta bundle'
+                Copy-Item -LiteralPath $bundle -Destination $channelBundle
+                $bundleHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
+                if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $bundleHash) {
+                    throw 'The unsigned beta bundle differs from its verified package.'
+                }
+            }
+            else {
+                $stage = 'Azure signing'
+                Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
+                $signedHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
+                Copy-Item -LiteralPath $bundle -Destination $channelBundle
+                if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $signedHash) {
+                    throw 'The final bundle differs from its verified signed package.'
+                }
+                Copy-ReleaseDependencies (Join-Path $staging 'sdk') (Join-Path $folder 'Dependencies')
+                New-SideloadAppInstaller $channelBundle $Plan $Signing.Distributions[$channel.Name] $channel.Name
+            }
         }
         $stage = 'finalize outputs'
         if ((Get-FileHash -LiteralPath $Plan.ManifestPath -Algorithm SHA256).Hash -cne $Plan.ManifestHash) {
@@ -915,7 +929,7 @@ function Invoke-InteractiveRelease {
     $plan.Destinations | ForEach-Object { Write-Host "Output: $_" }
     $tools = Get-ReleaseTools $selection
     $storeCertificate = if ($selection.Store) { Get-StoreSigningCertificate $plan $StoreTestCertificateThumbprint } else { $null }
-    $signing = if ($selection.Beta -or $selection.Sideload) { Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload } else { $null }
+    $signing = if (($selection.Beta -and -not $script:UnsignedBeta) -or $selection.Sideload) { Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload } else { $null }
     $symbolsPath = Invoke-ReleaseBuild $plan $tools $signing $storeCertificate
     if (-not $NonInteractive -and -not [string]::IsNullOrWhiteSpace([string]$symbolsPath)) {
         $upload = Read-ReleaseChoice "Upload symbols for $($plan.Version) now? (yes/no)" @{ yes = $true; y = $true; no = $false; n = $false }
