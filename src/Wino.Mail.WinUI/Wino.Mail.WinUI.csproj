@@ -355,7 +355,9 @@
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls\Wino.Mail.Controls.csproj" />
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.Core\Wino.Mail.Controls.Core.csproj" />
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
-	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />
+	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
+                      BuildReference="true"
+                      ReferenceOutputAssembly="true" />
   </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <!-- Release packaging builds the notification hosts as part of the WinUI packaging graph.
@@ -566,14 +568,15 @@
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
-  <!-- Visual Studio solution builds can set BuildProjectReferences=false while orchestrating
-       project nodes. Build the shared Windows platform project explicitly before ResolveReferences
-       so WinUI never sees a missing Wino.Platform.Windows.dll. -->
+  <!-- Visual Studio may orchestrate solution dependencies separately and set
+       BuildProjectReferences=false on the WinUI project. Build the shared Windows platform
+       dependency before ResolveProjectReferences so the compiler always receives a real DLL. -->
   <Target Name="EnsurePlatformWindowsBuiltForVisualStudio"
-          BeforeTargets="ResolveReferences"
-          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(BuildProjectReferences)' != 'true'">
+          BeforeTargets="ResolveProjectReferences"
+          Condition="'$(BuildingInsideVisualStudio)' == 'true'">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
             Targets="Build"
+            Condition="!Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\Wino.Platform.Windows.dll')"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true" />
   </Target>
 
