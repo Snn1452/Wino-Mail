@@ -546,23 +546,10 @@
   -->
   <Target Name="BuildPlatformWindowsForDirectVisualStudioBuild"
           BeforeTargets="ResolveReferences"
-          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true'">
+          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true' and !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true" />
-  </Target>
-
-  <Target Name="BuildBackgroundSyncHostForDebug" AfterTargets="Build"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)Wino.Mail.BackgroundSyncHost.exe"
-          DestinationFolder="$(TargetDir)"
-          SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)Wino.Mail.BackgroundSyncHost.exe')" />
-    <Error Condition="!Exists('$(TargetDir)Wino.Mail.BackgroundSyncHost.exe')"
-           Text="BackgroundSyncHost debug build did not produce Wino.Mail.BackgroundSyncHost.exe." />
+            Targets="Restore;Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true" />
   </Target>
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
