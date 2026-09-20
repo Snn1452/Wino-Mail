@@ -579,7 +579,7 @@
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
 
   </Target>
-  <Target Name="StageDebugHostRuntimeConfigs" AfterTargets="PrepareForBuild"
+  <Target Name="StageDebugHostRuntimeConfigs" AfterTargets="Build"
           Condition="'$(WinoIsReleaseBuild)' != 'true'">
     <MakeDir Directories="$(TargetDir)AppX;$(TargetDir)AppX\BackgroundSyncHost" />
 
