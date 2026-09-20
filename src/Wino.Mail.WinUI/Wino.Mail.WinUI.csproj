@@ -357,7 +357,8 @@
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
 	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
                       BuildReference="true"
-                      ReferenceOutputAssembly="true" />
+                      ReferenceOutputAssembly="true"
+                      GlobalPropertiesToRemove="SelfContained;PublishAot;PublishTrimmed;TrimMode;UseNativeAot;GenerateAppxPackageOnBuild;EnableMsixTooling;IncludePublishItemsOutputGroup" />
   </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <!-- Release packaging builds the notification hosts as part of the WinUI packaging graph.
