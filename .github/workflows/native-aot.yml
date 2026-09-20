@@ -60,12 +60,12 @@ jobs:
             /p:UseNativeAot=false `
             /p:WinoIsReleaseBuild=false
           if ($LASTEXITCODE -ne 0) { throw 'WinUI Debug build failed.' }
-      - name: Verify repair of missing platform reference assembly
+      - name: Verify Debug platform dependency assembly is regenerated
         shell: pwsh
         run: |
-          $platformRef = "src/Wino.Platform.Windows/obj/x64/Debug/net10.0-windows10.0.26100.0/win-x64/ref/Wino.Platform.Windows.dll"
-          if (-not (Test-Path $platformRef)) { throw 'Expected Wino.Platform.Windows reference assembly was not produced by the first Debug build.' }
-          Remove-Item $platformRef -Force
+          $platformAssembly = "src/Wino.Platform.Windows/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Wino.Platform.Windows.dll"
+          if (-not (Test-Path $platformAssembly)) { throw 'Expected Wino.Platform.Windows implementation assembly was not produced by the first Debug build.' }
+          Remove-Item $platformAssembly -Force
 
           dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj `
             --configuration Debug `
@@ -75,10 +75,10 @@ jobs:
             /p:Platform=x64 `
             /p:UseNativeAot=false `
             /p:WinoIsReleaseBuild=false
-          if ($LASTEXITCODE -ne 0) { throw 'WinUI Debug build did not repair the missing platform reference assembly.' }
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI Debug build did not repair the missing platform dependency assembly.' }
 
-          if (-not (Test-Path $platformRef)) {
-            throw 'Wino.Platform.Windows reference assembly was not regenerated after deletion.'
+          if (-not (Test-Path $platformAssembly)) {
+            throw 'Wino.Platform.Windows implementation assembly was not regenerated after deletion.'
           }
 
       - name: Verify Debug packaged host runtime configuration
