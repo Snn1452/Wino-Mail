@@ -355,6 +355,15 @@
     <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Keep the background host in the normal MSBuild dependency graph so shared projects such
+         as Wino.Platform.Windows are built exactly once in solution/IDE builds. -->
+    <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+                      ReferenceOutputAssembly="false"
+                      BuildReference="true"
+                      Private="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;WindowsAppSDKSelfContained;EnableMsixTooling;GenerateAppxPackageOnBuild" />
+  </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Ical.Net" />
     <TrimmerRootDescriptor Include="ILLink.AotRoots.xml" />
@@ -540,6 +549,14 @@
 
   <Import Project="..\..\scripts\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
 
+  <Target Name="CopyBackgroundSyncHostForDebug" AfterTargets="Build"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)Wino.Mail.BackgroundSyncHost.exe"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)Wino.Mail.BackgroundSyncHost.exe')" />
+  </Target>
+
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(MailNotificationHostOutput);$(CalendarNotificationHostOutput);$(PeopleNotificationHostOutput);$(TasksNotificationHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(MailNotificationHostOutput);Restore=false" />
@@ -551,32 +568,10 @@
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
-
-  <Target Name="RestoreBackgroundSyncHost" BeforeTargets="Restore">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-            Targets="Restore"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
-  </Target>
-
-  <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
+<Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
   </Target>
-
-  <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild"
-          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
-    <ItemGroup>
-      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
-      <Content Include="@(_BackgroundSyncHostPayload)"
-               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
-               CopyToOutputDirectory="PreserveNewest"
-               CopyToPublishDirectory="PreserveNewest" />
-    </ItemGroup>
-  </Target>
-
-  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+<Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
           Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
