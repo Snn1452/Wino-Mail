@@ -1,0 +1,82 @@
+name: Beta MSIXBundle
+
+on:
+  push:
+    branches:
+      - feature/background-sync-host
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-beta-msixbundle:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate beta packaging logic
+        shell: pwsh
+        run: ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Build beta MSIXBundle
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/build-releases.ps1 -NonInteractive -Beta -UnsignedBeta -Architectures x64
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
+
+      - name: Verify beta bundle identity
+        shell: pwsh
+        run: |
+          $bundles = @(Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*' -Filter '*.msixbundle' -Recurse -File)
+          if ($bundles.Count -ne 1) { throw "Expected exactly one beta MSIXBundle, found $($bundles.Count)." }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead($bundles[0].FullName)
+          try {
+            $entry = $archive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $entry) { throw 'The beta bundle is missing AppxBundleManifest.xml.' }
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+          }
+          finally {
+            $archive.Dispose()
+          }
+
+          $identity = $manifest.Bundle.Identity
+          if ([string]$identity.Name -cne 'WinoMail.Beta') { throw "Unexpected beta package name: $($identity.Name)" }
+          if ([string]$identity.Publisher -cne 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL') {
+            throw "Unexpected beta publisher: $($identity.Publisher)"
+          }
+
+          $hash = (Get-FileHash -LiteralPath $bundles[0].FullName -Algorithm SHA256).Hash
+          @(
+            "Bundle=$($bundles[0].FullName)"
+            "Version=$($identity.Version)"
+            "PackageName=$($identity.Name)"
+            "Publisher=$($identity.Publisher)"
+            "Architecture=x64"
+            "Signed=false"
+            "SHA256=$hash"
+            "Commit=${{ github.sha }}"
+          ) | Set-Content "$env:GITHUB_WORKSPACE/beta-msixbundle-metadata.txt" -Encoding utf8
+
+      - name: Upload beta MSIXBundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-MSIXBundle
+          path: |
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/*.msixbundle
+            beta-msixbundle-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
