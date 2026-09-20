@@ -61,15 +61,6 @@
 </PropertyGroup>
 
   <ItemGroup>
-    <!-- Keep exactly one explicit XAML application definition for both VS and CLI builds. -->
-    <ApplicationDefinition Remove="App.xaml" />
-    <ApplicationDefinition Include="App.xaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </ApplicationDefinition>
-  </ItemGroup>
-
-  <ItemGroup>
     <NotificationHostProject Include="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" />
     <NotificationHostProject Include="$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" />
     <NotificationHostProject Include="$(MSBuildProjectDirectory)\..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" />
