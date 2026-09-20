@@ -32,8 +32,12 @@ internal sealed class AutoSynchronizationService(
         {
             var completed = await Task.WhenAny(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
 
+            // Any loop completing ends the host. The monitor completes only when background mode
+            // is disabled; the sync loops should not silently leave the other loop running.
+            lifetimeCts.Cancel();
+
             if (completed == monitor)
-                lifetimeCts.Cancel();
+                await completed.ConfigureAwait(false);
 
             await Task.WhenAll(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
         }
