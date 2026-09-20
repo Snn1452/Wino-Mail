@@ -17,7 +17,9 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <!-- Bundle the Windows App SDK and .NET runtime into per-architecture MSIX outputs. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <!-- Debug builds stay framework-dependent so the lightweight background host can be a normal
+         project dependency; Release AOT builds remain self-contained. -->
+    <SelfContained Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(RuntimeIdentifier)' != ''">true</SelfContained>
     <UseNativeAot Condition="'$(UseNativeAot)' == ''">true</UseNativeAot>
     <PublishAot Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishAot>
     <PublishTrimmed Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishTrimmed>
