@@ -19,6 +19,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Debug builds stay framework-dependent so the lightweight background host can be a normal
          project dependency; Release AOT builds remain self-contained. -->
+    <SelfContained Condition="'$(WinoIsReleaseBuild)' != 'true'">false</SelfContained>
     <SelfContained Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(RuntimeIdentifier)' != ''">true</SelfContained>
     <UseNativeAot Condition="'$(UseNativeAot)' == ''">true</UseNativeAot>
     <PublishAot Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishAot>
