@@ -5,7 +5,7 @@ using Wino.Core.Domain.Interfaces;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
-internal sealed class BackgroundStatePersistenceService : IStatePersistanceService
+internal sealed partial class BackgroundStatePersistenceService : IStatePersistanceService
 {
     public event EventHandler<string>? StatePropertyChanged
     {
