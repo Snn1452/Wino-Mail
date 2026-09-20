@@ -363,8 +363,10 @@
                       GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained;UseNativeAot;WindowsAppSDKSelfContained;EnableMsixTooling;GenerateAppxPackageOnBuild;IncludePublishItemsOutputGroup" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Build the notification hosts before the app's packaging target publishes them. -->
+  <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true'">
+    <!-- Release packaging builds the notification hosts as part of the WinUI packaging graph.
+         Debug uses BuildNotificationHost below, avoiding executable ProjectReference self-containment
+         validation while keeping the solution build graph deterministic. -->
     <ProjectReference Include="..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
