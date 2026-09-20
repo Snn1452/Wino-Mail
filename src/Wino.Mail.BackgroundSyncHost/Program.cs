@@ -31,12 +31,6 @@ internal static class Program
     {
         WriteDiagnostic("Process entered.");
 
-        WinRT.ComWrappersSupport.InitializeComWrappers();
-        WriteDiagnostic("COM wrappers initialized.");
-
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        WriteDiagnostic("Code pages encoding provider initialized.");
-
         try
         {
             using var instanceLock = AcquireInstanceLock();
@@ -66,6 +60,12 @@ internal static class Program
         {
             try
             {
+                WinRT.ComWrappersSupport.InitializeComWrappers();
+                WriteDiagnostic("COM wrappers initialized.");
+
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                WriteDiagnostic("Code pages encoding provider initialized.");
+
                 InitializeReleaseIdentity();
                 return await RunAsync().ConfigureAwait(false);
             }
