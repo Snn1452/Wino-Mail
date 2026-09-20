@@ -18,6 +18,7 @@ internal sealed class AutoSynchronizationService(
 {
     private const int InboxSyncsPerFullSync = 20;
     private readonly ConcurrentDictionary<Guid, int> _counters = new();
+    private readonly SemaphoreSlim _automaticSynchronizationSemaphore = new(1, 1);
 
     public async Task RunAsync(CancellationToken token)
     {
@@ -130,24 +131,43 @@ internal sealed class AutoSynchronizationService(
 
     private async Task MailTickAsync(CancellationToken token)
     {
-        var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
+        if (!await _automaticSynchronizationSemaphore.WaitAsync(0, token).ConfigureAwait(false))
+            return;
+
+        try
+        {
+            var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
         var ids = accounts.Select(account => account.Id).ToHashSet();
 
         foreach (var id in _counters.Keys.Where(id => !ids.Contains(id)).ToList())
             _counters.TryRemove(id, out _);
 
-        await Task.WhenAll(accounts.Select(account => MailAccountAsync(account, token))).ConfigureAwait(false);
+            await Task.WhenAll(accounts.Select(account => MailAccountAsync(account, token))).ConfigureAwait(false);
+        }
+        finally
+        {
+            _automaticSynchronizationSemaphore.Release();
+        }
     }
 
     private async Task CalendarTickAsync(CancellationToken token)
     {
-        var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
+        await _automaticSynchronizationSemaphore.WaitAsync(token).ConfigureAwait(false);
 
-        await Task.WhenAll(
-                accounts
-                    .Where(account => account.IsCalendarAccessGranted)
-                    .Select(account => CalendarAccountAsync(account, token)))
-            .ConfigureAwait(false);
+        try
+        {
+            var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
+
+            await Task.WhenAll(
+                    accounts
+                        .Where(account => account.IsCalendarAccessGranted)
+                        .Select(account => CalendarAccountAsync(account, token)))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _automaticSynchronizationSemaphore.Release();
+        }
     }
 
     private async Task CalendarAccountAsync(MailAccount account, CancellationToken token)
