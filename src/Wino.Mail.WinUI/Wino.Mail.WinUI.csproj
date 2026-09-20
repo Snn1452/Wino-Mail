@@ -561,12 +561,12 @@
     Visual Studio disables automatic ProjectReference builds while it orchestrates a solution.
     A direct project build therefore needs to materialize the shared platform assembly explicitly.
   -->
-  <Target Name="BuildPlatformWindowsForDirectVisualStudioBuild"
+  <Target Name="EnsurePlatformWindowsReferenceAssembly"
           BeforeTargets="ResolveReferences"
-          Condition="'$(BuildingInsideVisualStudio)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true' and !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')">
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(WinoSkipPlatformWindowsBuild)' != 'true' and !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-            Targets="Restore;Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true" />
+            Targets="Build"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);BuildProjectReferences=true;Restore=$(RestoreIgnoreFailedSources)" />
   </Target>
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
@@ -589,6 +589,13 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
+    <ItemGroup>
+      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
+    </ItemGroup>
+    <MakeDir Directories="$(PublishDir)BackgroundSyncHost" />
+    <Copy SourceFiles="@(_BackgroundSyncHostPayload)"
+          DestinationFolder="$(PublishDir)BackgroundSyncHost\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
     <ItemGroup>
