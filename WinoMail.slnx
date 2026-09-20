@@ -168,6 +168,9 @@
     </Project>
   </Folder>
   <Project Path="src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj" Id="bf340564-2cc8-486d-924d-8474cb5f3316">
+    <!-- Explicit solution dependencies keep parallel IDE builds from racing shared outputs. -->
+    <BuildDependency Project="src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj" />
+    <BuildDependency Project="src/Wino.Platform.Windows/Wino.Platform.Windows.csproj" />
     <Platform Solution="*|arm64" Project="ARM64" />
     <Platform Solution="*|x64" Project="x64" />
     <Platform Solution="*|x86" Project="x86" />
