@@ -17,10 +17,11 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <!-- Bundle the Windows App SDK and .NET runtime into per-architecture MSIX outputs. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <!-- Debug builds stay framework-dependent so the lightweight background host can be a normal
-         project dependency; Release AOT builds remain self-contained. -->
-    <SelfContained Condition="'$(WinoIsReleaseBuild)' != 'true'">false</SelfContained>
-    <SelfContained Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <!-- Both the UI and headless background host are self-contained in local and release builds.
+         The background host is launched independently by the startup task and must not depend on
+         a machine-wide .NET runtime installation. -->
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <AppxGeneratePrisForPortableLibrariesEnabled>false</AppxGeneratePrisForPortableLibrariesEnabled>
     <UseNativeAot Condition="'$(UseNativeAot)' == ''">true</UseNativeAot>
     <PublishAot Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishAot>
     <PublishTrimmed Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishTrimmed>
