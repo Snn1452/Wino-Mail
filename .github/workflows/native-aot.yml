@@ -77,7 +77,9 @@ jobs:
         shell: pwsh
         run: |
           $platformAssembly = "src/Wino.Platform.Windows/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Wino.Platform.Windows.dll"
+          $platformReferenceAssembly = "src/Wino.Platform.Windows/obj/x64/Debug/net10.0-windows10.0.26100.0/win-x64/ref/Wino.Platform.Windows.dll"
           if (-not (Test-Path $platformAssembly)) { throw 'Expected Wino.Platform.Windows implementation assembly was not produced by the first Debug build.' }
+          if (-not (Test-Path $platformReferenceAssembly)) { throw 'Expected Wino.Platform.Windows reference assembly was not produced in obj/ref.' }
           Remove-Item $platformAssembly -Force
 
           dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj `
@@ -92,6 +94,9 @@ jobs:
 
           if (-not (Test-Path $platformAssembly)) {
             throw 'Wino.Platform.Windows implementation assembly was not regenerated after deletion.'
+          }
+          if (-not (Test-Path $platformReferenceAssembly)) {
+            throw 'Wino.Platform.Windows reference assembly was not regenerated after deletion.'
           }
 
       - name: Verify Debug packaged host runtime configuration
