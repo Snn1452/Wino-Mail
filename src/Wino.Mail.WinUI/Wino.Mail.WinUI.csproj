@@ -571,19 +571,6 @@
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
 
-    <MakeDir Directories="$(TargetDir)AppX" />
-    <Copy SourceFiles="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Mail.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Calendar.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.People.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Tasks.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="true" />
   </Target>
   <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
     <Delete Files="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json" />
@@ -591,11 +578,28 @@
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
 
-    <MakeDir Directories="$(TargetDir)AppX\BackgroundSyncHost" />
+  </Target>
+  <Target Name="StageDebugHostRuntimeConfigs" AfterTargets="PrepareForBuild"
+          Condition="'$(WinoIsReleaseBuild)' != 'true'">
+    <MakeDir Directories="$(TargetDir)AppX;$(TargetDir)AppX\BackgroundSyncHost" />
+
+    <Copy SourceFiles="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json"
+          DestinationFiles="$(TargetDir)AppX\Wino.Mail.NotificationHost.runtimeconfig.json"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json"
+          DestinationFiles="$(TargetDir)AppX\Wino.Calendar.NotificationHost.runtimeconfig.json"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.runtimeconfig.json"
+          DestinationFiles="$(TargetDir)AppX\Wino.People.NotificationHost.runtimeconfig.json"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json"
+          DestinationFiles="$(TargetDir)AppX\Wino.Tasks.NotificationHost.runtimeconfig.json"
+          SkipUnchangedFiles="false" />
     <Copy SourceFiles="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
           DestinationFiles="$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.runtimeconfig.json"
-          SkipUnchangedFiles="true" />
+          SkipUnchangedFiles="false" />
   </Target>
+
 <Target Name="PublishBackgroundSyncHost" BeforeTargets="Publish"
           Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
