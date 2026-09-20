@@ -29,26 +29,45 @@ internal static class Program
     [STAThread]
     private static int Main()
     {
-        WriteDiagnostic("Process entered.");
+        WriteDiagnostic($"Process entered. BaseDirectory={AppContext.BaseDirectory}");
 
-        try
+        while (true)
         {
-            using var instanceLock = AcquireInstanceLock();
-            if (instanceLock is null)
+            try
             {
-                WriteDiagnostic("Another background host instance is already running.");
-                return 0;
+                using var instanceLock = AcquireInstanceLock();
+                if (instanceLock is null)
+                {
+                    WriteDiagnostic("Another background host instance is already running.");
+                    return 0;
+                }
+
+                WriteDiagnostic("Instance lock acquired.");
+                return RunWithRecoveryAsync().GetAwaiter().GetResult();
+            }
+            catch (IOException ex)
+            {
+                WriteDiagnostic($"Background host lock/storage startup failed: {ex}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                WriteDiagnostic($"Background host startup access was denied: {ex}");
+            }
+            catch (Exception ex)
+            {
+                WriteDiagnostic($"Fatal error: {ex}");
+                try
+                {
+                    Serilog.Log.Error(ex, "Background synchronization host failed.");
+                }
+                catch
+                {
+                }
+
+                return 1;
             }
 
-            WriteDiagnostic("Instance lock acquired.");
-
-            return RunWithRecoveryAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            WriteDiagnostic($"Fatal error: {ex}");
-            Serilog.Log.Error(ex, "Background synchronization host failed.");
-            return 1;
+            Thread.Sleep(TimeSpan.FromSeconds(5));
         }
     }
 
