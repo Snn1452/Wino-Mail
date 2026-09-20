@@ -5,6 +5,7 @@ using System.Threading;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using SQLite;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
@@ -212,7 +213,7 @@ internal static class Program
                 WriteDiagnostic($"Starting {operationName}.");
                 return await operation().ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or SQLiteException or System.ComponentModel.Win32Exception)
             {
                 lastException = ex;
                 WriteDiagnostic($"{operationName} failed and will be retried: {ex.GetType().Name}: {ex.Message}");
