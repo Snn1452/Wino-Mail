@@ -187,6 +187,38 @@ internal static class Program
         return 0;
     }
 
+    private static bool IsBackgroundSyncEnabled(AppCloseBehavior behavior)
+        => behavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
+            or AppCloseBehavior.RunInBackgroundWithoutTrayIcon;
+
+    private static async Task MonitorHostLifetimeAsync(
+        IPreferencesService preferences,
+        IAccountService accountService,
+        CancellationTokenSource hostCts)
+    {
+        try
+        {
+            while (!hostCts.IsCancellationRequested)
+            {
+                if (!IsBackgroundSyncEnabled(preferences.AppCloseBehavior))
+                    break;
+
+                if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
+                    break;
+
+                await Task.Delay(TimeSpan.FromSeconds(30), hostCts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (hostCts.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (!hostCts.IsCancellationRequested)
+                hostCts.Cancel();
+        }
+    }
+
     private static async Task<T> RetryStartupStepAsync<T>(
         string operationName,
         Func<Task<T>> operation)
