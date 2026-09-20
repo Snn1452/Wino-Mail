@@ -250,7 +250,7 @@ internal static class Program
         var configuration = provider.GetRequiredService<IApplicationConfiguration>();
         var logPath = Path.Combine(
             configuration.ApplicationDataFolderPath,
-            Constants.ClientLogFile);
+            "BackgroundSyncHost.log");
 
         provider.GetRequiredService<IWinoLogger>().SetupLogger(logPath);
     }
