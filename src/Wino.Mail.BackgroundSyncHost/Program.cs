@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Linq;
 using System.Threading.Tasks;
@@ -28,6 +29,7 @@ internal static class Program
     private static int Main()
     {
         WinRT.ComWrappersSupport.InitializeComWrappers();
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         try
         {
