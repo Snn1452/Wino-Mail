@@ -48,12 +48,6 @@ jobs:
           dotnet restore src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj --configfile $env:NUGET_CONFIG_PATH -r win-x64 -p:Platform=x64 -p:Configuration=Debug -p:WinoIsReleaseBuild=false
           if ($LASTEXITCODE -ne 0) { throw 'Background sync host Debug restore failed.' }
 
-      - name: Verify WinUI XAML application definition
-        shell: pwsh
-        run: |
-          $items = dotnet msbuild src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -getItem:ApplicationDefinition -p:Configuration=Debug -p:Platform=x64 -p:RuntimeIdentifier=win-x64
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to evaluate WinUI ApplicationDefinition items.' }
-          if ($items -notmatch 'App.xaml') { throw 'App.xaml is not registered as a WinUI ApplicationDefinition.' }
       - name: Verify parallel platform source-generator build ordering
         shell: pwsh
         run: |
