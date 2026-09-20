@@ -275,6 +275,8 @@ internal static class Program
         IAccountService accountService,
         CancellationTokenSource hostCts)
     {
+        var consecutiveEmptyAccountChecks = 0;
+
         try
         {
             while (!hostCts.IsCancellationRequested)
@@ -284,10 +286,23 @@ internal static class Program
 
                 try
                 {
-                    _ = await accountService.GetAccountsAsync().ConfigureAwait(false);
+                    var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
+
+                    if (accounts.Count == 0)
+                    {
+                        consecutiveEmptyAccountChecks++;
+
+                        if (consecutiveEmptyAccountChecks >= 3)
+                            break;
+                    }
+                    else
+                    {
+                        consecutiveEmptyAccountChecks = 0;
+                    }
                 }
                 catch (Exception ex)
                 {
+                    consecutiveEmptyAccountChecks = 0;
                     Serilog.Log.Warning(ex, "Background host account-presence check failed; keeping host alive.");
                 }
 
