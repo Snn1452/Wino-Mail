@@ -6,8 +6,6 @@
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
     <IsAotCompatible>false</IsAotCompatible>
-    <!-- This utility layer is consumed directly by WinUI and the headless host. Using its implementation assembly avoids stale/missing ref assemblies during IDE solution builds. -->
-    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" />
