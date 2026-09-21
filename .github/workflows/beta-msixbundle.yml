@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - feature/background-sync-host
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
