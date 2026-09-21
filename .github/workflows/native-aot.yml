@@ -15,7 +15,7 @@ concurrency:
 jobs:
   native-aot:
     name: Publish x64 and run SQLite AOT smoke test
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
     env:
       NUGET_CONFIG_PATH: ${{ github.workspace }}\nuget.config
