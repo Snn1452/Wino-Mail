@@ -360,7 +360,7 @@ internal static class Program
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
     {
-        var configuration = provider.GetRequiredService<IApplicationConfiguration>();
+        var configuration = provider.GetRequiredService<ApplicationConfiguration>();
         var appData = ApplicationData.Current;
         var releaseIdentity = ReleaseIdentity.Current;
 
