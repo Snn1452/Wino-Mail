@@ -630,27 +630,24 @@
            Text="Debug BackgroundSyncHost runtimeconfig was not copied into AppX." />
   </Target>
 
-<Target Name="PublishBackgroundSyncHost" BeforeTargets="Publish"
-          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
+<Target Name="PrepareBackgroundSyncHostPackagePayload"
+        AfterTargets="_ComputeAppxPackagePayload"
+        BeforeTargets="_GenerateAppxPackageFile"
+        Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
-    <ItemGroup>
-      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
-    </ItemGroup>
-    <MakeDir Directories="$(PublishDir)BackgroundSyncHost" />
-    <Copy SourceFiles="@(_BackgroundSyncHostPayload)"
-          DestinationFolder="$(PublishDir)BackgroundSyncHost\%(RecursiveDir)"
-          SkipUnchangedFiles="true" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
     <ItemGroup>
-      <_BackgroundSyncHostPayload Include="$(BackgroundSyncHostOutput)**\*" />
-      <Content Include="@(_BackgroundSyncHostPayload)"
-               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
-               CopyToOutputDirectory="PreserveNewest"
-               CopyToPublishDirectory="PreserveNewest" />
+      <AppxPackagePayload Remove="@(AppxPackagePayload)"
+                          MatchOnMetadata="TargetPath"
+                          MatchOnMetadataOptions="PathLike"
+                          Condition="'%(AppxPackagePayload.TargetPath)' == 'Wino.Mail.BackgroundSyncHost.exe'" />
+      <AppxPackagePayload Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe">
+        <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
+      </AppxPackagePayload>
     </ItemGroup>
   </Target>
 </Project>
