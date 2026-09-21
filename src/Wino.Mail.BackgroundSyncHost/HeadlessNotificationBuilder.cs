@@ -245,7 +245,7 @@ internal sealed class HeadlessNotificationBuilder(
                 builder.AddComboBox(selectionBox);
                 builder.AddButton(
                     new AppNotificationButton(Translator.CalendarReminder_SnoozeAction)
-                        .SetIcon(new Uri(GetNotificationIconUri("calendar-snooze")))
+                        .SetIcon(GetNotificationIconUri("calendar-snooze"))
                         .AddArgument(Constants.ToastCalendarActionKey, Constants.ToastCalendarSnoozeAction)
                         .AddArgument(Constants.ToastCalendarItemIdKey, calendarItem.Id.ToString())
                         .AddArgument(Constants.ToastModeKey, Constants.ToastModeCalendar));
@@ -261,7 +261,7 @@ internal sealed class HeadlessNotificationBuilder(
             {
                 builder.AddButton(
                     new AppNotificationButton(Translator.CalendarEventDetails_JoinOnline)
-                        .SetIcon(new Uri(GetNotificationIconUri("calendar-join")))
+                        .SetIcon(GetNotificationIconUri("calendar-join"))
                         .AddArgument(Constants.ToastCalendarActionKey, Constants.ToastCalendarJoinOnlineAction)
                         .AddArgument(Constants.ToastCalendarItemIdKey, calendarItem.Id.ToString())
                         .AddArgument(Constants.ToastModeKey, Constants.ToastModeCalendar));
