@@ -78,12 +78,173 @@ jobs:
             "Commit=${{ github.sha }}"
           ) | Set-Content "$env:GITHUB_WORKSPACE/beta-msixbundle-metadata.txt" -Encoding utf8
 
+
+      - name: Sign beta bundle with a temporary test certificate
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
+            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' } |
+            Select-Object -First 1
+          if ($null -eq $bundle) { throw 'Beta MSIXBundle not found for signing.' }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead($bundle.FullName)
+          try {
+            $entry = $archive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $entry) { throw 'The beta bundle is missing AppxBundleManifest.xml.' }
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try {
+              [xml]$manifest = $reader.ReadToEnd()
+            } finally {
+              $reader.Dispose()
+            }
+          } finally {
+            $archive.Dispose()
+          }
+
+          $publisher = [string]$manifest.Bundle.Identity.Publisher
+          if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'The beta bundle publisher is empty.' }
+
+          $certParams = @{
+            Type = 'Custom'
+            Subject = $publisher
+            KeyAlgorithm = 'RSA'
+            KeyLength = 2048
+            HashAlgorithm = 'SHA256'
+            KeyUsage = 'DigitalSignature'
+            CertStoreLocation = 'Cert:\CurrentUser\My'
+            TextExtension = @(
+              '2.5.29.37={text}1.3.6.1.5.5.7.3.3',
+              '2.5.29.19={text}'
+            )
+            FriendlyName = 'Wino Mail Beta CI Test Signing'
+          }
+          $cert = New-SelfSignedCertificate @certParams
+
+          if ($cert.Subject -cne $publisher) {
+            throw "Generated test certificate subject does not exactly match package publisher. Cert='$($cert.Subject)' Publisher='$publisher'"
+          }
+
+          $passwordText = [Guid]::NewGuid().ToString('N')
+          $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
+          $pfx = Join-Path $env:RUNNER_TEMP 'wino-mail-beta-ci.pfx'
+          $cer = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
+          $signTool = Get-ChildItem "\${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter 'signtool.exe' -File -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe
+ } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $signTool) { throw 'Windows SDK SignTool was not found.' }
+
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
+          Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+
+          & $signTool.FullName sign /fd SHA256 /a /f $pfx /p $passwordText $bundle.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'SignTool failed to sign the beta MSIXBundle.' }
+
+          & $signTool.FullName verify /pa /all /v /tw $bundle.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'SignTool verification failed for the beta MSIXBundle.' }
+
+          $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
+          if ($signature.Status -eq 'NotSigned' -or $null -eq $signature.SignerCertificate) {
+            throw 'The signed beta MSIXBundle does not expose a signer certificate.'
+          }
+          if ($signature.SignerCertificate.Subject -cne $publisher) {
+            throw "The signed bundle certificate subject differs from the package publisher. Cert='$($signature.SignerCertificate.Subject)' Publisher='$publisher'"
+          }
+
+          $hash = (Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash
+          @(
+            "Bundle=$($bundle.FullName)"
+            "Version=$([string]$manifest.Bundle.Identity.Version)"
+            "PackageName=$([string]$manifest.Bundle.Identity.Name)"
+            "Publisher=$publisher"
+            "Architecture=x64"
+            "Signed=true"
+            "CertificateSubject=$publisher"
+            "CertificateThumbprint=$($cert.Thumbprint)"
+            "SHA256=$hash"
+            "Commit=\${{ github.sha }}"
+          ) | Set-Content "$env:GITHUB_WORKSPACE/beta-msixbundle-metadata.txt" -Encoding utf8
+
+          $installScript = @'
+#requires -RunAsAdministrator
+$ErrorActionPreference = 'Stop'
+$root = $PSScriptRoot
+$bundle = Get-ChildItem -LiteralPath $root -File -Filter 'WinoMail_Beta_*.msixbundle' | Select-Object -First 1
+$certificate = Join-Path $root 'WinoMail_Beta.cer'
+
+if ($null -eq $bundle) { throw 'Wino Mail beta MSIXBundle not found.' }
+if (-not (Test-Path -LiteralPath $certificate)) { throw 'WinoMail_Beta.cer not found.' }
+
+Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
+
+$dependencyRoot = Join-Path $root 'Dependencies'
+$dependencies = @()
+if (Test-Path -LiteralPath $dependencyRoot) {
+  $dependencies = @(
+    Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File |
+      Where-Object { $_.Extension -in '.msix', '.appx' } |
+      Select-Object -ExpandProperty FullName
+  )
+}
+
+$params = @{ Path = $bundle.FullName }
+if ($dependencies.Count -gt 0) {
+  $params.DependencyPath = $dependencies
+}
+
+Add-AppxPackage @params
+Write-Host "Wino Mail Beta installed from $($bundle.Name)."
+'@
+          $installScript | Set-Content -LiteralPath (Join-Path $bundle.DirectoryName 'Install-WinoMail-Beta.ps1') -Encoding utf8
+
+          $readme = @'
+Wino Mail Beta — CI test package
+
+1. Extract this artifact.
+2. Open PowerShell as Administrator.
+3. Run:
+   .\Install-WinoMail-Beta.ps1
+
+The installer imports WinoMail_Beta.cer into Local Computer / Trusted People and installs the signed MSIXBundle together with dependency packages.
+
+This certificate is a temporary self-signed CI test certificate. It is for testing only.
+'@
+          $readme | Set-Content -LiteralPath (Join-Path $bundle.DirectoryName 'INSTALL.md') -Encoding utf8
+
+      - name: Verify signed beta bundle artifact
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
+            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' } |
+            Select-Object -First 1
+          if ($null -eq $bundle) { throw 'Signed beta bundle not found.' }
+
+          $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
+          if ($null -eq $signature.SignerCertificate) { throw 'The beta bundle is missing a signer certificate.' }
+
+          $certificate = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
+          if (-not (Test-Path -LiteralPath $certificate)) { throw 'The public signing certificate was not exported.' }
+
+          $installScript = Join-Path $bundle.DirectoryName 'Install-WinoMail-Beta.ps1'
+          if (-not (Test-Path -LiteralPath $installScript)) { throw 'The beta install helper was not generated.' }
+
+          $dependencies = @(Get-ChildItem $bundle.DirectoryName -Recurse -File -Filter '*.msix' -ErrorAction SilentlyContinue)
+          Write-Host "Signed bundle: $($bundle.FullName)"
+          Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+          Write-Host "Dependency packages: $($dependencies.Count)"
+
       - name: Upload beta MSIXBundle
         uses: actions/upload-artifact@v4
         with:
           name: WinoMail-Beta-MSIXBundle
           path: |
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/*.msixbundle
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/WinoMail_Beta_*.msixbundle
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/WinoMail_Beta.cer
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/Install-WinoMail-Beta.ps1
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/INSTALL.md
+            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/Dependencies/**
             beta-msixbundle-metadata.txt
           if-no-files-found: error
           retention-days: 14
