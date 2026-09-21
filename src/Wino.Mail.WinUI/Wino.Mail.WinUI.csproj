@@ -574,6 +574,12 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Build"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
+    <ItemGroup>
+      <Content Include="$(BackgroundSyncHostOutput)**\*"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               Link="%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
   </Target>
 
   <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
@@ -584,5 +590,11 @@
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
+    <ItemGroup>
+      <Content Include="$(BackgroundSyncHostOutput)**\*"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               Link="%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
   </Target>
 </Project>
