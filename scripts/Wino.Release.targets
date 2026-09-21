@@ -6,6 +6,7 @@
 
   <Target Name="WinoIncludeBackgroundSyncHostInPackagePayload"
           BeforeTargets="_ComputeAppxPackagePayload"
+          DependsOnTargets="PublishBackgroundSyncHost"
           Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true' and '$(BackgroundSyncHostPublishRoot)' != ''">
     <PropertyGroup>
       <_WinoBackgroundSyncHostExecutable>$([System.IO.Path]::GetFullPath('$(BackgroundSyncHostPublishRoot)Wino.Mail.BackgroundSyncHost.exe'))</_WinoBackgroundSyncHostExecutable>
