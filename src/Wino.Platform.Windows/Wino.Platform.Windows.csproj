@@ -7,9 +7,6 @@
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'x86'">win-x86</RuntimeIdentifier>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'x64'">win-x64</RuntimeIdentifier>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'x86'">win-x86</RuntimeIdentifier>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'x64'">win-x64</RuntimeIdentifier>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <IsAotCompatible>false</IsAotCompatible>
     <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
@@ -22,11 +19,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
-    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      BuildReference="true"
-                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
     <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
   </ItemGroup>
 </Project>
