@@ -957,7 +957,9 @@ function Invoke-ReleaseBuild {
             }
             else { $storeHashes = $hashes }
             $stage = 'Azure signing'
-            $certificatePath = if ($Signing.Mode -eq 'TestCertificate') {
+            $useTestCertificate = $Signing.PSObject.Properties['Mode'] -and
+                $Signing.Mode -eq 'TestCertificate'
+            $certificatePath = if ($useTestCertificate) {
                 Sign-SideloadReleaseWithCertificate $bundle $Plan $Tools $Signing $channelStage $channel.Name
             }
             else {
