@@ -653,6 +653,8 @@
                           Condition="'%(AppxPackagePayload.TargetPath)' == 'Wino.Mail.BackgroundSyncHost.exe'" />
       <AppxPackagePayload Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe">
         <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
+        <OutputGroup>PublishItemsOutputGroupOutput</OutputGroup>
+        <ProjectName>$(ProjectName)</ProjectName>
       </AppxPackagePayload>
     </ItemGroup>
   </Target>
