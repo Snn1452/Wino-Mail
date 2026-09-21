@@ -324,6 +324,12 @@ function Invoke-ReleaseTool {
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     $started = $false
+    $timeout = if ($SigningEnvironment.Count -eq 0) {
+        [TimeSpan]::FromMinutes(45)
+    }
+    else {
+        [TimeSpan]::FromMinutes(20)
+    }
     try {
         $null = $process.Start()
         $started = $true
@@ -332,6 +338,15 @@ function Invoke-ReleaseTool {
             try {
                 $stdout = $process.StandardOutput.BaseStream.CopyToAsync($logStream)
                 $stderr = $process.StandardError.ReadToEndAsync()
+                $deadline = [DateTime]::UtcNow + $timeout
+                while (-not $process.HasExited) {
+                    if ([DateTime]::UtcNow -ge $deadline) {
+                        try { $process.Kill($true) } catch {}
+                        $process.WaitForExit()
+                        throw "$([IO.Path]::GetFileName($Executable)) timed out after $($timeout.TotalMinutes) minutes. See $LogPath"
+                    }
+                    Start-Sleep -Seconds 1
+                }
                 $process.WaitForExit()
                 $null = $stdout.GetAwaiter().GetResult()
                 $errorText = $stderr.GetAwaiter().GetResult()
@@ -342,6 +357,15 @@ function Invoke-ReleaseTool {
         else {
             $stdout = $process.StandardOutput.ReadToEndAsync()
             $stderr = $process.StandardError.ReadToEndAsync()
+            $deadline = [DateTime]::UtcNow + $timeout
+            while (-not $process.HasExited) {
+                if ([DateTime]::UtcNow -ge $deadline) {
+                    try { $process.Kill($true) } catch {}
+                    $process.WaitForExit()
+                    throw "$([IO.Path]::GetFileName($Executable)) timed out after $($timeout.TotalMinutes) minutes. See $LogPath"
+                }
+                Start-Sleep -Seconds 1
+            }
             $process.WaitForExit()
             $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
             foreach ($value in $SigningEnvironment.Values) {
@@ -369,7 +393,7 @@ function Get-ReleaseBuildArguments {
     $buildArtifacts = Join-Path $Staging 'build'
     $notificationHosts = Join-Path $Staging 'notification-hosts'
     $arguments = @(
-        'msbuild', $Plan.Project, '-nologo', '-m', '-nr:false', '-verbosity:normal',
+        'msbuild', $Plan.Project, '-nologo', '-m:1', '-nr:false', '-verbosity:normal',
         '-p:Configuration=Release', "-p:Platform=$platform", "-p:ArtifactsPath=$buildArtifacts",
         "-p:NotificationHostPublishRoot=$notificationHosts\",
         "-p:BackgroundSyncHostPublishRoot=$(Join-Path $Staging 'background-sync-host')\"
