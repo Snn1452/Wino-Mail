@@ -193,7 +193,42 @@ function Get-BetaTestSigningConfiguration {
     param([object]$Plan, [string]$Thumbprint)
 
     $normalized = ($Thumbprint ?? '').Replace(' ', '').ToUpperInvariant()
-    if ($normalized -notmatch '^[0-9A-F]{40}    param([switch]$IncludeBeta, [switch]$IncludeSideload)
+    if ($normalized -notmatch '^[0-9A-F]{40}$') {
+        throw 'The Beta test certificate thumbprint must contain exactly 40 hexadecimal characters.'
+    }
+
+    $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$normalized" -ErrorAction SilentlyContinue
+    if ($null -eq $certificate) {
+        throw "The Beta test signing certificate was not found in Cert:\CurrentUser\My: $normalized"
+    }
+
+    $now = Get-Date
+    if (-not $certificate.HasPrivateKey -or $certificate.NotBefore -gt $now -or $certificate.NotAfter -le $now) {
+        throw 'The Beta test signing certificate is missing its private key or is not currently valid.'
+    }
+
+    if (@($certificate.EnhancedKeyUsageList | Where-Object { $_.ObjectId -eq '1.3.6.1.5.5.7.3.3' }).Count -eq 0) {
+        throw 'The Beta test signing certificate is not valid for code signing.'
+    }
+
+    if ($certificate.Subject -cne $script:SideloadPublisher) {
+        throw 'The Beta test certificate subject must match the Beta publisher identity.'
+    }
+
+    return [pscustomobject]@{
+        Mode = 'TestCertificate'
+        Certificate = $certificate
+        Distributions = @{
+            Beta = Get-ReleaseDistributionConfiguration @{
+                AppInstallerUri = $env:WINO_BETA_RELEASE_APPINSTALLER_URI
+                PackageBaseUri = $env:WINO_BETA_RELEASE_PACKAGE_BASE_URI
+            }
+        }
+    }
+}
+
+function Get-ReleaseSigningConfiguration {
+    param([switch]$IncludeBeta, [switch]$IncludeSideload)
 
     $configuration = @{}
     $settings = @{
@@ -258,6 +293,7 @@ function Get-BetaTestSigningConfiguration {
     }
     return [pscustomobject]@{ Configuration = $configuration; Credentials = $credentials; Dlib = [IO.Path]::GetFullPath($dlib); Distributions = $distributions }
 }
+
 
 function Invoke-ReleaseTool {
     param([string]$Executable, [string[]]$Arguments, [string]$LogPath, [hashtable]$SigningEnvironment = @{})
