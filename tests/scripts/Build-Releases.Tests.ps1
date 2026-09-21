@@ -187,6 +187,7 @@ try {
             $mode = if ($store) { 'StoreUpload' } else { 'SideloadOnly' }
             Assert-True ($arguments -contains "-p:UapAppxPackageBuildMode=$mode") 'Wrong packaging mode.'
             Assert-True ($arguments -contains '-p:AppxBundlePlatforms=x86|x64|ARM64') 'Incomplete architectures.'
+            Assert-True ($arguments -contains '-p:WinoIsReleaseBuild=true') 'Release build flag was not propagated.'
             Assert-True (@($arguments | Where-Object { $_ -match 'RuntimeIdentifier=|ReleaseSideload|Restore=true' }).Count -eq 0) 'Build overrides inner runtime or restores twice.'
         }
     }
