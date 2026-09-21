@@ -13,13 +13,6 @@ jobs:
   build-beta:
     runs-on: windows-latest
     env:
-      WINO_BETA_RELEASE_SIGNING_ENDPOINT: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ENDPOINT }}
-      WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME }}
-      WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME }}
-      WINO_BETA_RELEASE_PUBLISHER_SUBJECT: ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}
-      WINO_BETA_RELEASE_AZURE_TENANT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_TENANT_ID }}
-      WINO_BETA_RELEASE_AZURE_CLIENT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_ID }}
-      WINO_BETA_RELEASE_AZURE_CLIENT_SECRET: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_SECRET }}
       WINO_BETA_RELEASE_APPINSTALLER_URI: ${{ vars.WINO_BETA_RELEASE_APPINSTALLER_URI }}
       WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
     steps:
@@ -53,11 +46,20 @@ jobs:
         shell: pwsh
         run: ./tests/scripts/Build-Releases.Tests.ps1
 
+      - name: Create Beta test signing certificate
+        shell: pwsh
+        run: |
+          $subject = 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL'
+          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $subject -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(2)
+          if ($null -eq $certificate) { throw 'Beta test signing certificate creation failed.' }
+          "BETA_TEST_CERT_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+          Write-Host "Created Beta test signing certificate $($certificate.Thumbprint)"
+
       - name: Build and sign Beta
         shell: pwsh
         env:
           NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x86,x64,ARM64
+        run: ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x86,x64,ARM64 -BetaTestCertificateThumbprint $env:BETA_TEST_CERT_THUMBPRINT
 
       - name: Verify final Beta artifact
         shell: pwsh
@@ -74,7 +76,8 @@ jobs:
           $signature = Get-AuthenticodeSignature -LiteralPath $bundle
           if ($null -eq $signature.SignerCertificate) { throw 'The Beta bundle has no signer certificate.' }
 
-          if (-not [string]::Equals($signature.SignerCertificate.Subject, ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}, [StringComparison]::Ordinal)) {
+          $expectedSubject = 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL'
+          if (-not [string]::Equals($signature.SignerCertificate.Subject, $expectedSubject, [StringComparison]::Ordinal)) {
             throw "Unexpected Beta signer subject: $($signature.SignerCertificate.Subject)"
           }
 
