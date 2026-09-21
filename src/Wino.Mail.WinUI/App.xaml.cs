@@ -102,6 +102,15 @@ public partial class App : WinoApplication,
 
         LogActivation($"Shell window close requested. AppCloseBehavior: {closeBehavior}.");
 
+        if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
+            or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            StartBackgroundSyncHostIfNeeded();
+            DisposeTrayIcon();
+            ExitApplication();
+            return true;
+        }
+
         if (closeBehavior != AppCloseBehavior.Terminate)
             return false;
 
