@@ -9,9 +9,14 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: wino-beta-package-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-beta:
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       WINO_BETA_RELEASE_APPINSTALLER_URI: ${{ vars.WINO_BETA_RELEASE_APPINSTALLER_URI }}
       WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
@@ -31,59 +36,128 @@ jobs:
             throw 'Supply the beta artwork under release-assets/Beta before publishing.'
           }
 
-      - name: Install Artifact Signing client
-        shell: pwsh
-        run: |
-          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -Source https://api.nuget.org/v3/index.json -OutputDirectory "$env:RUNNER_TEMP/signing" -NonInteractive
-          if ($LASTEXITCODE -ne 0) { throw 'Artifact Signing client installation failed.' }
-          $dlib = Get-ChildItem "$env:RUNNER_TEMP/signing" -Filter Azure.CodeSigning.Dlib.dll -Recurse |
-            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
-            Select-Object -First 1
-          if (-not $dlib) { throw 'The x64 Artifact Signing library was not found.' }
-          "WINO_BETA_RELEASE_SIGNING_DLIB_PATH=$($dlib.FullName)" >> $env:GITHUB_ENV
-
       - name: Verify release script
         shell: pwsh
         run: ./tests/scripts/Build-Releases.Tests.ps1
 
-      - name: Create Beta test signing certificate
+      - name: Create and trust Beta test signing certificate
         shell: pwsh
         run: |
           $subject = 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL'
-          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $subject -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(2)
+          $certificate = New-SelfSignedCertificate -Type Custom -Subject $subject -KeyUsage DigitalSignature -KeyExportPolicy Exportable -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3','2.5.29.19={text}') -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddYears(2)
           if ($null -eq $certificate) { throw 'Beta test signing certificate creation failed.' }
-          "BETA_TEST_CERT_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
-          Write-Host "Created Beta test signing certificate $($certificate.Thumbprint)"
 
-      - name: Build and sign Beta
+          $cerPath = Join-Path $env:RUNNER_TEMP 'WinoMail_Beta_TestCertificate.cer'
+          Export-Certificate -Cert $certificate -FilePath $cerPath -Type CERT -Force | Out-Null
+          Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+
+          "BETA_TEST_CERT_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+          Write-Host "Created and trusted Beta test signing certificate $($certificate.Thumbprint)"
+
+      - name: Build and sign Beta MSIXBundle
         shell: pwsh
         env:
           NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x86,x64,ARM64 -BetaTestCertificateThumbprint $env:BETA_TEST_CERT_THUMBPRINT
+        run: |
+          ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x64 -BetaTestCertificateThumbprint $env:BETA_TEST_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { throw 'Signed beta release build failed.' }
 
-      - name: Verify final Beta artifact
+      - name: Verify Beta identity, background host, and signature
         shell: pwsh
         run: |
-          $version = ([xml](Get-Content src/Wino.Mail.WinUI/Package.appxmanifest)).Package.Identity.Version
+          $version = ([xml](Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest')).Package.Identity.Version
           $folder = "src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_$version"
-          if (-not (Test-Path $folder)) { throw "Beta output folder not found: $folder" }
-
           $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
-          $certificate = Get-ChildItem $folder -Filter '*_SigningCertificate.cer' -File | Select-Object -First 1
-          if (-not (Test-Path $bundle)) { throw "Beta MSIXBundle not found: $bundle" }
-          if ($null -eq $certificate) { throw 'Signed Beta public certificate was not exported.' }
+          $certificate = Join-Path $folder "WinoMail_Beta_$version_SigningCertificate.cer"
+
+          if (-not (Test-Path -LiteralPath $bundle)) { throw "Beta MSIXBundle not found: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate)) { throw "Beta signing certificate not found: $certificate" }
 
           $signature = Get-AuthenticodeSignature -LiteralPath $bundle
-          if ($null -eq $signature.SignerCertificate) { throw 'The Beta bundle has no signer certificate.' }
+          if ($signature.Status -eq 'NotSigned' -or $null -eq $signature.SignerCertificate) {
+            throw 'The Beta bundle is not digitally signed.'
+          }
 
           $expectedSubject = 'CN=Burak Kaan Köse, O=Burak Kaan Köse, L=Wroclaw, S=Dolnośląskie, C=PL'
           if (-not [string]::Equals($signature.SignerCertificate.Subject, $expectedSubject, [StringComparison]::Ordinal)) {
             throw "Unexpected Beta signer subject: $($signature.SignerCertificate.Subject)"
           }
 
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $bundleArchive = [IO.Compression.ZipFile]::OpenRead($bundle)
+          try {
+            $bundleManifestEntry = $bundleArchive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $bundleManifestEntry) { throw 'Bundle manifest is missing.' }
+            $reader = [IO.StreamReader]::new($bundleManifestEntry.Open())
+            try { [xml]$bundleManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+
+            if ([string]$bundleManifest.Bundle.Identity.Name -cne 'WinoMail.Beta') { throw 'Unexpected Beta bundle identity.' }
+            if ([string]$bundleManifest.Bundle.Identity.Publisher -cne $expectedSubject) { throw 'Beta publisher does not match the signing certificate subject.' }
+            if ([string]$bundleManifest.Bundle.Identity.Version -cne $version) { throw 'Beta bundle version mismatch.' }
+
+            $applicationPackages = @($bundleManifest.Bundle.Packages.Package | Where-Object {
+              $_.Type -eq 'application' -and $_.Architecture -eq 'x64'
+            })
+            if ($applicationPackages.Count -ne 1) { throw 'The Beta bundle must contain exactly one x64 application package.' }
+
+            $innerPath = Join-Path $env:RUNNER_TEMP "WinoMail_Beta_$version.msix"
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($bundleArchive.GetEntry([string]$applicationPackages[0].FileName), $innerPath, $true)
+
+            $innerArchive = [IO.Compression.ZipFile]::OpenRead($innerPath)
+            try {
+              $innerManifestEntry = $innerArchive.GetEntry('AppxManifest.xml')
+              if ($null -eq $innerManifestEntry) { throw 'Inner package manifest is missing.' }
+              $reader = [IO.StreamReader]::new($innerManifestEntry.Open())
+              try { [xml]$innerManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+
+              if ([string]$innerManifest.Package.Identity.Name -cne 'WinoMail.Beta') { throw 'Inner Beta package identity mismatch.' }
+              if ([string]$innerManifest.Package.Identity.Publisher -cne $expectedSubject) { throw 'Inner Beta package publisher mismatch.' }
+
+              $startupTasks = @($innerManifest.SelectNodes("//*[local-name()='StartupTask']"))
+              if ($startupTasks.Count -ne 1) { throw 'Background startup task is missing.' }
+
+              $startupExtension = $startupTasks[0].ParentNode.ParentNode
+              if ([string]$startupExtension.GetAttribute('Executable') -cne 'Wino.Mail.BackgroundSyncHost.exe') {
+                throw 'Background startup task does not launch Wino.Mail.BackgroundSyncHost.exe.'
+              }
+              if ([string]$startupExtension.GetAttribute('EntryPoint') -cne 'Windows.FullTrustApplication') {
+                throw 'Background startup task has an unexpected entry point.'
+              }
+              if ($null -eq $innerArchive.GetEntry('Wino.Mail.BackgroundSyncHost.exe')) {
+                throw 'Background sync host executable is missing from the Beta package.'
+              }
+            }
+            finally {
+              $innerArchive.Dispose()
+              Remove-Item -LiteralPath $innerPath -Force -ErrorAction SilentlyContinue
+            }
+          }
+          finally {
+            $bundleArchive.Dispose()
+          }
+
           Write-Host "Beta package: $bundle"
-          Write-Host "Beta certificate: $($certificate.FullName)"
+          Write-Host "Beta certificate: $certificate"
           Write-Host "Beta identity: WinoMail.Beta"
+          Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+
+      - name: Install signed Beta bundle smoke test
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest')).Package.Identity.Version
+          $folder = "src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_$version"
+          $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
+          $certificate = Join-Path $folder "WinoMail_Beta_$version_SigningCertificate.cer"
+
+          if (-not (Test-Path -LiteralPath $bundle)) { throw "Beta MSIXBundle not found: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate)) { throw "Beta certificate not found: $certificate" }
+
+          Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+          Add-AppxPackage -Path $bundle
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta'
+          if ($null -eq $installed) { throw 'WinoMail.Beta was not installed.' }
+
+          Write-Host "Installed WinoMail.Beta $($installed.Version)."
 
       - name: Upload signed Beta package
         uses: actions/upload-artifact@v4
