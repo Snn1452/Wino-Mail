@@ -331,7 +331,8 @@ function Get-ReleaseBuildArguments {
     $arguments = @(
         'msbuild', $Plan.Project, '-nologo', '-m', '-nr:false', '-verbosity:normal',
         '-p:Configuration=Release', "-p:Platform=$platform", "-p:ArtifactsPath=$buildArtifacts",
-        "-p:NotificationHostPublishRoot=$notificationHosts\"
+        "-p:NotificationHostPublishRoot=$notificationHosts\",
+        "-p:BackgroundSyncHostPublishRoot=$(Join-Path $Staging 'background-sync-host')\"
     )
     if ($Plan.Selection.Architectures.Count -eq 1) { $arguments += "-p:RuntimeIdentifiers=win-$($platform.ToLowerInvariant())" }
     if ($Restore) {
