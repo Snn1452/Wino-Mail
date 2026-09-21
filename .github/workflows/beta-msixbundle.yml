@@ -198,3 +198,5 @@ jobs:
             src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/beta-msixbundle-metadata.txt
           if-no-files-found: error
           retention-days: 14
+
+# Keep this workflow tied to the exact feature-branch HEAD for beta verification.
