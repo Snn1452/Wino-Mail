@@ -130,6 +130,7 @@ jobs:
             /p:EnableMsixTooling=false `
             /p:GenerateAppxPackageOnBuild=false `
             /p:AppxPackageSigningEnabled=false `
+            /p:BackgroundSyncHostPublishRoot="$env:GITHUB_WORKSPACE\\src\\Wino.Mail.WinUI\\bin\\Release\\BackgroundSyncHost\\" `
             /p:TreatWarningsAsErrors=true `
             /p:TrimmerSingleWarn=false
           if ($LASTEXITCODE -ne 0) { throw 'WinUI Native AOT publish failed.' }
