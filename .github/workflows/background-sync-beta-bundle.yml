@@ -1,0 +1,61 @@
+name: Background Sync Beta Bundle
+
+on:
+  push:
+    branches:
+      - feature/background-sync-host
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-beta-bundle:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify release packaging
+        shell: pwsh
+        run: ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Build unsigned Beta bundle
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/build-releases.ps1 -NonInteractive -Beta -UnsignedBeta -Architectures x86,x64,ARM64
+
+      - name: Verify Beta bundle output
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content 'src/Wino.Mail.WinUI/Package.appxmanifest'
+          $version = [string]$manifest.Package.Identity.Version
+          $bundle = "src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_$version/WinoMail_Beta_$version.msixbundle"
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) {
+            throw "Expected Beta MSIXBundle was not produced: $bundle"
+          }
+          & ${env:ProgramFiles(x86)}\Windows Kits\10\bin\$((Get-ChildItem '${env:ProgramFiles(x86)}\Windows Kits\10\bin' -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name)\x64\makeappx.exe bundle /? *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX packaging tools are not available.' }
+          Write-Host "Beta bundle: $bundle"
+
+      - name: Upload Beta MSIXBundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-MSIXBundle
+          path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/*.msixbundle
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload full Beta package folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-Package
+          path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
+          if-no-files-found: error
+          retention-days: 14
