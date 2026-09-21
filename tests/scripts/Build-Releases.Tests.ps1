@@ -97,7 +97,7 @@ try {
         [xml]$manifest = Get-Content (Join-Path $script:ReleaseRepositoryRoot 'src/Wino.Mail.WinUI/Package.appxmanifest')
         $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
         Assert-True ($null -ne $startup) 'Background sync startup task is missing.'
-        $extension = $startup.ParentNode.ParentNode
+        $extension = $startup.ParentNode
         Assert-True ($extension.GetAttribute('Executable') -ceq 'Wino.Mail.BackgroundSyncHost.exe') 'Background sync host must be packaged at the package root.'
         Assert-True ($extension.GetAttribute('EntryPoint') -ceq 'Windows.FullTrustApplication') 'Background sync host entry point is incorrect.'
     }
