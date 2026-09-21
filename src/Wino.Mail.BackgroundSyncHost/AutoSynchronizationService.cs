@@ -19,41 +19,10 @@ internal sealed class AutoSynchronizationService(
     private const int InboxSyncsPerFullSync = 20;
     private readonly ConcurrentDictionary<Guid, int> _counters = new();
 
-    public async Task RunAsync(CancellationToken token)
-    {
-        using var lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-
-        var mailLoop = RunMailLoopAsync(lifetimeCts.Token);
-        var calendarLoop = RunCalendarLoopAsync(lifetimeCts.Token);
-        var monitor = MonitorBackgroundModeAsync(lifetimeCts.Token);
-
-        try
-        {
-            var completed = await Task.WhenAny(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
-
-            if (completed == monitor)
-                lifetimeCts.Cancel();
-
-            await Task.WhenAll(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
-        {
-            // Background mode was disabled or the host was asked to stop.
-        }
-    }
-
-    private async Task MonitorBackgroundModeAsync(CancellationToken token)
-    {
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-
-            if (preferencesService.AppCloseBehavior == AppCloseBehavior.Terminate)
-                return;
-
-            await Task.Delay(TimeSpan.FromSeconds(30), token).ConfigureAwait(false);
-        }
-    }
+    public Task RunAsync(CancellationToken token)
+        => Task.WhenAll(
+            RunMailLoopAsync(token),
+            RunCalendarLoopAsync(token));
 
     private async Task RunMailLoopAsync(CancellationToken token)
     {
@@ -90,12 +59,14 @@ internal sealed class AutoSynchronizationService(
             var now = DateTimeOffset.UtcNow;
             var configuredInterval = intervalProvider();
 
-            if (activeInterval != configuredInterval)
+            if (!nextRunAt.HasValue)
             {
-                var lastRunAt = nextRunAt.HasValue && activeInterval.HasValue
-                    ? nextRunAt.Value - activeInterval.Value
-                    : now;
-
+                nextRunAt = now;
+                activeInterval = configuredInterval;
+            }
+            else if (activeInterval != configuredInterval)
+            {
+                var lastRunAt = nextRunAt.Value - activeInterval!.Value;
                 nextRunAt = lastRunAt + configuredInterval;
                 activeInterval = configuredInterval;
             }
