@@ -26,11 +26,13 @@ jobs:
           clean: false
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.401
-        env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify installed .NET SDK
+        shell: pwsh
+        run: |
+          $version = dotnet --version
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet is not available on the runner.' }
+          if ($version -ne '10.0.401') { throw "Expected .NET SDK 10.0.401, found $version." }
+          dotnet --info
 
       - name: Check beta artwork
         shell: pwsh
