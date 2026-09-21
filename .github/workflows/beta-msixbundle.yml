@@ -1,3 +1,4 @@
+run-name: Wino Mail Beta MSIXBundle - ${{ github.sha }}
 name: Beta MSIXBundle
 
 on:
