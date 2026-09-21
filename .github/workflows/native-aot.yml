@@ -8,10 +8,15 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: wino-native-aot-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-aot:
     name: Publish x64 and run SQLite AOT smoke test
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       NUGET_CONFIG_PATH: ${{ github.workspace }}\nuget.config
     steps:
@@ -42,6 +47,19 @@ jobs:
             -p:Platform=x64
           if ($LASTEXITCODE -ne 0) { throw 'SQLite smoke harness restore failed.' }
 
+      - name: Build background synchronization host
+        shell: pwsh
+        run: |
+          dotnet build src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj `
+            --configuration Release `
+            --no-restore `
+            -r win-x64 `
+            /p:Platform=x64 `
+            /p:SelfContained=false `
+            /p:PublishAot=false `
+            /p:PublishTrimmed=false
+          if ($LASTEXITCODE -ne 0) { throw 'Background synchronization host build failed.' }
+
       - name: Publish warning-clean Native AOT WinUI application
         shell: pwsh
         run: |
@@ -54,6 +72,7 @@ jobs:
             /p:EnableMsixTooling=false `
             /p:GenerateAppxPackageOnBuild=false `
             /p:AppxPackageSigningEnabled=false `
+            /p:WinoSkipBackgroundSyncHostBuild=true `
             /p:TreatWarningsAsErrors=true `
             /p:TrimmerSingleWarn=false
           if ($LASTEXITCODE -ne 0) { throw 'WinUI Native AOT publish failed.' }
@@ -76,111 +95,3 @@ jobs:
           & tests/Wino.Services.AotSmoke/bin/x64/Release/net10.0/win-x64/publish/Wino.Services.AotSmoke.exe
           if ($LASTEXITCODE -ne 0) { throw 'SQLite Native AOT smoke test failed.' }
 
-
-  beta-msixbundle:
-    name: Build and sign Beta MSIXBundle
-    needs: native-aot
-    runs-on: windows-latest
-    timeout-minutes: 60
-    env:
-      WINO_BETA_RELEASE_SIGNING_ENDPOINT: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ENDPOINT }}
-      WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME }}
-      WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME }}
-      WINO_BETA_RELEASE_PUBLISHER_SUBJECT: ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}
-      WINO_BETA_RELEASE_AZURE_TENANT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_TENANT_ID }}
-      WINO_BETA_RELEASE_AZURE_CLIENT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_ID }}
-      WINO_BETA_RELEASE_AZURE_CLIENT_SECRET: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_SECRET }}
-      WINO_BETA_RELEASE_APPINSTALLER_URI: ${{ vars.WINO_BETA_RELEASE_APPINSTALLER_URI }}
-      WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-        env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install Artifact Signing client
-        shell: pwsh
-        run: |
-          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -Source https://api.nuget.org/v3/index.json -OutputDirectory "$env:RUNNER_TEMP/signing" -NonInteractive
-          if ($LASTEXITCODE -ne 0) { throw 'Artifact Signing client installation failed.' }
-          $dlib = Get-ChildItem "$env:RUNNER_TEMP/signing" -Filter Azure.CodeSigning.Dlib.dll -Recurse |
-            Where-Object { $_.FullName -match '[\\\\/]x64[\\\\/]' } |
-            Select-Object -First 1
-          if (-not $dlib) { throw 'The x64 Artifact Signing library was not found.' }
-          "WINO_BETA_RELEASE_SIGNING_DLIB_PATH=$($dlib.FullName)" >> $env:GITHUB_ENV
-      - name: Validate release packaging logic
-        shell: pwsh
-        run: ./tests/scripts/Build-Releases.Tests.ps1
-      - name: Build and sign Beta MSIXBundle
-        shell: pwsh
-        env:
-          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x64
-          if ($LASTEXITCODE -ne 0) { throw 'Signed beta release build failed.' }
-      - name: Verify Beta bundle identity and signer certificate
-        shell: pwsh
-        run: |
-          $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
-            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' } |
-            Select-Object -First 1
-          if (-not $bundle) { throw 'Beta MSIXBundle was not produced.' }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [IO.Compression.ZipFile]::OpenRead($bundle.FullName)
-          try {
-            $entry = $archive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
-            if ($null -eq $entry) { throw 'Beta bundle manifest is missing.' }
-            $reader = [IO.StreamReader]::new($entry.Open())
-            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
-          } finally { $archive.Dispose() }
-          if ([string]$manifest.Bundle.Identity.Name -cne 'WinoMail.Beta') { throw 'Unexpected beta package identity.' }
-          if ([string]$manifest.Bundle.Identity.Publisher -cne $env:WINO_BETA_RELEASE_PUBLISHER_SUBJECT) { throw 'Beta publisher does not match configured signing subject.' }
-          $sourceVersion = [string]([xml](Get-Content 'src/Wino.Mail.WinUI/Package.appxmanifest')).Package.Identity.Version
-          if ([string]$manifest.Bundle.Identity.Version -ne $sourceVersion) { throw 'Beta bundle version mismatch.' }
-          $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
-          if ($null -eq $signature.SignerCertificate) { throw 'Beta bundle signer certificate is missing.' }
-          if ($signature.SignerCertificate.Subject -cne $env:WINO_BETA_RELEASE_PUBLISHER_SUBJECT) { throw 'Signer subject mismatch.' }
-          $certificatePath = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
-          Export-Certificate -Cert $signature.SignerCertificate -FilePath $certificatePath | Out-Null
-          @(
-            "Bundle=$($bundle.Name)"
-            "Version=$sourceVersion"
-            'PackageName=WinoMail.Beta'
-            "Publisher=$env:WINO_BETA_RELEASE_PUBLISHER_SUBJECT"
-            'Architecture=x64'
-            'Signed=true'
-            "CertificateSubject=$($signature.SignerCertificate.Subject)"
-            "CertificateThumbprint=$($signature.SignerCertificate.Thumbprint)"
-            "SHA256=$((Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash)"
-            "Commit=$env:GITHUB_SHA"
-          ) | Set-Content (Join-Path $bundle.DirectoryName 'beta-msixbundle-metadata.txt') -Encoding utf8
-      - name: Install signed Beta bundle smoke test
-        shell: pwsh
-        run: |
-          $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
-            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' } |
-            Select-Object -First 1
-          if (-not $bundle) { throw 'Beta MSIXBundle was not found.' }
-          $dependencyRoot = Join-Path $bundle.DirectoryName 'Dependencies'
-          $dependencies = if (Test-Path $dependencyRoot) { @(Get-ChildItem $dependencyRoot -Recurse -File | Where-Object { $_.Extension -in '.msix', '.appx' } | Select-Object -ExpandProperty FullName) } else { @() }
-          $params = @{ Path = $bundle.FullName }
-          if ($dependencies.Count -gt 0) { $params.DependencyPath = $dependencies }
-          Add-AppxPackage @params
-          $installed = Get-AppxPackage -Name 'WinoMail.Beta'
-          if ($null -eq $installed) { throw 'WinoMail.Beta was not installed.' }
-          Write-Host "Installed WinoMail.Beta $($installed.Version)."
-      - name: Upload signed Beta MSIXBundle and certificate
-        uses: actions/upload-artifact@v4
-        with:
-          name: WinoMail-Beta-MSIXBundle
-          path: |
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/*.msixbundle
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/*.appinstaller
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/Dependencies/**
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/WinoMail_Beta.cer
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/**/beta-msixbundle-metadata.txt
-          if-no-files-found: error
-          retention-days: 14
