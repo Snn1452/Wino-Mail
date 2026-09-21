@@ -398,7 +398,8 @@ try {
             }
             Invoke-ReleaseBuild $plan ([pscustomobject]@{ MSBuild = 'dotnet'; MakeAppx = 'makeappx' }) @{ Distributions = @{ Beta = @{}; Sideload = @{} } }
             Assert-True (@($script:Commands | Where-Object { $_ -match '-t:Publish' }).Count -eq 1) 'Release compilation repeated or was skipped.'
-            Assert-True (@($script:Commands | Where-Object { $_ -match '-t:Restore' }).Count -eq 1) 'Restore repeated.'
+            Assert-True (@($script:Commands | Where-Object { $_ -match '-t:Restore' }).Count -eq 2) 'Application and background host restore count is incorrect.'
+            Assert-True (@($script:Commands | Where-Object { $_ -match 'Wino.Mail.BackgroundSyncHost.csproj' -and $_ -match '-p:ArtifactsPath=' }).Count -eq 1) 'Background host restore did not use the release artifacts directory.'
             $expectedMode = if ($plan.Selection.Store) { 'StoreUpload' } else { 'SideloadOnly' }
             Assert-True (@($script:Commands | Where-Object { $_ -match "-p:UapAppxPackageBuildMode=$expectedMode" }).Count -eq 1) 'Wrong SDK packaging mode.'
             foreach ($destination in $plan.Destinations) { Assert-True (Test-Path -LiteralPath $destination) 'Missing selected output.' }
