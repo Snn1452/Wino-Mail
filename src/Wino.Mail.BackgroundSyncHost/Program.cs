@@ -105,10 +105,33 @@ internal static class Program
             .InitializeAsync()
             .ConfigureAwait(false);
 
-        await Task.WhenAll(
-                provider.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
-                provider.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None))
-            .ConfigureAwait(false);
+        using var lifetimeCts = new CancellationTokenSource();
+        var syncTask = provider
+            .GetRequiredService<AutoSynchronizationService>()
+            .RunAsync(lifetimeCts.Token);
+        var reminderTask = provider
+            .GetRequiredService<CalendarReminderService>()
+            .RunAsync(lifetimeCts.Token);
+
+        try
+        {
+            while (true)
+            {
+                if (provider.GetRequiredService<IPreferencesService>().AppCloseBehavior == Wino.Core.Domain.Enums.AppCloseBehavior.Terminate)
+                {
+                    lifetimeCts.Cancel();
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(30), lifetimeCts.Token).ConfigureAwait(false);
+            }
+
+            await Task.WhenAll(syncTask, reminderTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
+        {
+            // Background mode was disabled; let the host terminate cleanly.
+        }
 
         return 0;
     }
