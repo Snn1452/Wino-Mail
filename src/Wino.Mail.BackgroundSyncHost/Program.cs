@@ -379,7 +379,7 @@ internal static class Program
 
     private static void ConfigureLogging(IServiceProvider provider)
     {
-        var configuration = provider.GetRequiredService<IApplicationConfiguration>();
+        var configuration = provider.GetRequiredService<ApplicationConfiguration>();
         var logPath = Path.Combine(
             configuration.ApplicationDataFolderPath,
             "BackgroundSyncHost.log");
