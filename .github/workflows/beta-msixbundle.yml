@@ -79,7 +79,7 @@ jobs:
           ) | Set-Content "$env:GITHUB_WORKSPACE/beta-msixbundle-metadata.txt" -Encoding utf8
 
 
-      - name: Sign beta bundle with a temporary test certificate
+      - name: Sign and stage beta bundle for installation
         shell: pwsh
         run: |
           $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
@@ -93,175 +93,136 @@ jobs:
             $entry = $archive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
             if ($null -eq $entry) { throw 'The beta bundle is missing AppxBundleManifest.xml.' }
             $reader = [IO.StreamReader]::new($entry.Open())
-            try {
-              [xml]$manifest = $reader.ReadToEnd()
-            } finally {
-              $reader.Dispose()
-            }
-          } finally {
-            $archive.Dispose()
+            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
           }
+          finally { $archive.Dispose() }
 
           $publisher = [string]$manifest.Bundle.Identity.Publisher
           if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'The beta bundle publisher is empty.' }
 
-          $certParams = @{
-            Type = 'Custom'
-            Subject = $publisher
-            KeyAlgorithm = 'RSA'
-            KeyLength = 2048
-            HashAlgorithm = 'SHA256'
-            KeyUsage = 'DigitalSignature'
-            CertStoreLocation = 'Cert:\CurrentUser\My'
-            TextExtension = @(
-              '2.5.29.37={text}1.3.6.1.5.5.7.3.3',
-              '2.5.29.19={text}'
-            )
-            FriendlyName = 'Wino Mail Beta CI Test Signing'
-          }
-          $cert = New-SelfSignedCertificate @certParams
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature -CertStoreLocation 'Cert:\CurrentUser\My' -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3','2.5.29.19={critical}{text}CA=FALSE') -FriendlyName 'Wino Mail Beta CI Test Signing'
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'The beta test signing certificate could not be created with a private key.' }
+          if ($cert.Subject -cne $publisher) { throw "Certificate subject mismatch. Cert='$($cert.Subject)' Publisher='$publisher'" }
 
-          if ($cert.Subject -cne $publisher) {
-            throw "Generated test certificate subject does not exactly match package publisher. Cert='$($cert.Subject)' Publisher='$publisher'"
-          }
-
-          $passwordText = [Guid]::NewGuid().ToString('N')
-          $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
-          $pfx = Join-Path $env:RUNNER_TEMP 'wino-mail-beta-ci.pfx'
-          $cer = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
-          $sdkRoot = [Environment]::GetFolderPath('ProgramFilesX86')
-          $signTool = Get-ChildItem (Join-Path $sdkRoot 'Windows Kits\10\bin') -Filter 'signtool.exe' -File -Recurse |
+          $signToolRoot = Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits\10\bin'
+          $signTool = Get-ChildItem $signToolRoot -Filter 'signtool.exe' -File -Recurse |
             Where-Object { $_.Directory.Name -eq 'x64' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1
           if ($null -eq $signTool) { throw 'Windows SDK SignTool was not found.' }
 
-          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
+          $cer = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
           Export-Certificate -Cert $cert -FilePath $cer | Out-Null
-
           Import-Certificate -FilePath $cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
 
-          & $signTool.FullName sign /fd SHA256 /a /f $pfx /p $passwordText $bundle.FullName
+          & $signTool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint $bundle.FullName
           if ($LASTEXITCODE -ne 0) { throw 'SignTool failed to sign the beta MSIXBundle.' }
 
           & $signTool.FullName verify /pa /all /v /tw $bundle.FullName
           if ($LASTEXITCODE -ne 0) { throw 'SignTool verification failed for the beta MSIXBundle.' }
 
           $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
-          if ($signature.Status -eq 'NotSigned' -or $null -eq $signature.SignerCertificate) {
-            throw 'The signed beta MSIXBundle does not expose a signer certificate.'
-          }
-          if ($signature.SignerCertificate.Subject -cne $publisher) {
-            throw "The signed bundle certificate subject differs from the package publisher. Cert='$($signature.SignerCertificate.Subject)' Publisher='$publisher'"
+          if ($null -eq $signature.SignerCertificate) { throw 'The signed beta MSIXBundle does not expose a signer certificate.' }
+          if ($signature.SignerCertificate.Subject -cne $publisher) { throw "Signed certificate subject mismatch. Cert='$($signature.SignerCertificate.Subject)' Publisher='$publisher'" }
+
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'WinoMail-Beta-MSIXBundle'
+          if (Test-Path -LiteralPath $artifactRoot) { Remove-Item -LiteralPath $artifactRoot -Recurse -Force }
+          $null = New-Item -ItemType Directory -Path $artifactRoot
+          $null = New-Item -ItemType Directory -Path (Join-Path $artifactRoot 'Dependencies')
+
+          Copy-Item -LiteralPath $bundle.FullName -Destination (Join-Path $artifactRoot $bundle.Name)
+          Copy-Item -LiteralPath $cer -Destination (Join-Path $artifactRoot 'WinoMail_Beta.cer')
+
+          $dependencyRoot = Join-Path $bundle.DirectoryName 'Dependencies'
+          if (Test-Path -LiteralPath $dependencyRoot) {
+            Copy-Item -LiteralPath $dependencyRoot -Destination $artifactRoot -Recurse
           }
 
-          $hash = (Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash
-          @(
-            "Bundle=$($bundle.FullName)"
+          $installScript = @(
+            '#requires -RunAsAdministrator'
+            '[CmdletBinding()]'
+            'param()'
+            '$ErrorActionPreference = ''Stop'''
+            '$root = $PSScriptRoot'
+            '$bundle = Get-ChildItem -LiteralPath $root -File -Filter ''WinoMail_Beta_*.msixbundle'' | Select-Object -First 1'
+            '$certificate = Join-Path $root ''WinoMail_Beta.cer'''
+            '$dependencyRoot = Join-Path $root ''Dependencies'''
+            'if ($null -eq $bundle) { throw ''Wino Mail Beta MSIXBundle was not found next to this script.'' }'
+            'if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw ''WinoMail_Beta.cer was not found next to this script.'' }'
+            'Import-Certificate -FilePath $certificate -CertStoreLocation ''Cert:\LocalMachine\TrustedPeople'' | Out-Null'
+            '$dependencies = @()'
+            'if (Test-Path -LiteralPath $dependencyRoot -PathType Container) {'
+            '  $dependencies = @(Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File | Where-Object { $_.Extension -in ''.msix'', ''.appx'' } | Select-Object -ExpandProperty FullName)'
+            '}'
+            '$params = @{ Path = $bundle.FullName }'
+            'if ($dependencies.Count -gt 0) { $params.DependencyPath = $dependencies }'
+            'Add-AppxPackage @params'
+            'Write-Host "Wino Mail Beta installed from $($bundle.Name)." -ForegroundColor Green'
+          )
+          $installScript | Set-Content -LiteralPath (Join-Path $artifactRoot 'Install-WinoMail-Beta.ps1') -Encoding utf8
+
+          $readmeLines = @(
+            'Wino Mail Beta — CI test package'
+            ''
+            '1. Extract this artifact.'
+            '2. Open PowerShell as Administrator.'
+            '3. Change directory to this folder.'
+            '4. Run:'
+            '   .\Install-WinoMail-Beta.ps1'
+            ''
+            'The installer imports WinoMail_Beta.cer into Local Computer / Trusted People, then installs the signed MSIXBundle and any dependency packages included in Dependencies.'
+            ''
+            'This certificate is a temporary self-signed CI test certificate for this artifact only.'
+          )
+          $readmeLines | Set-Content -LiteralPath (Join-Path $artifactRoot 'INSTALL.md') -Encoding utf8
+
+          $metadataLines = @(
+            "Bundle=$($bundle.Name)"
             "Version=$([string]$manifest.Bundle.Identity.Version)"
             "PackageName=$([string]$manifest.Bundle.Identity.Name)"
             "Publisher=$publisher"
             "Architecture=x64"
-            "Signed=true"
+            'Signed=true'
             "CertificateSubject=$publisher"
             "CertificateThumbprint=$($cert.Thumbprint)"
-            "SHA256=$hash"
-            "Commit=${{ github.sha }}"
-          ) | Set-Content "$env:GITHUB_WORKSPACE/beta-msixbundle-metadata.txt" -Encoding utf8
+            "SHA256=$((Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash)"
+            "Commit=$env:GITHUB_SHA"
+          )
+          $metadataLines | Set-Content -LiteralPath (Join-Path $artifactRoot 'beta-msixbundle-metadata.txt') -Encoding utf8
 
-          $installScript = @'
-#requires -RunAsAdministrator
-$ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
-$bundle = Get-ChildItem -LiteralPath $root -File -Filter 'WinoMail_Beta_*.msixbundle' | Select-Object -First 1
-$certificate = Join-Path $root 'WinoMail_Beta.cer'
+          Write-Host "Staged beta installer artifact at $artifactRoot"
 
-if ($null -eq $bundle) { throw 'Wino Mail beta MSIXBundle not found.' }
-if (-not (Test-Path -LiteralPath $certificate)) { throw 'WinoMail_Beta.cer not found.' }
-
-Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
-
-$dependencyRoot = Join-Path $root 'Dependencies'
-$dependencies = @()
-if (Test-Path -LiteralPath $dependencyRoot) {
-  $dependencies = @(
-    Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File |
-      Where-Object { $_.Extension -in '.msix', '.appx' } |
-      Select-Object -ExpandProperty FullName
-  )
-}
-
-$params = @{ Path = $bundle.FullName }
-if ($dependencies.Count -gt 0) {
-  $params.DependencyPath = $dependencies
-}
-
-Add-AppxPackage @params
-Write-Host "Wino Mail Beta installed from $($bundle.Name)."
-'@
-          $dependencyRoot = Join-Path $bundle.DirectoryName 'Dependencies'
-          $dependencies = @()
-          if (Test-Path -LiteralPath $dependencyRoot) {
-            $dependencies = @(
-              Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File |
-                Where-Object { $_.Extension -in '.msix', '.appx' } |
-                Select-Object -ExpandProperty FullName
-            )
-          }
-          $installParams = @{ Path = $bundle.FullName }
-          if ($dependencies.Count -gt 0) {
-            $installParams.DependencyPath = $dependencies
-          }
-          Add-AppxPackage @installParams
-
-          $installScript | Set-Content -LiteralPath (Join-Path $bundle.DirectoryName 'Install-WinoMail-Beta.ps1') -Encoding utf8
-
-          $readme = @'
-Wino Mail Beta — CI test package
-
-1. Extract this artifact.
-2. Open PowerShell as Administrator.
-3. Run:
-   .\Install-WinoMail-Beta.ps1
-
-The installer imports WinoMail_Beta.cer into Local Computer / Trusted People and installs the signed MSIXBundle together with dependency packages.
-
-This certificate is a temporary self-signed CI test certificate. It is for testing only.
-'@
-          $readme | Set-Content -LiteralPath (Join-Path $bundle.DirectoryName 'INSTALL.md') -Encoding utf8
-
-      - name: Verify signed beta bundle artifact
+      - name: Smoke test beta bundle installation
         shell: pwsh
         run: |
-          $bundle = Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
-            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' } |
-            Select-Object -First 1
-          if ($null -eq $bundle) { throw 'Signed beta bundle not found.' }
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'WinoMail-Beta-MSIXBundle'
+          $bundle = Get-ChildItem -LiteralPath $artifactRoot -File -Filter 'WinoMail_Beta_*.msixbundle' | Select-Object -First 1
+          $certificate = Join-Path $artifactRoot 'WinoMail_Beta.cer'
+          if ($null -eq $bundle) { throw 'Staged beta bundle was not found.' }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw 'Staged beta certificate was not found.' }
 
-          $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
-          if ($null -eq $signature.SignerCertificate) { throw 'The beta bundle is missing a signer certificate.' }
+          Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
 
-          $certificate = Join-Path $bundle.DirectoryName 'WinoMail_Beta.cer'
-          if (-not (Test-Path -LiteralPath $certificate)) { throw 'The public signing certificate was not exported.' }
+          $dependencies = @()
+          $dependencyRoot = Join-Path $artifactRoot 'Dependencies'
+          if (Test-Path -LiteralPath $dependencyRoot) {
+            $dependencies = @(Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File |
+              Where-Object { $_.Extension -in '.msix', '.appx' } |
+              Select-Object -ExpandProperty FullName)
+          }
 
-          $installScript = Join-Path $bundle.DirectoryName 'Install-WinoMail-Beta.ps1'
-          if (-not (Test-Path -LiteralPath $installScript)) { throw 'The beta install helper was not generated.' }
+          $installParams = @{ Path = $bundle.FullName }
+          if ($dependencies.Count -gt 0) { $installParams.DependencyPath = $dependencies }
+          Add-AppxPackage @installParams
 
-          $dependencies = @(Get-ChildItem $bundle.DirectoryName -Recurse -File -Filter '*.msix' -ErrorAction SilentlyContinue)
-          Write-Host "Signed bundle: $($bundle.FullName)"
-          Write-Host "Signer: $($signature.SignerCertificate.Subject)"
-          Write-Host "Dependency packages: $($dependencies.Count)"
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta'
+          if ($null -eq $installed) { throw 'WinoMail.Beta was not found after Add-AppxPackage.' }
+          Write-Host "Installed WinoMail.Beta $($installed.Version) successfully."
 
       - name: Upload beta MSIXBundle
         uses: actions/upload-artifact@v4
         with:
           name: WinoMail-Beta-MSIXBundle
-          path: |
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/WinoMail_Beta_*.msixbundle
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/WinoMail_Beta.cer
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/Install-WinoMail-Beta.ps1
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/INSTALL.md
-            src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*/Dependencies/**
-            beta-msixbundle-metadata.txt
+          path: \${{ runner.temp }}/WinoMail-Beta-MSIXBundle
           if-no-files-found: error
           retention-days: 14
