@@ -882,6 +882,7 @@ function Invoke-ReleaseBuild {
             if ($channel.Name -eq 'Beta' -and $script:UnsignedBeta) {
                 $stage = 'finalize unsigned beta bundle'
                 Copy-Item -LiteralPath $bundle -Destination $channelBundle
+                Copy-ReleaseDependencies (Join-Path $staging 'sdk') (Join-Path $folder 'Dependencies')
                 $bundleHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
                 if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $bundleHash) {
                     throw 'The unsigned beta bundle differs from its verified package.'
