@@ -636,14 +636,21 @@
            Text="Debug BackgroundSyncHost runtimeconfig was not copied into AppX." />
   </Target>
 
-<Target Name="PrepareBackgroundSyncHostPackagePayload"
-        AfterTargets="_ComputeAppxPackagePayload"
-        BeforeTargets="_GenerateAppxPackageFile"
+<Target Name="PublishBackgroundSyncHost"
+        BeforeTargets="_ComputeAppxPackagePayload"
         Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
+    <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
+           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
+  </Target>
+
+  <Target Name="PrepareBackgroundSyncHostPackagePayload"
+        AfterTargets="_ComputeAppxPackagePayload"
+        BeforeTargets="_GenerateAppxPackageFile;WinoExportReleasePayload"
+        Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
     <ItemGroup>
