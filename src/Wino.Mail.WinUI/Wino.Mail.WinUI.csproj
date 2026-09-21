@@ -569,6 +569,12 @@
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
+  <Target Name="RestoreBackgroundSyncHost" BeforeTargets="Restore"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+            Targets="Restore"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);ArtifactsPath=$(ArtifactsPath);RestoreConfigFile=$(RestoreConfigFile)" />
+  </Target>
   <!-- Visual Studio may orchestrate solution dependencies separately and set
        BuildProjectReferences=false on the WinUI project. Build the shared Windows platform
        dependency before ResolveProjectReferences so the compiler always receives a real DLL. -->
