@@ -1,0 +1,91 @@
+name: Background Sync Beta Package
+
+on:
+  push:
+    branches:
+      - feature/background-sync-host
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build-beta:
+    runs-on: windows-latest
+    env:
+      WINO_BETA_RELEASE_SIGNING_ENDPOINT: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ENDPOINT }}
+      WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME }}
+      WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      WINO_BETA_RELEASE_PUBLISHER_SUBJECT: ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}
+      WINO_BETA_RELEASE_AZURE_TENANT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_TENANT_ID }}
+      WINO_BETA_RELEASE_AZURE_CLIENT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_ID }}
+      WINO_BETA_RELEASE_AZURE_CLIENT_SECRET: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_SECRET }}
+      WINO_BETA_RELEASE_APPINSTALLER_URI: ${{ vars.WINO_BETA_RELEASE_APPINSTALLER_URI }}
+      WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check beta artwork
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'release-assets/Beta/Assets/Wino_Icon.ico')) {
+            throw 'Supply the beta artwork under release-assets/Beta before publishing.'
+          }
+
+      - name: Install Artifact Signing client
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -Source https://api.nuget.org/v3/index.json -OutputDirectory "$env:RUNNER_TEMP/signing" -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact Signing client installation failed.' }
+          $dlib = Get-ChildItem "$env:RUNNER_TEMP/signing" -Filter Azure.CodeSigning.Dlib.dll -Recurse |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (-not $dlib) { throw 'The x64 Artifact Signing library was not found.' }
+          "WINO_BETA_RELEASE_SIGNING_DLIB_PATH=$($dlib.FullName)" >> $env:GITHUB_ENV
+
+      - name: Verify release script
+        shell: pwsh
+        run: ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Build and sign Beta
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x86,x64,ARM64
+
+      - name: Verify final Beta artifact
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content src/Wino.Mail.WinUI/Package.appxmanifest)).Package.Identity.Version
+          $folder = "src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_$version"
+          if (-not (Test-Path $folder)) { throw "Beta output folder not found: $folder" }
+
+          $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
+          $certificate = Get-ChildItem $folder -Filter '*_SigningCertificate.cer' -File | Select-Object -First 1
+          if (-not (Test-Path $bundle)) { throw "Beta MSIXBundle not found: $bundle" }
+          if ($null -eq $certificate) { throw 'Signed Beta public certificate was not exported.' }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $bundle
+          if ($null -eq $signature.SignerCertificate) { throw 'The Beta bundle has no signer certificate.' }
+
+          if (-not [string]::Equals($signature.SignerCertificate.Subject, ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}, [StringComparison]::Ordinal)) {
+            throw "Unexpected Beta signer subject: $($signature.SignerCertificate.Subject)"
+          }
+
+          Write-Host "Beta package: $bundle"
+          Write-Host "Beta certificate: $($certificate.FullName)"
+          Write-Host "Beta identity: WinoMail.Beta"
+
+      - name: Upload signed Beta package
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-Signed
+          path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
+          if-no-files-found: error
+          retention-days: 14
