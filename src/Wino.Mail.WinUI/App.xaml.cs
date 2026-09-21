@@ -776,7 +776,7 @@ public partial class App : WinoApplication,
                 AppCloseBehavior.RunInBackgroundWithoutTrayIcon))
             return;
 
-        var hostPath = Path.Combine(AppContext.BaseDirectory, "BackgroundSyncHost", "Wino.Mail.BackgroundSyncHost.exe");
+        var hostPath = Path.Combine(AppContext.BaseDirectory, "Wino.Mail.BackgroundSyncHost.exe");
         if (!File.Exists(hostPath))
         {
             LogActivation($"Background sync host executable was not found: {hostPath}");
