@@ -763,6 +763,19 @@ function Sign-SideloadRelease {
         Invoke-ReleaseTool $Tools.SignTool @('sign', '/fd', 'SHA256', '/tr', 'http://timestamp.acs.microsoft.com', '/td', 'SHA256',
             '/dlib', $Signing.Dlib, '/dmdf', $metadataPath, $Bundle) (Join-Path $Staging 'logs/sign.log') $Signing.Credentials
         Invoke-ReleaseTool $Tools.SignTool @('verify', '/pa', '/all', '/v', '/tw', $Bundle) (Join-Path $Staging 'logs/verify-signature.log')
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $Bundle
+        if ($null -eq $signature.SignerCertificate) {
+            throw "The signed $Channel bundle does not expose a public signer certificate."
+        }
+
+        $certificatePath = Join-Path $Staging "signed-$Channel.cer"
+        Export-Certificate -Cert $signature.SignerCertificate -FilePath $certificatePath -Type CERT -Force | Out-Null
+        if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+            throw "The signer certificate for $Channel could not be exported."
+        }
+
+        return $certificatePath
     }
     finally { Remove-Item -LiteralPath $metadataPath -ErrorAction SilentlyContinue }
 }
@@ -874,13 +887,14 @@ function Invoke-ReleaseBuild {
             }
             else { $storeHashes = $hashes }
             $stage = 'Azure signing'
-            Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
+            $certificatePath = Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
             $signedHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
             $folder = Join-Path $staging "ready/$($channel.FolderName)"
             $null = New-Item -ItemType Directory -Path $folder -Force
             $channelBundle = Join-Path $folder "$($channel.FolderName).msixbundle"
             Copy-Item -LiteralPath $bundle -Destination $channelBundle
             if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $signedHash) { throw 'The final bundle differs from its verified signed package.' }
+            Copy-Item -LiteralPath $certificatePath -Destination (Join-Path $folder "$($channel.FolderName)_SigningCertificate.cer")
             Copy-ReleaseDependencies (Join-Path $staging 'sdk') (Join-Path $folder 'Dependencies')
             New-SideloadAppInstaller $channelBundle $Plan $Signing.Distributions[$channel.Name] $channel.Name
         }
