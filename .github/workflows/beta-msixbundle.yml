@@ -139,6 +139,8 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
           Export-Certificate -Cert $cert -FilePath $cer | Out-Null
 
+          Import-Certificate -FilePath $cer -CertStoreLocation 'Cert:LocalMachineTrustedPeople' | Out-Null
+
           & $signTool.FullName sign /fd SHA256 /a /f $pfx /p $passwordText $bundle.FullName
           if ($LASTEXITCODE -ne 0) { throw 'SignTool failed to sign the beta MSIXBundle.' }
 
@@ -197,6 +199,21 @@ if ($dependencies.Count -gt 0) {
 Add-AppxPackage @params
 Write-Host "Wino Mail Beta installed from $($bundle.Name)."
 '@
+          $dependencyRoot = Join-Path $bundle.DirectoryName 'Dependencies'
+          $dependencies = @()
+          if (Test-Path -LiteralPath $dependencyRoot) {
+            $dependencies = @(
+              Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File |
+                Where-Object { $_.Extension -in '.msix', '.appx' } |
+                Select-Object -ExpandProperty FullName
+            )
+          }
+          $installParams = @{ Path = $bundle.FullName }
+          if ($dependencies.Count -gt 0) {
+            $installParams.DependencyPath = $dependencies
+          }
+          Add-AppxPackage @installParams
+
           $installScript | Set-Content -LiteralPath (Join-Path $bundle.DirectoryName 'Install-WinoMail-Beta.ps1') -Encoding utf8
 
           $readme = @'
