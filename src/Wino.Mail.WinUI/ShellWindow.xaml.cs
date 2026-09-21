@@ -628,9 +628,6 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
-            if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
-                return;
-
             PrepareForClose();
 
             // PrepareForClose removes this handler and permits the real close. The managed
