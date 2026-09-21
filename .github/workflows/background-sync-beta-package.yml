@@ -31,7 +31,7 @@ jobs:
         run: |
           $version = dotnet --version
           if ($LASTEXITCODE -ne 0) { throw 'dotnet is not available on the runner.' }
-          if ($version -ne '10.0.401') { throw "Expected .NET SDK 10.0.401, found $version." }
+          if ($version -ne '10.0.400') { throw "Expected .NET SDK 10.0.400, found $version." }
           dotnet --info
 
       - name: Check beta artwork
