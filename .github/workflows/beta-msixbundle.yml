@@ -40,7 +40,8 @@ jobs:
       - name: Verify beta bundle identity
         shell: pwsh
         run: |
-          $bundles = @(Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*' -Filter '*.msixbundle' -Recurse -File)
+          $bundles = @(Get-ChildItem 'src/Wino.Mail.WinUI/AppPackages' -Recurse -File -Filter 'WinoMail_Beta_*.msixbundle' |
+            Where-Object { $_.Directory.Name -like 'WinoMail_Beta_*' })
           if ($bundles.Count -ne 1) { throw "Expected exactly one beta MSIXBundle, found $($bundles.Count)." }
 
           Add-Type -AssemblyName System.IO.Compression.FileSystem
