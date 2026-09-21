@@ -404,12 +404,25 @@ function Get-ReleaseBuildArguments {
     }
     $mode = if ($Plan.Selection.Store) { 'StoreUpload' } else { 'SideloadOnly' }
     return $arguments + @(
-        '-t:Build', '-p:GenerateAppxPackageOnBuild=true', '-p:AppxBundle=Always',
+        '-t:Publish', '-p:GenerateAppxPackageOnBuild=true', '-p:AppxBundle=Always',
         "-p:AppxBundlePlatforms=$($Plan.Selection.Architectures -join '|')", "-p:UapAppxPackageBuildMode=$mode",
         "-p:AppxPackageDir=$(Join-Path $Staging 'sdk')\", "-p:WinoReleaseStagingRoot=$(Join-Path $Staging 'exports')",
         '-p:AppxPackageSigningEnabled=false', '-p:GenerateTemporaryStoreCertificate=false',
         '-p:GenerateAppInstallerFile=false', '-p:AppxAutoIncrementPackageRevision=false',
-        '-p:AppxSymbolPackageEnabled=true', '-p:GenerateTestArtifacts=true'
+        '-p:AppxSymbolPackageEnabled=true', '-p:GenerateTestArtifacts=true', '-p:UseSharedCompilation=false'
+    )
+}
+
+function Get-BackgroundHostRestoreArguments {
+    param([object]$Plan)
+
+    $hostProject = Join-Path $Plan.RepositoryRoot 'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj'
+    return @(
+        'msbuild', $hostProject, '-nologo', '-m:1', '-nr:false', '-verbosity:minimal',
+        '-t:Restore',
+        "-p:Configuration=Release",
+        "-p:Platform=$(if ($Plan.Selection.Architectures.Count -eq 1) { $Plan.Selection.Architectures[0] } else { 'x64' })",
+        "-p:RestoreConfigFile=$(Join-Path $Plan.RepositoryRoot 'nuget.config')"
     )
 }
 
@@ -956,6 +969,8 @@ function Invoke-ReleaseBuild {
 
         $stage = 'restore'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging -Restore) (Join-Path $staging 'logs/restore.log')
+        $stage = 'background synchronization host restore'
+        Invoke-ReleaseTool $Tools.MSBuild (Get-BackgroundHostRestoreArguments $Plan) (Join-Path $staging 'logs/background-host-restore.log')
         $stage = 'Release compilation and SDK packaging'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging) (Join-Path $staging 'logs/build.log')
         $storeHashes = $null
