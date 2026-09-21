@@ -4,6 +4,21 @@
     <_WinoReleaseExportDir>$(WinoReleaseStagingRoot)\$(Platform)\</_WinoReleaseExportDir>
   </PropertyGroup>
 
+  <Target Name="WinoIncludeBackgroundSyncHostInPackagePayload"
+          BeforeTargets="_ComputeAppxPackagePayload"
+          Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true' and '$(BackgroundSyncHostPublishRoot)' != ''">
+    <PropertyGroup>
+      <_WinoBackgroundSyncHostExecutable>$([System.IO.Path]::GetFullPath('$(BackgroundSyncHostPublishRoot)Wino.Mail.BackgroundSyncHost.exe'))</_WinoBackgroundSyncHostExecutable>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_WinoBackgroundSyncHostExecutable)')"
+           Text="Background synchronization host was not published: $(_WinoBackgroundSyncHostExecutable)" />
+    <ItemGroup>
+      <AppxPackagePayload Include="$(_WinoBackgroundSyncHostExecutable)">
+        <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
+      </AppxPackagePayload>
+    </ItemGroup>
+  </Target>
+
   <Target Name="WinoExportReleasePayload" AfterTargets="_ComputeAppxPackagePayload"
           Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
     <Error Condition="'@(AppxPackagePayload)' == ''" Text="The release package payload is empty." />
