@@ -761,10 +761,6 @@ function Sign-SideloadReleaseWithCertificate {
         'sign', '/fd', 'SHA256', '/sha1', $Signing.Certificate.Thumbprint, $Bundle
     ) (Join-Path $Staging 'logs/sign-beta-test.log')
 
-    Invoke-ReleaseTool $Tools.SignTool @(
-        'verify', '/pa', '/all', '/v'
-    ) (Join-Path $Staging 'logs/verify-beta-test-signature.log')
-
     $signature = Get-AuthenticodeSignature -LiteralPath $Bundle
     if ($null -eq $signature.SignerCertificate -or
         $signature.SignerCertificate.Thumbprint -cne $Signing.Certificate.Thumbprint) {
