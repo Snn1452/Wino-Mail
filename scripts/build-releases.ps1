@@ -969,8 +969,6 @@ function Invoke-ReleaseBuild {
 
         $stage = 'restore'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging -Restore) (Join-Path $staging 'logs/restore.log')
-        $stage = 'background synchronization host restore'
-        Invoke-ReleaseTool $Tools.MSBuild (Get-BackgroundHostRestoreArguments $Plan) (Join-Path $staging 'logs/background-host-restore.log')
         $stage = 'Release compilation and SDK packaging'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging) (Join-Path $staging 'logs/build.log')
         $storeHashes = $null
