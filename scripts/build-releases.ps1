@@ -341,7 +341,7 @@ function Get-ReleaseBuildArguments {
     }
     $mode = if ($Plan.Selection.Store) { 'StoreUpload' } else { 'SideloadOnly' }
     return $arguments + @(
-        '-t:Build', '-p:GenerateAppxPackageOnBuild=true', '-p:AppxBundle=Always',
+        '-t:Build', '-p:WinoIsReleaseBuild=true', '-p:GenerateAppxPackageOnBuild=true', '-p:AppxBundle=Always',
         "-p:AppxBundlePlatforms=$($Plan.Selection.Architectures -join '|')", "-p:UapAppxPackageBuildMode=$mode",
         "-p:AppxPackageDir=$(Join-Path $Staging 'sdk')\", "-p:WinoReleaseStagingRoot=$(Join-Path $Staging 'exports')",
         '-p:AppxPackageSigningEnabled=false', '-p:GenerateTemporaryStoreCertificate=false',
