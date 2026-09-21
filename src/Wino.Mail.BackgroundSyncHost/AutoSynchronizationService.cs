@@ -18,7 +18,6 @@ internal sealed class AutoSynchronizationService(
 {
     private const int InboxSyncsPerFullSync = 20;
     private readonly ConcurrentDictionary<Guid, int> _counters = new();
-    private readonly SemaphoreSlim _automaticSynchronizationGate = new(1, 1);
     private readonly SemaphoreSlim _automaticSynchronizationSemaphore = new(1, 1);
 
     public async Task RunAsync(CancellationToken token)
@@ -85,7 +84,6 @@ internal sealed class AutoSynchronizationService(
         var pollInterval = TimeSpan.FromSeconds(30);
         DateTimeOffset? nextRunAt = null;
         TimeSpan? activeInterval = null;
-        var runImmediately = true;
 
         while (true)
         {
@@ -104,12 +102,6 @@ internal sealed class AutoSynchronizationService(
                 var lastRunAt = nextRunAt!.Value - activeInterval.Value;
                 nextRunAt = lastRunAt + configuredInterval;
                 activeInterval = configuredInterval;
-            }
-
-            if (runImmediately)
-            {
-                nextRunAt = now;
-                runImmediately = false;
             }
 
             var delay = nextRunAt!.Value - now;
@@ -148,10 +140,10 @@ internal sealed class AutoSynchronizationService(
         try
         {
             var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
-        var ids = accounts.Select(account => account.Id).ToHashSet();
+            var ids = accounts.Select(account => account.Id).ToHashSet();
 
-        foreach (var id in _counters.Keys.Where(id => !ids.Contains(id)).ToList())
-            _counters.TryRemove(id, out _);
+            foreach (var id in _counters.Keys.Where(id => !ids.Contains(id)).ToList())
+                _counters.TryRemove(id, out _);
 
             await Task.WhenAll(accounts.Select(account => MailAccountAsync(account, token))).ConfigureAwait(false);
         }
