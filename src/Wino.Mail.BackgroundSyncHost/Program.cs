@@ -143,8 +143,6 @@ internal static class Program
         var releaseIdentity = ReleaseIdentity.Current;
 
         configuration.ApplicationDataFolderPath = appData.LocalFolder.Path;
-        configuration.AllowLegacyDataMigration = releaseIdentity.AllowsLegacyMigration;
-        configuration.ApplicationDisplayName = releaseIdentity.DisplayNames["Mail"];
         configuration.PublisherSharedFolderPath = releaseIdentity.AllowsLegacyMigration
             ? appData.GetPublisherCacheFolder(ApplicationConfiguration.SharedFolderName).Path
             : string.Empty;
