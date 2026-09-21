@@ -1,9 +1,9 @@
 name: Background Sync Beta Package
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/background-sync-host
+      - main
 
 permissions:
   contents: read
