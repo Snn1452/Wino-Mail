@@ -9,7 +9,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: wino-native-aot-${{ github.ref }}
+  group: wino-native-aot-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +22,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          clean: false
+          persist-credentials: false
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -73,12 +76,20 @@ jobs:
             /p:GenerateAppxPackageOnBuild=false `
             /p:AppxPackageSigningEnabled=false `
             /p:WinoSkipBackgroundSyncHostBuild=true `
+            /p:UseSharedCompilation=false `
             /p:TreatWarningsAsErrors=true `
             /p:TrimmerSingleWarn=false
           if ($LASTEXITCODE -ne 0) { throw 'WinUI Native AOT publish failed.' }
 
           $nativeExecutable = Get-ChildItem src/Wino.Mail.WinUI/bin/Release -Recurse -Filter Wino.Mail.WinUI.exe | Select-Object -First 1
           if (-not $nativeExecutable) { throw 'WinUI Native AOT executable was not generated.' }
+
+      - name: Stop build helper processes
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process -Name VBCSCompiler,MSBuild,vctip,dotnet -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
 
       - name: Publish and run SQLite Native AOT smoke harness
         shell: pwsh
