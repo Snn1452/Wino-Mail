@@ -414,14 +414,17 @@ function Get-ReleaseBuildArguments {
 }
 
 function Get-BackgroundHostRestoreArguments {
-    param([object]$Plan)
+    param([object]$Plan, [string]$Staging)
 
     $hostProject = Join-Path $Plan.RepositoryRoot 'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj'
+    $artifactsPath = Join-Path $Staging 'build'
+    $platform = if ($Plan.Selection.Architectures.Count -eq 1) { $Plan.Selection.Architectures[0] } else { 'x64' }
     return @(
         'msbuild', $hostProject, '-nologo', '-m:1', '-nr:false', '-verbosity:minimal',
         '-t:Restore',
         "-p:Configuration=Release",
-        "-p:Platform=$(if ($Plan.Selection.Architectures.Count -eq 1) { $Plan.Selection.Architectures[0] } else { 'x64' })",
+        "-p:Platform=$platform",
+        "-p:ArtifactsPath=$artifactsPath",
         "-p:RestoreConfigFile=$(Join-Path $Plan.RepositoryRoot 'nuget.config')"
     )
 }
@@ -969,6 +972,8 @@ function Invoke-ReleaseBuild {
 
         $stage = 'restore'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging -Restore) (Join-Path $staging 'logs/restore.log')
+        $stage = 'background synchronization host restore'
+        Invoke-ReleaseTool $Tools.MSBuild (Get-BackgroundHostRestoreArguments $Plan $staging) (Join-Path $staging 'logs/background-host-restore.log')
         $stage = 'Release compilation and SDK packaging'
         Invoke-ReleaseTool $Tools.MSBuild (Get-ReleaseBuildArguments $Plan $staging) (Join-Path $staging 'logs/build.log')
         $storeHashes = $null
