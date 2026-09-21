@@ -1,7 +1,2 @@
 # Auto detect text files and perform LF normalization
 * text=auto
-
-# Magika integrity-checked assets must retain their exact byte representation.
-/src/Wino.Core.ML/Models/Magika/standard_v3_3/config.min.json text eol=lf
-/src/Wino.Core.ML/Models/Magika/standard_v3_3/content_types_kb.min.json text eol=lf
-/src/Wino.Core.ML/Models/Magika/standard_v3_3/model.onnx -text

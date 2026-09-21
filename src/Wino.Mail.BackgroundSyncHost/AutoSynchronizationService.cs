@@ -18,7 +18,6 @@ internal sealed class AutoSynchronizationService(
 {
     private const int InboxSyncsPerFullSync = 20;
     private readonly ConcurrentDictionary<Guid, int> _counters = new();
-    private readonly SemaphoreSlim _automaticSynchronizationSemaphore = new(1, 1);
 
     public async Task RunAsync(CancellationToken token)
     {
@@ -30,11 +29,10 @@ internal sealed class AutoSynchronizationService(
 
         try
         {
-            await Task.WhenAny(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
+            var completed = await Task.WhenAny(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
 
-            // Any loop completing ends the host. The monitor completes only when background mode
-            // is disabled; the sync loops should not silently leave the other loop running.
-            lifetimeCts.Cancel();
+            if (completed == monitor)
+                lifetimeCts.Cancel();
 
             await Task.WhenAll(mailLoop, calendarLoop, monitor).ConfigureAwait(false);
         }
@@ -92,14 +90,12 @@ internal sealed class AutoSynchronizationService(
             var now = DateTimeOffset.UtcNow;
             var configuredInterval = intervalProvider();
 
-            if (activeInterval is null)
+            if (activeInterval != configuredInterval)
             {
-                activeInterval = configuredInterval;
-                nextRunAt = now;
-            }
-            else if (activeInterval != configuredInterval)
-            {
-                var lastRunAt = nextRunAt!.Value - activeInterval.Value;
+                var lastRunAt = nextRunAt.HasValue && activeInterval.HasValue
+                    ? nextRunAt.Value - activeInterval.Value
+                    : now;
+
                 nextRunAt = lastRunAt + configuredInterval;
                 activeInterval = configuredInterval;
             }
@@ -134,43 +130,24 @@ internal sealed class AutoSynchronizationService(
 
     private async Task MailTickAsync(CancellationToken token)
     {
-        if (!await _automaticSynchronizationSemaphore.WaitAsync(0, token).ConfigureAwait(false))
-            return;
+        var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
+        var ids = accounts.Select(account => account.Id).ToHashSet();
 
-        try
-        {
-            var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
-            var ids = accounts.Select(account => account.Id).ToHashSet();
+        foreach (var id in _counters.Keys.Where(id => !ids.Contains(id)).ToList())
+            _counters.TryRemove(id, out _);
 
-            foreach (var id in _counters.Keys.Where(id => !ids.Contains(id)).ToList())
-                _counters.TryRemove(id, out _);
-
-            await Task.WhenAll(accounts.Select(account => MailAccountAsync(account, token))).ConfigureAwait(false);
-        }
-        finally
-        {
-            _automaticSynchronizationSemaphore.Release();
-        }
+        await Task.WhenAll(accounts.Select(account => MailAccountAsync(account, token))).ConfigureAwait(false);
     }
 
     private async Task CalendarTickAsync(CancellationToken token)
     {
-        await _automaticSynchronizationSemaphore.WaitAsync(token).ConfigureAwait(false);
+        var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
 
-        try
-        {
-            var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
-
-            await Task.WhenAll(
-                    accounts
-                        .Where(account => account.IsCalendarAccessGranted)
-                        .Select(account => CalendarAccountAsync(account, token)))
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _automaticSynchronizationSemaphore.Release();
-        }
+        await Task.WhenAll(
+                accounts
+                    .Where(account => account.IsCalendarAccessGranted)
+                    .Select(account => CalendarAccountAsync(account, token)))
+            .ConfigureAwait(false);
     }
 
     private async Task CalendarAccountAsync(MailAccount account, CancellationToken token)

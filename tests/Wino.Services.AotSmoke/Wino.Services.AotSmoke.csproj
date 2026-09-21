@@ -13,10 +13,4 @@
     <ProjectReference Include="..\..\src\Wino.Services\Wino.Services.csproj" />
     <ProjectReference Include="..\..\src\Wino.Core.ML\Wino.Core.ML.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Content Include="..\..\src\Wino.Core.ML\Models\Magika\standard_v3_3\**\*"
-             Link="Models\Magika\standard_v3_3\%(RecursiveDir)%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
-  </ItemGroup>
 </Project>

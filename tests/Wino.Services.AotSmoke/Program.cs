@@ -108,9 +108,7 @@ try
     var classification = await contentTypeModel.ClassifyAsync(contentTypeStream).ConfigureAwait(false);
 
     if (contentTypeModel.IsSupported && classification.Label != "txt")
-        throw new InvalidOperationException(
-            $"Magika Native AOT smoke test returned {classification.Label ?? classification.Status.ToString()}. " +
-            $"Details: {classification.Description ?? "<none>"}");
+        throw new InvalidOperationException($"Magika Native AOT smoke test returned {classification.Label ?? classification.Status.ToString()}.");
 
     if (!contentTypeModel.IsSupported && classification.Status != ContentTypeClassificationStatus.Unavailable)
         throw new InvalidOperationException("The unsupported Magika facade did not report unavailable.");

@@ -17,11 +17,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <!-- Bundle the Windows App SDK and .NET runtime into per-architecture MSIX outputs. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <!-- Both the UI and headless background host are self-contained in local and release builds.
-         The background host is launched independently by the startup task and must not depend on
-         a machine-wide .NET runtime installation. -->
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
-    <AppxGeneratePrisForPortableLibrariesEnabled>false</AppxGeneratePrisForPortableLibrariesEnabled>
     <UseNativeAot Condition="'$(UseNativeAot)' == ''">true</UseNativeAot>
     <PublishAot Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishAot>
     <PublishTrimmed Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishTrimmed>
@@ -46,7 +42,7 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
 	<NotificationHostBuildSuffix>bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</NotificationHostBuildSuffix>
 	<BackgroundSyncHostBuildSuffix>bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</BackgroundSyncHostBuildSuffix>
-	<BackgroundSyncHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(IntermediateOutputPath)BackgroundSyncHost'))</BackgroundSyncHostPublishRoot>
+	<BackgroundSyncHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\BackgroundSyncHost'))</BackgroundSyncHostPublishRoot>
 	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' == 'true'">$(BackgroundSyncHostPublishRoot)\</BackgroundSyncHostOutput>
 	<BackgroundSyncHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\$(BackgroundSyncHostBuildSuffix)</BackgroundSyncHostOutput>
 	<NotificationHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\NotificationHosts'))</NotificationHostPublishRoot>
@@ -276,11 +272,13 @@
     <Content Include="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.exe" Link="Wino.Calendar.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.exe" Link="Wino.People.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.exe" Link="Wino.Tasks.NotificationHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The background host is a self-contained packaged executable. Keep its complete
+         publish payload together under the path declared by Package.appxmanifest. -->
     <Content Include="$(BackgroundSyncHostOutput)**\*"
-             Condition="'$(WinoIsReleaseBuild)' != 'true'"
+             Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest"
-             Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
+             CopyToPublishDirectory="PreserveNewest" />
+
 
 
     <Content Include="$(MailNotificationHostOutput)Wino.NotificationHost.dll" Link="Wino.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
@@ -355,14 +353,10 @@
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls\Wino.Mail.Controls.csproj" />
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.Core\Wino.Mail.Controls.Core.csproj" />
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
-	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-                      ReferenceOutputAssembly="true"
-                      GlobalPropertiesToRemove="WinoIsReleaseBuild;SelfContained;PublishAot;PublishTrimmed;TrimMode;UseNativeAot;GenerateAppxPackageOnBuild;EnableMsixTooling;IncludePublishItemsOutputGroup" />
+	<ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />
   </ItemGroup>
-  <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true'">
-    <!-- Release packaging builds the notification hosts as part of the WinUI packaging graph.
-         Debug uses BuildNotificationHost below, avoiding executable ProjectReference self-containment
-         validation while keeping the solution build graph deterministic. -->
+  <ItemGroup>
+    <!-- Build the notification hosts before the app's packaging target publishes them. -->
     <ProjectReference Include="..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
@@ -373,11 +367,7 @@
     <TrimmerRootDescriptor Include="ILLink.AotRoots.xml" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      BuildReference="true"
-                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
   </ItemGroup>
   <ItemGroup>
     <Page Update="Views\Settings\ContactsPage.xaml">
@@ -559,108 +549,40 @@
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(MailNotificationHostOutput);$(CalendarNotificationHostOutput);$(PeopleNotificationHostOutput);$(TasksNotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishAot=true;PublishTrimmed=true;PublishDir=$(MailNotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishAot=true;PublishTrimmed=true;PublishDir=$(CalendarNotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishAot=true;PublishTrimmed=true;PublishDir=$(PeopleNotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishAot=true;PublishTrimmed=true;PublishDir=$(TasksNotificationHostOutput)" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(MailNotificationHostOutput);Restore=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(CalendarNotificationHostOutput);Restore=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(PeopleNotificationHostOutput);Restore=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(TasksNotificationHostOutput);Restore=false" />
   </Target>
 
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
     <MSBuild Projects="@(NotificationHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
-  <Target Name="RestoreBackgroundSyncHost" BeforeTargets="Restore"
-          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
+
+  <Target Name="RestoreBackgroundSyncHost" BeforeTargets="Restore">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Restore"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);ArtifactsPath=$(ArtifactsPath);RestoreConfigFile=$(RestoreConfigFile)" />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)" />
   </Target>
-  <!-- Visual Studio may orchestrate solution dependencies separately and set
-       BuildProjectReferences=false on the WinUI project. Build the shared Windows platform
-       dependency before ResolveProjectReferences so the compiler always receives a real DLL. -->
-  <Target Name="EnsurePlatformWindowsBuilt"
-          BeforeTargets="ResolveProjectReferences"
-          Condition="'$(BuildingProject)' == 'true'">
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-            Targets="Build"
-            Condition="!Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\Wino.Platform.Windows.dll')
-                        Or !Exists('$(MSBuildProjectDirectory)\..\Wino.Platform.Windows\obj\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\ref\Wino.Platform.Windows.dll')"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true;ProduceReferenceAssembly=false;WinoIsReleaseBuild=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
-  </Target>
-<Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
-    <Delete Files="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json;
-                   $(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json;
-                   $(PeopleNotificationHostOutput)Wino.People.NotificationHost.runtimeconfig.json;
-                   $(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json" />
-    <MSBuild Projects="@(NotificationHostProject)"
-            Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishAot=false;PublishTrimmed=false" />
 
+  <Target Name="BuildNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipNotificationHostBuild)' != 'true'">
+    <MSBuild Projects="@(NotificationHostProject)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false" />
   </Target>
-  <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' != 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
-    <Delete Files="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.runtimeconfig.json" />
+
+  <Target Name="BuildBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Build"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
-
-  </Target>
-  <Target Name="StageDebugHostRuntimeConfigs" AfterTargets="Build"
-          Condition="'$(WinoIsReleaseBuild)' != 'true'">
-    <MakeDir Directories="$(TargetDir)AppX" />
-
-    <Copy SourceFiles="$(MailNotificationHostOutput)Wino.Mail.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Mail.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="false" />
-    <Copy SourceFiles="$(CalendarNotificationHostOutput)Wino.Calendar.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Calendar.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="false" />
-    <Copy SourceFiles="$(PeopleNotificationHostOutput)Wino.People.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.People.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="false" />
-    <Copy SourceFiles="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json"
-          DestinationFiles="$(TargetDir)AppX\Wino.Tasks.NotificationHost.runtimeconfig.json"
-          SkipUnchangedFiles="false" />
-
-    <ItemGroup>
-      <_BackgroundSyncHostDebugPayload Include="$(BackgroundSyncHostOutput)**\*" />
-    </ItemGroup>
-    <MakeDir Directories="$(TargetDir)AppX\BackgroundSyncHost" />
-    <Copy SourceFiles="@(_BackgroundSyncHostDebugPayload)"
-          DestinationFolder="$(TargetDir)AppX\BackgroundSyncHost\%(RecursiveDir)"
-          SkipUnchangedFiles="false" />
-
-    <Error Condition="!Exists('$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe')"
-           Text="Debug BackgroundSyncHost payload was not copied into AppX." />
-    <Error Condition="!Exists('$(TargetDir)AppX\BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.runtimeconfig.json')"
-           Text="Debug BackgroundSyncHost runtimeconfig was not copied into AppX." />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=false;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false" />
   </Target>
 
-<Target Name="PublishBackgroundSyncHost"
-        BeforeTargets="_ComputeAppxPackagePayload"
-        Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
+  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(WinoSkipBackgroundSyncHostBuild)' != 'true' and '$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;BuildProjectReferences=true;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
-  </Target>
-
-  <Target Name="PrepareBackgroundSyncHostPackagePayload"
-        AfterTargets="_ComputeAppxPackagePayload"
-        BeforeTargets="_GenerateAppxPackageFile;WinoExportReleasePayload"
-        Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(WinoSkipBackgroundSyncHostBuild)' != 'true'">
-    <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
-           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
-    <ItemGroup>
-      <AppxPackagePayload Remove="@(AppxPackagePayload)"
-                          MatchOnMetadata="TargetPath"
-                          MatchOnMetadataOptions="PathLike"
-                          Condition="'%(AppxPackagePayload.TargetPath)' == 'Wino.Mail.BackgroundSyncHost.exe'" />
-      <AppxPackagePayload Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe">
-        <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
-        <OutputGroup>PublishItemsOutputGroupOutput</OutputGroup>
-        <ProjectName>$(ProjectName)</ProjectName>
-      </AppxPackagePayload>
-    </ItemGroup>
   </Target>
 </Project>
