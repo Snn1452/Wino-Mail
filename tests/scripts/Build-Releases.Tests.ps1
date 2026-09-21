@@ -380,7 +380,14 @@ try {
             function New-SideloadPackage { param($Plan, $Tools, $Staging, $Architecture); $script:PackageCalls++ }
             function Assert-ReleaseBundle { param($Bundle, $Plan, $Name, $Publisher, $InspectionRoot); return @{ 'x64/app.exe' = 'hash' } }
             function Copy-ReleaseDependencies { param($SdkOutput, $Destination) }
-            function Sign-SideloadRelease { param($Bundle, $Plan, $Tools, $Signing, $Staging, $Channel); $script:SignCalls++; $Channel | Set-Content -LiteralPath $Bundle }
+            function Sign-SideloadRelease {
+                param($Bundle, $Plan, $Tools, $Signing, $Staging, $Channel)
+                $script:SignCalls++
+                $Channel | Set-Content -LiteralPath $Bundle
+                $certificatePath = Join-Path $Staging "signed-$Channel.cer"
+                'certificate fixture' | Set-Content -LiteralPath $certificatePath
+                return $certificatePath
+            }
             function New-SideloadAppInstaller { param($Bundle, $Plan, $Distribution) }
             function Copy-ReleaseSymbols {
                 param($Plan, $Staging)
