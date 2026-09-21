@@ -1,6 +1,9 @@
 name: Native AOT Compatibility
 
 on:
+  push:
+    branches:
+      - feature/background-sync-host
   pull_request:
   workflow_dispatch:
 
