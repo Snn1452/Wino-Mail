@@ -10,7 +10,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: wino-beta-package-${{ github.ref }}
+  group: wino-beta-package-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +22,9 @@ jobs:
       WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -158,6 +161,13 @@ jobs:
           if ($null -eq $installed) { throw 'WinoMail.Beta was not installed.' }
 
           Write-Host "Installed WinoMail.Beta $($installed.Version)."
+
+      - name: Stop build helper processes
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process -Name VBCSCompiler,MSBuild,vctip,dotnet -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
 
       - name: Upload signed Beta package
         uses: actions/upload-artifact@v4
