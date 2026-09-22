@@ -822,6 +822,84 @@ function New-SideloadAppInstaller {
     Write-Host "Update feed: $($Distribution.AppInstallerUri.AbsoluteUri)"
 }
 
+function Sign-SideloadPackage {
+    param(
+        [string]$Package,
+        [object]$Plan,
+        [object]$Tools,
+        [object]$Signing,
+        [string]$Staging,
+        [string]$Channel = 'Beta',
+        [string]$Architecture = 'x64'
+    )
+
+    $profile = Get-ReleaseProfile $Plan $Channel
+    $expectedPublisher = if ($Signing.PSObject.Properties['Mode'] -and $Signing.Mode -eq 'TestCertificate') {
+        $Signing.Certificate.Subject
+    }
+    else {
+        $Signing.Configuration.PublisherSubject
+    }
+
+    $packageManifest = Get-ArchiveXml $Package 'AppxManifest.xml'
+    Assert-ReleaseIdentity $packageManifest.Package.Identity $profile.PackageName $expectedPublisher $Plan.Version
+
+    if ([string]$packageManifest.Package.Identity.ProcessorArchitecture -ine $Architecture) {
+        throw "The $Architecture sideload package has an unexpected processor architecture."
+    }
+
+    $logPath = Join-Path $Staging "logs/sign-$Channel-$Architecture.log"
+
+    if ($Signing.PSObject.Properties['Mode'] -and $Signing.Mode -eq 'TestCertificate') {
+        if ($Channel -ne 'Beta') {
+            throw 'The local test certificate mode is only supported for Beta packages.'
+        }
+
+        Invoke-ReleaseTool $Tools.SignTool @(
+            'sign', '/fd', 'SHA256', '/sha1', $Signing.Certificate.Thumbprint, $Package
+        ) $logPath
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $Package
+        if ($null -eq $signature.SignerCertificate -or
+            $signature.SignerCertificate.Thumbprint -cne $Signing.Certificate.Thumbprint) {
+            throw "The Beta test signature for $Architecture does not match the selected certificate."
+        }
+
+        return
+    }
+
+    $metadata = @{
+        Endpoint = $Signing.Configuration.Endpoint
+        CodeSigningAccountName = $Signing.Configuration.CodeSigningAccountName
+        CertificateProfileName = $Signing.Configuration.CertificateProfileName
+        CorrelationId = [guid]::NewGuid().ToString()
+        ExcludeCredentials = @(
+            'ManagedIdentityCredential', 'WorkloadIdentityCredential', 'SharedTokenCacheCredential',
+            'VisualStudioCredential', 'VisualStudioCodeCredential', 'AzureCliCredential',
+            'AzurePowerShellCredential', 'AzureDeveloperCliCredential', 'InteractiveBrowserCredential')
+    }
+    $metadataPath = Join-Path $Staging "signing-$Channel-$Architecture.json"
+    $metadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath -Encoding utf8
+    try {
+        Invoke-ReleaseTool $Tools.SignTool @(
+            'sign', '/fd', 'SHA256', '/tr', 'http://timestamp.acs.microsoft.com', '/td', 'SHA256',
+            '/dlib', $Signing.Dlib, '/dmdf', $metadataPath, $Package
+        ) $logPath $Signing.Credentials
+
+        Invoke-ReleaseTool $Tools.SignTool @(
+            'verify', '/pa', '/all', '/v', '/tw', $Package
+        ) (Join-Path $Staging "logs/verify-sign-$Channel-$Architecture.log")
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $Package
+        if ($null -eq $signature.SignerCertificate) {
+            throw "The signed $Channel $Architecture package does not expose a public signer certificate."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $metadataPath -ErrorAction SilentlyContinue
+    }
+}
+
 function Sign-SideloadReleaseWithCertificate {
     param([string]$Bundle, [object]$Plan, [object]$Tools, [object]$Signing, [string]$Staging, [string]$Channel = 'Beta')
 
@@ -984,7 +1062,12 @@ function Invoke-ReleaseBuild {
         foreach ($channel in $Plan.SideloadChannels) {
             $profile = Get-ReleaseProfile $Plan $channel.Name
             $stage = "$($channel.Name) packaging"
-            foreach ($architecture in $Plan.Selection.Architectures) { $null = New-SideloadPackage $Plan $Tools $staging $architecture $channel.Name }
+            foreach ($architecture in $Plan.Selection.Architectures) {
+                $package = New-SideloadPackage $Plan $Tools $staging $architecture $channel.Name
+                if (Test-Path -LiteralPath $package -PathType Leaf) {
+                    Sign-SideloadPackage $package $Plan $Tools $Signing $staging $channel.Name $architecture
+                }
+            }
             $channelStage = Join-Path $staging $channel.Name
             $null = New-Item -ItemType Directory -Path $channelStage -Force
             $bundle = Join-Path $channelStage 'release.msixbundle'
