@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Serilog;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 
@@ -28,25 +29,48 @@ internal sealed class CalendarReminderService(
                 return;
 
             var now = DateTime.Now;
-            var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
 
-            if (accounts.Any(account => account.IsCalendarAccessGranted))
+            try
             {
-                var due = await calendarService
-                    .CheckAndNotifyAsync(_last, now, _keys, token)
-                    .ConfigureAwait(false);
+                var accounts = await accountService.GetAccountsAsync().ConfigureAwait(false);
 
-                foreach (var item in due)
+                if (accounts.Any(account => account.IsCalendarAccessGranted))
                 {
-                    await notificationBuilder
-                        .CreateCalendarReminderNotificationAsync(
-                            item.CalendarItem,
-                            item.ReminderDurationInSeconds)
+                    var due = await calendarService
+                        .CheckAndNotifyAsync(_last, now, _keys, token)
                         .ConfigureAwait(false);
-                }
-            }
 
-            _last = now;
+                    foreach (var item in due)
+                    {
+                        try
+                        {
+                            await notificationBuilder
+                                .CreateCalendarReminderNotificationAsync(
+                                    item.CalendarItem,
+                                    item.ReminderDurationInSeconds)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(
+                                ex,
+                                "Background calendar reminder delivery failed for event {CalendarItemId}",
+                                item.CalendarItem.Id);
+                        }
+                    }
+                }
+
+                _last = now;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Background calendar reminder scan failed.");
+                _last = now;
+            }
         }
     }
 }
