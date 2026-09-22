@@ -12,7 +12,7 @@ namespace Wino.Core.ML;
 internal static class MagikaAssetLoader
 {
     internal const string ModelHash = "FE2D2EB49C5F88A9E0A6C048E15D6FFDF86235519C2AFC535044DE433169EC8C";
-    internal const string ConfigurationHash = "BC05341CA495DCC8AB8D034D7020C3D139FC7136B2FE3301795ED747A9871163";
+    internal const string ConfigurationHash = "8E4241016154D8954E36004ABB06CB35DE315F28199E619768D11CF26C17D7AB";
     internal const string KnowledgeBaseHash = "A2B8C1FA4B825D56FE488D8D8E2EB1C64C52BE729830ADA1AE56D9507E805F76";
 
     public static string GetDefaultModelDirectory() =>
