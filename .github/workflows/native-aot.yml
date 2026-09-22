@@ -73,7 +73,7 @@ jobs:
           $version = [string]$manifest.Package.Identity.Version
           $folder = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
           $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
-          $certificate = Join-Path $folder "WinoMail_Beta_$version_SigningCertificate.cer"
+          $certificate = Join-Path $folder "WinoMail_Beta_${version}_SigningCertificate.cer"
 
           if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "MSIXBundle not found: $bundle" }
           if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Signing certificate not found: $certificate" }
@@ -149,7 +149,7 @@ jobs:
           $version = [string]$manifest.Package.Identity.Version
           $folder = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
           $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
-          $certificate = Join-Path $folder "WinoMail_Beta_$version_SigningCertificate.cer"
+          $certificate = Join-Path $folder "WinoMail_Beta_${version}_SigningCertificate.cer"
 
           Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
 
