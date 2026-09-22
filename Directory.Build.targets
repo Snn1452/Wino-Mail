@@ -27,7 +27,7 @@
 
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Wino.Mail.WinUI'">
     <!-- WinAppSDK experimental-channel generated code references experimental WinUI APIs. -->
-    <NoWarn>$(NoWarn);CS8305;IL3050</NoWarn>
+    <NoWarn>$(NoWarn);CS8305</NoWarn>
   </PropertyGroup>
 
   <!--
@@ -76,11 +76,4 @@
       </PackagingOutputs>
     </ItemGroup>
   </Target>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Wino.Mail.BackgroundSyncHost' or '$(MSBuildProjectName)' == 'Wino.Platform.Windows'">
-    <IsAotCompatible>false</IsAotCompatible>
-    <IsTrimmable>false</IsTrimmable>
-    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
-    <EnableAotAnalyzer>false</EnableAotAnalyzer>
-    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
-  </PropertyGroup>
 </Project>
