@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 45
     env:
       NUGET_CONFIG_PATH: ${{ github.workspace }}\nuget.config
+      WINO_MAGIKA_DIAGNOSTICS: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
