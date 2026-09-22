@@ -578,10 +578,6 @@
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
     <ItemGroup>
-      <Content Include="$(BackgroundSyncHostOutput)**\*"
-               CopyToOutputDirectory="PreserveNewest"
-               CopyToPublishDirectory="PreserveNewest"
-               Link="%(RecursiveDir)%(Filename)%(Extension)" />
       <AppxPackagePayload Include="$(BackgroundSyncHostOutput)**\*">
         <TargetPath>%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
       </AppxPackagePayload>
