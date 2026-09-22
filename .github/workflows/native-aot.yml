@@ -37,15 +37,6 @@ jobs:
           ./tests/scripts/Build-Releases.Tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Release packaging tests failed.' }
 
-          $makeappx = Get-Command makeappx.exe -ErrorAction SilentlyContinue
-          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-          if ($null -eq $makeappx -or $null -eq $signtool) {
-            throw 'Windows SDK packaging tools (makeappx/signtool) are missing from the runner.'
-          }
-
-          Write-Host "makeappx: $($makeappx.Source)"
-          Write-Host "signtool: $($signtool.Source)"
-
       - name: Create x64 Beta test certificate
         shell: pwsh
         run: |
