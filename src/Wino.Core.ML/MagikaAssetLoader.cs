@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace Wino.Core.ML;
@@ -74,8 +75,22 @@ internal static class MagikaAssetLoader
         if (!File.Exists(path))
             throw new FileNotFoundException("A required Magika model asset is missing.", path);
 
-        using var stream = File.OpenRead(path);
-        var actualHash = Convert.ToHexString(SHA256.HashData(stream));
+        string actualHash;
+
+        if (string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase))
+        {
+            // Git may materialize text assets with CRLF on Windows. Hash the canonical LF form so
+            // repository byte integrity is stable across checkout settings without weakening binary checks.
+            var text = File.ReadAllText(path);
+            text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            actualHash = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+        }
+        else
+        {
+            using var stream = File.OpenRead(path);
+            actualHash = Convert.ToHexString(SHA256.HashData(stream));
+        }
 
         if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
         {
