@@ -1064,7 +1064,8 @@ function Invoke-ReleaseBuild {
             $stage = "$($channel.Name) packaging"
             foreach ($architecture in $Plan.Selection.Architectures) {
                 $package = New-SideloadPackage $Plan $Tools $staging $architecture $channel.Name
-                if (Test-Path -LiteralPath $package -PathType Leaf) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$package) -and
+                    (Test-Path -LiteralPath $package -PathType Leaf)) {
                     Sign-SideloadPackage $package $Plan $Tools $Signing $staging $channel.Name $architecture
                 }
             }
