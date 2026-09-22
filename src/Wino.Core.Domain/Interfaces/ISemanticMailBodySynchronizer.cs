@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Wino.Core.Domain.Models.Intelligence;
 using Wino.Mail.AI.Abstractions;
 
 namespace Wino.Core.Domain.Interfaces;
@@ -21,7 +22,13 @@ public sealed record SemanticMailContent(
     IReadOnlyList<MailAddress> From,
     IReadOnlyList<string> ToRecipients,
     IReadOnlyList<string> CcRecipients,
-    IReadOnlyList<SemanticMailAttachment> Attachments)
+    IReadOnlyList<SemanticMailAttachment> Attachments,
+    /// <summary>
+    /// Whether the message carried a List-Unsubscribe header. False also covers "not
+    /// known": a synchronizer that fetches only a body cannot see the headers, and the
+    /// consumer treats an absent header as "no unsubscribe mechanism to offer".
+    /// </summary>
+    bool HasListUnsubscribe = false)
 {
     public SemanticMailContent(
         MailBodyContent body,

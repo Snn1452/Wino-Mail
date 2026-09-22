@@ -14,7 +14,6 @@ using Wino.Messaging.UI;
 using Wino.Mail.Api.Contracts.Billing;
 using Wino.Mail.Api.Contracts.Common;
 using Wino.Mail.Contracts.Intelligence;
-using Wino.Mail.Contracts.SemanticIndex;
 using Xunit;
 
 namespace Wino.Core.Tests.ViewModels;
@@ -42,7 +41,7 @@ public sealed class WinoAccountManagementPageViewModelTests
         var viewModel = new WinoAccountManagementPageViewModel(profile.Object,
             Mock.Of<IWinoAccountDataSyncService>(), Mock.Of<IMailDialogService>(),
             Mock.Of<IWinoBillingService>(), Mock.Of<IWinoAccountApiClient>(), Mock.Of<IAccountService>(),
-            Mock.Of<ISemanticIndexCoordinator>(), Mock.Of<IPreferencesService>(), Mock.Of<IAiActionOptionsService>(),
+            Mock.Of<IMailIntelligenceCoordinator>(), Mock.Of<IPreferencesService>(), Mock.Of<IAiActionOptionsService>(),
             snapshots.Object, sessions: sessions);
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         try
@@ -119,7 +118,7 @@ public sealed class WinoAccountManagementPageViewModelTests
         profile.Setup(x => x.GetActiveAccountAsync()).ReturnsAsync(account);
         return new(profile.Object, Mock.Of<IWinoAccountDataSyncService>(), Mock.Of<IMailDialogService>(),
             Mock.Of<IWinoBillingService>(), Mock.Of<IWinoAccountApiClient>(), Mock.Of<IAccountService>(),
-            Mock.Of<ISemanticIndexCoordinator>(), Mock.Of<IPreferencesService>(), Mock.Of<IAiActionOptionsService>(),
+            Mock.Of<IMailIntelligenceCoordinator>(), Mock.Of<IPreferencesService>(), Mock.Of<IAiActionOptionsService>(),
             snapshots, reconciliation);
     }
 
@@ -163,7 +162,7 @@ public sealed class WinoAccountManagementPageViewModelTests
             billingService.Object,
             Mock.Of<IWinoAccountApiClient>(),
             Mock.Of<IAccountService>(),
-            Mock.Of<ISemanticIndexCoordinator>(),
+            Mock.Of<IMailIntelligenceCoordinator>(),
             Mock.Of<IPreferencesService>(),
             Mock.Of<IAiActionOptionsService>());
 
@@ -183,7 +182,7 @@ public sealed class WinoAccountManagementPageViewModelTests
     }
 
     [Fact]
-    public async Task ActiveIntelligenceSubscription_LoadsServerUsageAndMailboxData()
+    public async Task ActiveIntelligenceSubscription_ListsLocalAccountsAndDeletesLocallyWhenDisabled()
     {
         var account = new WinoAccount
         {
@@ -201,8 +200,6 @@ public sealed class WinoAccountManagementPageViewModelTests
             ProviderType = MailProviderType.Outlook,
             Preferences = new MailAccountPreferences { IsSemanticIndexingEnabled = true }
         };
-        var localMailboxId = Guid.NewGuid();
-        var remoteMailboxId = Guid.NewGuid();
         var profileService = new Mock<IWinoAccountProfileService>();
         profileService.Setup(x => x.GetActiveAccountAsync()).ReturnsAsync(account);
         profileService.Setup(x => x.GetAuthenticatedAccountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(account);
@@ -222,24 +219,19 @@ public sealed class WinoAccountManagementPageViewModelTests
             ApiEnvelope<AiUsageStatusDto>.Success(new AiUsageStatusDto
             {
                 EntitlementStatus = "active",
-                UsagePercentage = 42.5m,
-                RemainingPercentage = 57.5m,
-                IsExhausted = false
+                Buckets =
+                [
+                    new AiQuotaBucketDto(AiQuotaBucketIds.Intelligence, 638, 1_500),
+                    new AiQuotaBucketDto(AiQuotaBucketIds.Summarize, 12, 1_500),
+                    new AiQuotaBucketDto(AiQuotaBucketIds.Rewrite, 3, 1_500),
+                    new AiQuotaBucketDto(AiQuotaBucketIds.Translate, 9, 100),
+                ],
             }));
-        apiClient.Setup(x => x.GetSemanticMailboxesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
-        [
-            new SemanticMailboxDto(localMailboxId, localAccount.Address, (int)localAccount.ProviderType, null),
-            new SemanticMailboxDto(remoteMailboxId, "remote@example.com", (int)MailProviderType.Gmail, null)
-        ]);
-        apiClient.Setup(x => x.GetIntelligenceHeadAsync(localMailboxId, It.IsAny<CancellationToken>())).ReturnsAsync(
-            CreateIntelligenceHead(localMailboxId, 1024));
-        apiClient.Setup(x => x.GetIntelligenceHeadAsync(remoteMailboxId, It.IsAny<CancellationToken>())).ReturnsAsync(
-            CreateIntelligenceHead(remoteMailboxId, 2048));
 
         var accountService = new Mock<IAccountService>();
         accountService.Setup(x => x.GetAccountsAsync()).ReturnsAsync([localAccount]);
         accountService.Setup(x => x.GetAccountAsync(localAccountId)).ReturnsAsync(localAccount);
-        var coordinator = new Mock<ISemanticIndexCoordinator>();
+        var coordinator = new Mock<IMailIntelligenceCoordinator>();
         var viewModel = new WinoAccountManagementPageViewModel(
             profileService.Object,
             Mock.Of<IWinoAccountDataSyncService>(),
@@ -253,21 +245,28 @@ public sealed class WinoAccountManagementPageViewModelTests
 
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
 
-        await WaitUntilAsync(() => viewModel.IntelligenceMailboxes.Count == 2);
+        // Intelligence is device-local, so the list is exactly the accounts on this device.
+        await WaitUntilAsync(() => viewModel.IntelligenceMailboxes.Count == 1);
 
         viewModel.HasIntelligenceAccess.Should().BeTrue();
-        viewModel.IntelligenceUsagePercentage.Should().Be(42.5);
-        viewModel.IntelligenceMailboxes.Single(x => x.Address == localAccount.Address).CanManage.Should().BeTrue();
-        viewModel.IntelligenceMailboxes.Single(x => x.Address == "remote@example.com").CanManage.Should().BeFalse();
-        apiClient.Verify(x => x.GetIntelligenceHeadAsync(localMailboxId, It.IsAny<CancellationToken>()), Times.Once);
-        apiClient.Verify(x => x.GetIntelligenceHeadAsync(remoteMailboxId, It.IsAny<CancellationToken>()), Times.Once);
-        apiClient.Verify(x => x.GetIntelligenceStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
 
-        var localItem = viewModel.IntelligenceMailboxes.Single(x => x.Address == localAccount.Address);
+        // Counts, not a percentage of a budget the user was never shown. Every bucket is
+        // listed, and the headline is the one indexing spends.
+        viewModel.IntelligenceUsageItems.Should().HaveCount(4);
+        var messages = viewModel.IntelligenceUsageItems.Single(x => x.Bucket == AiQuotaBucketIds.Intelligence);
+        messages.Used.Should().Be(638);
+        messages.Limit.Should().Be(1_500);
+        messages.Remaining.Should().Be(862);
+        viewModel.IntelligenceUsageItems.Single(x => x.Bucket == AiQuotaBucketIds.Translate).Limit.Should().Be(100);
+        viewModel.IntelligenceMailboxes.Single().Address.Should().Be(localAccount.Address);
+        viewModel.IntelligenceMailboxes.Single().CanManage.Should().BeTrue();
+
+        var localItem = viewModel.IntelligenceMailboxes.Single();
         await viewModel.ToggleIntelligenceMailboxCommand.ExecuteAsync(localItem);
 
-        coordinator.Verify(x => x.DeleteIndexAsync(localAccountId, It.IsAny<CancellationToken>()), Times.Once);
-        coordinator.Verify(x => x.DeleteLocalIndexAsync(localAccountId, It.IsAny<CancellationToken>()), Times.Never);
+        // Turning it off cancels any outstanding job and deletes the local results.
+        coordinator.Verify(x => x.CancelAsync(localAccountId, It.IsAny<CancellationToken>()), Times.Once);
+        coordinator.Verify(x => x.DeleteLocalIntelligenceAsync(localAccountId, It.IsAny<CancellationToken>()), Times.Once);
         localAccount.Preferences.IsSemanticIndexingEnabled.Should().BeFalse();
     }
 
@@ -285,7 +284,7 @@ public sealed class WinoAccountManagementPageViewModelTests
             .ReturnsAsync(() => consentRequestCount++ == 0 ? notAccepted : accepted);
         apiClient.Setup(x => x.AcceptIntelligenceConsentAsync(policyVersion, ConsentActionSources.ConsentPage, It.IsAny<CancellationToken>())).ReturnsAsync(
             accepted);
-        var viewModel = CreateConsentViewModel(apiClient, Mock.Of<IAccountService>(), Mock.Of<ISemanticIndexCoordinator>());
+        var viewModel = CreateConsentViewModel(apiClient, Mock.Of<IAccountService>(), Mock.Of<IMailIntelligenceCoordinator>());
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.ConsentPolicyUri != null);
 
@@ -313,7 +312,7 @@ public sealed class WinoAccountManagementPageViewModelTests
             active with { Status = ConsentStatuses.Revoked, RevokedAtUtc = DateTimeOffset.UtcNow, DataDeletionStatus = IntelligenceDeletionStatuses.Completed });
         var accountService = new Mock<IAccountService>();
         accountService.Setup(x => x.GetAccountsAsync()).ReturnsAsync(accounts.ToList());
-        var coordinator = new Mock<ISemanticIndexCoordinator>();
+        var coordinator = new Mock<IMailIntelligenceCoordinator>();
         var viewModel = CreateConsentViewModel(apiClient, accountService.Object, coordinator.Object);
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.IsConsentGranted);
@@ -322,7 +321,7 @@ public sealed class WinoAccountManagementPageViewModelTests
 
         accounts.Should().OnlyContain(x => !x.Preferences.IsSemanticIndexingEnabled);
         foreach (var account in accounts)
-            coordinator.Verify(x => x.DeleteLocalIndexAsync(account.Id, It.IsAny<CancellationToken>()), Times.Once);
+            coordinator.Verify(x => x.DeleteLocalIntelligenceAsync(account.Id, It.IsAny<CancellationToken>()), Times.Once);
         accountService.Verify(x => x.UpdateAccountAsync(It.IsAny<MailAccount>()), Times.Exactly(2));
     }
 
@@ -473,7 +472,6 @@ public sealed class WinoAccountManagementPageViewModelTests
                 aiPack ?? new AiPackBillingStatusDto("inactive", false, null, null, null, false))));
 
         apiClient = new Mock<IWinoAccountApiClient>();
-        apiClient.Setup(x => x.GetSemanticMailboxesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var accounts = Enumerable.Range(0, mailAccountCount)
             .Select(index => new MailAccount
@@ -494,7 +492,7 @@ public sealed class WinoAccountManagementPageViewModelTests
             billingService.Object,
             apiClient.Object,
             accountService.Object,
-            Mock.Of<ISemanticIndexCoordinator>(),
+            Mock.Of<IMailIntelligenceCoordinator>(),
             Mock.Of<IPreferencesService>(),
             Mock.Of<IAiActionOptionsService>());
     }
@@ -502,7 +500,7 @@ public sealed class WinoAccountManagementPageViewModelTests
     private static WinoAccountManagementPageViewModel CreateConsentViewModel(
         Mock<IWinoAccountApiClient> apiClient,
         IAccountService accountService,
-        ISemanticIndexCoordinator coordinator)
+        IMailIntelligenceCoordinator coordinator)
     {
         var account = new WinoAccount
         {
@@ -520,7 +518,6 @@ public sealed class WinoAccountManagementPageViewModelTests
             ApiEnvelope<BillingStatusResultDto>.Success(new BillingStatusResultDto(
                 false,
                 new AiPackBillingStatusDto("active", true, null, null, null, false))));
-        apiClient.Setup(x => x.GetSemanticMailboxesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         return new WinoAccountManagementPageViewModel(
             profileService.Object,
@@ -532,23 +529,6 @@ public sealed class WinoAccountManagementPageViewModelTests
             coordinator,
             Mock.Of<IPreferencesService>(),
             Mock.Of<IAiActionOptionsService>());
-    }
-
-    private static MailboxIntelligenceHeadDto CreateIntelligenceHead(Guid mailboxId, long size)
-    {
-        var now = DateTimeOffset.UtcNow;
-
-        return new MailboxIntelligenceHeadDto(
-            mailboxId,
-            WinoIntelligenceVersions.V1,
-            Guid.NewGuid(),
-            1,
-            1,
-            size,
-            now.AddDays(-1),
-            now,
-            now,
-            now);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

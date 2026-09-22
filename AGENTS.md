@@ -30,6 +30,7 @@ Read only references that apply to the task:
 | New UI feature or visual pattern | [Wino design guideline](docs/wino-design-guideline.md) |
 | Reusable controls or playground | [controls/AGENTS.md](controls/AGENTS.md) |
 | Contacts, To Do, or activation audit replay | [replay contract](scripts/ui-audit/REPLAY.md) |
+| Intelligence jobs, artifacts, or the daily briefing | [mail intelligence](docs/mail-intelligence.md) |
 | Release packaging | [release guide](docs/releases.md) |
 
 Repository commands and package rules take precedence over stale personal skill instructions.
@@ -64,6 +65,7 @@ Format changed XAML before building. The pinned XAML Styler check must pass.
 
 - Use WinApp CLI 0.6+ project mode with the checked-in manifest and existing Debug package family.
 - Before deployment, compare the installed package name and publisher with the manifest. Stop on a mismatch.
+- Immediately before each live app test, force-stop any running process for the checked-in Debug app after the doctor and package identity checks, then launch the current Debug build with WinApp CLI project mode. Do not wait for a graceful shutdown or ask for confirmation.
 - Preserve application data. Never create another identity, use folder mode, clean, or unregister the package.
 - Never launch the packaged executable directly. Never deploy, launch, or UI-test Release.
 - Use only `winapp ui` for application interaction and visual evidence, including the playground.

@@ -27,6 +27,7 @@ using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Exceptions;
 using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Intelligence;
 using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Contacts;
 using Wino.Core.Domain.Models.Folders;
@@ -3344,6 +3345,11 @@ public partial class GmailSynchronizer : WinoSynchronizer<IGoogleApiRequest, Mes
             if (createdEvent == null || string.IsNullOrWhiteSpace(createdEvent.Id))
                 return;
 
+            if (!string.IsNullOrWhiteSpace(createdEvent.HangoutLink))
+            {
+                createCalendarEventRequest.PreparedItem.DirectJoinLink = createdEvent.HangoutLink;
+            }
+
             await _gmailChangeProcessor.PersistCreatedCalendarEventAsync(
                 createCalendarEventRequest.PreparedItem,
                 createCalendarEventRequest.PreparedEvent.Attendees,
@@ -4044,10 +4050,33 @@ public partial class GmailSynchronizer : WinoSynchronizer<IGoogleApiRequest, Mes
             includeStatus: true,
             includeEmptyRecurrence: false);
 
+        if (calendarItem.Visibility == CalendarItemVisibility.Private)
+        {
+            googleEvent.Visibility = "private";
+        }
+
+        if (request.ComposeResult.IsOnlineMeeting)
+        {
+            // The request id makes a retried insert reuse the same Meet conference.
+            googleEvent.ConferenceData = new ConferenceData
+            {
+                CreateRequest = new CreateConferenceRequest
+                {
+                    RequestId = calendarItem.Id.ToString("N"),
+                    ConferenceSolutionKey = new ConferenceSolutionKey { Type = "hangoutsMeet" }
+                }
+            };
+        }
+
         var insertRequest = _calendarService.Events.Insert(googleEvent, calendar.RemoteCalendarId);
         insertRequest.SendUpdates = attendees.Count > 0
             ? global::Google.Apis.Calendar.v3.EventsResource.InsertRequest.SendUpdatesEnum.All
             : global::Google.Apis.Calendar.v3.EventsResource.InsertRequest.SendUpdatesEnum.None;
+
+        if (googleEvent.ConferenceData != null)
+        {
+            insertRequest.ConferenceDataVersion = 1;
+        }
 
         return [new HttpRequestBundle<IGoogleApiRequest, Event>(insertRequest, request)];
     }
