@@ -15,6 +15,7 @@ using Wino.Services;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
+// The host is intentionally UI-free: it owns only synchronization, reminders and notification dispatch.
 internal static class Program
 {
     private static readonly string LockPath = Path.Combine(
