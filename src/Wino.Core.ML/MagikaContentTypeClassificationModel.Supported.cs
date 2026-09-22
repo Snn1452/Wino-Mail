@@ -100,8 +100,16 @@ public sealed class MagikaContentTypeClassificationModel : IContentTypeClassific
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable("WINO_MAGIKA_DIAGNOSTICS"),
+                    "1",
+                    StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"Magika classification failed: {ex}");
+            }
+
             return new ContentTypeClassificationResult(ContentTypeClassificationStatus.Failed);
         }
     }
