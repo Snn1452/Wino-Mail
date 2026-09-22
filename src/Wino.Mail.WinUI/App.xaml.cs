@@ -1173,20 +1173,11 @@ public partial class App : WinoApplication,
 
     private void CompleteStartupTaskLaunch(bool hasAnyAccount)
     {
-        if (!hasAnyAccount)
-        {
-            LogActivation("Launched by startup task without configured accounts. Exiting without creating a window.");
-            ExitApplication();
-            return;
-        }
+        LogActivation(hasAnyAccount
+            ? "Startup task launch detected. Headless background sync host owns background work; WinUI is exiting."
+            : "Startup task launch detected without configured accounts. WinUI is exiting.");
 
-        _ = ExecuteOnActivationUiThreadAsync(() =>
-        {
-            UpdateTrayIconState(allowCreation: true);
-            return Task.CompletedTask;
-        });
-
-        LogActivation("Launched by startup task. Running in background without creating a window.");
+        ExitApplication();
     }
 
     private async Task CompleteStandardLaunchAsync(Microsoft.UI.Xaml.LaunchActivatedEventArgs args,
