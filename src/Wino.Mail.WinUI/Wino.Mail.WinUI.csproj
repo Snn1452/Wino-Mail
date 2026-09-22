@@ -574,12 +574,13 @@
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
             Targets="Publish"
-            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishAot=false;EnableMsixTooling=true;GenerateAppxPackageOnBuild=false;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
            Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
     <ItemGroup>
-      <AppxPackagePayload Include="$(BackgroundSyncHostOutput)**\*">
-        <TargetPath>%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+      <!-- The host is self-contained single-file; shared WinAppSDK native payload is already owned by WinUI. -->
+      <AppxPackagePayload Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe">
+        <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
       </AppxPackagePayload>
     </ItemGroup>
   </Target>
