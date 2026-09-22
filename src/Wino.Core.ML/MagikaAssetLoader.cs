@@ -12,7 +12,7 @@ internal static class MagikaAssetLoader
 {
     internal const string ModelHash = "FE2D2EB49C5F88A9E0A6C048E15D6FFDF86235519C2AFC535044DE433169EC8C";
     internal const string ConfigurationHash = "BC05341CA495DCC8AB8D034D7020C3D139FC7136B2FE3301795ED747A9871163";
-    internal const string KnowledgeBaseHash = "2788E78D638B1BFF0A0743D6D2EE582BBBBCA6F0C6DC2BE48D62ADA9AF23F760";
+    internal const string KnowledgeBaseHash = "A2B8C1FA4B825D56FE488D8D8E2EB1C64C52BE729830ADA1AE56D9507E805F76";
 
     public static string GetDefaultModelDirectory() =>
         Path.Combine(AppContext.BaseDirectory, "Models", "Magika", "standard_v3_3");
