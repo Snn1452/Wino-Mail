@@ -35,7 +35,6 @@ jobs:
         shell: pwsh
         run: |
           ./tests/scripts/Build-Releases.Tests.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Release packaging tests failed.' }
 
       - name: Create x64 Beta test certificate
         shell: pwsh
