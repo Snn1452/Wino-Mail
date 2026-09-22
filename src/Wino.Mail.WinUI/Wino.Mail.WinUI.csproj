@@ -589,6 +589,9 @@
                CopyToOutputDirectory="PreserveNewest"
                CopyToPublishDirectory="PreserveNewest"
                Link="%(RecursiveDir)%(Filename)%(Extension)" />
+      <AppxPackagePayload Include="$(BackgroundSyncHostOutput)**\*">
+        <TargetPath>%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+      </AppxPackagePayload>
     </ItemGroup>
   </Target>
 </Project>
