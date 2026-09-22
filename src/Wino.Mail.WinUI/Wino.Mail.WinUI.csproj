@@ -581,6 +581,8 @@
       <!-- The host is self-contained single-file; shared WinAppSDK native payload is already owned by WinUI. -->
       <AppxPackagePayload Include="$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe">
         <TargetPath>Wino.Mail.BackgroundSyncHost.exe</TargetPath>
+        <OutputGroup>PublishItemsOutputGroupOutput</OutputGroup>
+        <ProjectName>$(ProjectName)</ProjectName>
       </AppxPackagePayload>
     </ItemGroup>
   </Target>
