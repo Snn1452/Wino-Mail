@@ -1,4 +1,5 @@
 name: Installable Wino Mail MSIXBundle
+# CI smoke: bundle, certificate, install, uninstall.
 # Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
