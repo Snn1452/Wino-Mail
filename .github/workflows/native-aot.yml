@@ -1,4 +1,5 @@
 name: Native AOT and installable Wino Mail MSIXBundle
+# Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
   pull_request:
