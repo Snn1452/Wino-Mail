@@ -168,8 +168,14 @@ jobs:
               catch { Write-Host "Existing WinoMail.Beta cleanup failed: $($_.Exception.Message)" }
           }
 
+          $dependencyRoot = Join-Path $folder 'Dependencies'
+          $x64DependencyRoot = Join-Path $dependencyRoot 'x64'
+          if (Test-Path -LiteralPath $x64DependencyRoot -PathType Container) {
+              $dependencyRoot = $x64DependencyRoot
+          }
+
           $dependencies = @(
-              Get-ChildItem -LiteralPath (Join-Path $folder 'Dependencies') -Recurse -File -ErrorAction SilentlyContinue |
+              Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File -ErrorAction SilentlyContinue |
               Where-Object { $_.Extension -in '.msix', '.appx' } |
               Select-Object -ExpandProperty FullName
           )
@@ -234,6 +240,15 @@ else {
 
           Write-Host "Installed and removed WinoMail.Beta $version successfully."
           Stop-Transcript
+
+      - name: Upload install smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-install-smoke-log
+          path: ${{ runner.temp }}/WinoMail-install-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload installable MSIXBundle and certificate
         uses: actions/upload-artifact@v4
