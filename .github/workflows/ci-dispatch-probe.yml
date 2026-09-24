@@ -1,6 +1,9 @@
 name: Installable Wino Mail MSIXBundle
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -30,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: feature/background-sync-final-ci2
           persist-credentials: false
 
       - name: Setup .NET
