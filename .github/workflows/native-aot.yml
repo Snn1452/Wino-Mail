@@ -120,7 +120,7 @@ jobs:
                   $startupTasks = @($innerManifest.SelectNodes("//*[local-name()='StartupTask']"))
                   if ($startupTasks.Count -ne 1) { throw 'Background startup task is missing.' }
 
-                  $startupExtension = $startupTasks[0].ParentNode.ParentNode
+                  $startupExtension = $startupTasks[0].ParentNode
                   if ([string]$startupExtension.GetAttribute('Executable') -cne 'Wino.Mail.BackgroundSyncHost.exe') {
                     throw 'Background startup task target mismatch.'
                   }
