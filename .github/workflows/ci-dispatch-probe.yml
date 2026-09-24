@@ -1,11 +1,7 @@
 name: Installable Wino Mail MSIXBundle
-# Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
   pull_request:
-    branches:
-      - main
-  push:
     branches:
       - main
   workflow_dispatch:
@@ -28,7 +24,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'push' && 'feature/background-sync-final' || github.sha }}
           persist-credentials: false
 
       - name: Setup .NET
@@ -147,9 +142,6 @@ jobs:
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $progressPreference = 'SilentlyContinue'
-          Start-Transcript -Path (Join-Path $env:RUNNER_TEMP 'WinoMail-install-smoke.log') -Force
           $manifest = [xml](Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest')
           $version = [string]$manifest.Package.Identity.Version
           $folder = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
@@ -181,54 +173,11 @@ jobs:
               Select-Object -ExpandProperty FullName
           )
 
-          Write-Host "Package: $bundle"
-          Write-Host "Dependencies: $($dependencies.Count)"
-          Write-Host "Beginning Add-AppxPackage deployment."
-
-          $deployment = [System.Diagnostics.Process]::new()
-          $deployment.StartInfo.FileName = 'pwsh.exe'
-          $deployment.StartInfo.UseShellExecute = $false
-          $deployment.StartInfo.RedirectStandardOutput = $true
-          $deployment.StartInfo.RedirectStandardError = $true
-          $deployment.StartInfo.ArgumentList.Add('-NoProfile')
-          $deployment.StartInfo.ArgumentList.Add('-NonInteractive')
-          $deploymentScript = Join-Path $env:RUNNER_TEMP 'install-bundle.ps1'
-          @'
-param(
-    [string]$Bundle,
-    [string[]]$Dependencies
-)
-$ErrorActionPreference = "Stop"
-if ($Dependencies.Count -gt 0) {
-    Add-AppxPackage -Path $Bundle -DependencyPath $Dependencies -ForceUpdateFromAnyVersion -ErrorAction Stop
-}
-else {
-    Add-AppxPackage -Path $Bundle -ForceUpdateFromAnyVersion -ErrorAction Stop
-}
-'@ | Set-Content -LiteralPath $deploymentScript -Encoding utf8
-          $deployment.StartInfo.ArgumentList.Add('-File')
-          $deployment.StartInfo.ArgumentList.Add($deploymentScript)
-          $deployment.StartInfo.ArgumentList.Add('-Bundle')
-          $deployment.StartInfo.ArgumentList.Add($bundle)
           if ($dependencies.Count -gt 0) {
-              $deployment.StartInfo.ArgumentList.Add('-Dependencies')
-              foreach ($dependency in $dependencies) {
-                  $deployment.StartInfo.ArgumentList.Add($dependency)
-              }
+              Add-AppxPackage -Path $bundle -DependencyPath $dependencies -ForceUpdateFromAnyVersion -ErrorAction Stop
           }
-
-          if (-not $deployment.Start()) { throw 'Failed to start deployment helper process.' }
-          if (-not $deployment.WaitForExit(600000)) {
-              try { $deployment.Kill() } catch {}
-              throw 'Add-AppxPackage deployment exceeded the 10 minute timeout.'
-          }
-
-          $stdout = $deployment.StandardOutput.ReadToEnd()
-          $stderr = $deployment.StandardError.ReadToEnd()
-          if ($stdout) { Write-Host $stdout }
-          if ($stderr) { Write-Host $stderr }
-          if ($deployment.ExitCode -ne 0) {
-              throw "Add-AppxPackage deployment failed with exit code $($deployment.ExitCode)."
+          else {
+              Add-AppxPackage -Path $bundle -ForceUpdateFromAnyVersion -ErrorAction Stop
           }
 
           $installed = Get-AppxPackage -Name 'WinoMail.Beta'
@@ -242,16 +191,6 @@ else {
           if ($null -ne (Get-AppxPackage -Name 'WinoMail.Beta')) { throw 'WinoMail.Beta remained installed after uninstall.' }
 
           Write-Host "Installed and removed WinoMail.Beta $version successfully."
-          Stop-Transcript
-
-      - name: Upload install smoke log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: WinoMail-install-smoke-log
-          path: ${{ runner.temp }}/WinoMail-install-smoke.log
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Upload installable MSIXBundle and certificate
         uses: actions/upload-artifact@v4
@@ -260,4 +199,3 @@ else {
           path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
           if-no-files-found: error
           retention-days: 14
-
