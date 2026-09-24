@@ -1,20 +1,264 @@
-name: Wino Actions dispatcher probe
+name: Installable Wino Mail MSIXBundle
+# Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
+  packages: read
+
+concurrency:
+  group: wino-msixbundle-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  probe:
-    name: Minimal Windows Actions probe
-    runs-on: windows-latest
+  build-and-install:
+    name: Build, sign, and install x64 MSIXBundle
+    runs-on: windows-2025
+    timeout-minutes: 180
+
     steps:
-      - name: Probe
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'feature/background-sync-final' || github.sha }}
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify release tooling and package tests
         shell: pwsh
         run: |
-          Write-Host "GitHub Actions dispatcher probe reached a real runner."
-          Write-Host "SHA: $env:GITHUB_SHA"
+          ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Create x64 Beta test certificate
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $profile = Get-Content -Raw 'scripts/release-profiles/Beta.json' | ConvertFrom-Json
+          $publisher = [string]$profile.Publisher
+          $certificate = New-SelfSignedCertificate -Type Custom -Subject $publisher -FriendlyName 'Wino Mail CI Test Signing Certificate' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature -KeyExportPolicy Exportable -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3','2.5.29.19={text}') -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddYears(2)
+
+          if ($null -eq $certificate) { throw 'Failed to create the Beta test signing certificate.' }
+          if ($certificate.Subject -cne $publisher) { throw "Generated certificate subject '$($certificate.Subject)' does not match '$publisher'." }
+
+          $cerPath = Join-Path $env:RUNNER_TEMP 'WinoMail_Beta_TestCertificate.cer'
+          Export-Certificate -Cert $certificate -FilePath $cerPath -Type CERT -Force | Out-Null
+          Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+
+          "BETA_TEST_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Created test certificate: $($certificate.Thumbprint)"
+          Write-Host "Publisher: $publisher"
+
+      - name: Build signed x64 MSIXBundle
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/build-releases.ps1 -NonInteractive -Beta -Architectures x64 -BetaTestCertificateThumbprint $env:BETA_TEST_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { throw 'Signed x64 Beta package build failed.' }
+
+      - name: Verify bundle contents
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $manifest = [xml](Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest')
+          $version = [string]$manifest.Package.Identity.Version
+          $folder = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
+          $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
+          $certificate = Join-Path $folder "WinoMail_Beta_${version}_SigningCertificate.cer"
+
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "MSIXBundle not found: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Signing certificate not found: $certificate" }
+
+          $profile = Get-Content -Raw 'scripts/release-profiles/Beta.json' | ConvertFrom-Json
+          $expectedPublisher = [string]$profile.Publisher
+          $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate)
+
+          if ($cert.Subject -cne $expectedPublisher) { throw "Certificate subject '$($cert.Subject)' does not match '$expectedPublisher'." }
+          if ($cert.NotAfter -le (Get-Date)) { throw 'Signing certificate is expired.' }
+
+          $bundleArchive = [IO.Compression.ZipFile]::OpenRead($bundle)
+          try {
+            $bundleManifestEntry = $bundleArchive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $bundleManifestEntry) { throw 'Bundle manifest is missing.' }
+
+            $reader = [IO.StreamReader]::new($bundleManifestEntry.Open())
+            try { $bundleManifest = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
+
+            if ([string]$bundleManifest.Bundle.Identity.Name -cne 'WinoMail.Beta') { throw 'Unexpected Beta package identity.' }
+            if ([string]$bundleManifest.Bundle.Identity.Publisher -cne $expectedPublisher) { throw 'Bundle publisher mismatch.' }
+            if ([string]$bundleManifest.Bundle.Identity.Version -cne $version) { throw 'Bundle version mismatch.' }
+
+            $packages = @($bundleManifest.Bundle.Packages.Package | Where-Object {
+                $_.Type -eq 'application' -and $_.Architecture -eq 'x64'
+            })
+            if ($packages.Count -ne 1) { throw 'Expected exactly one x64 application package.' }
+
+            foreach ($package in $packages) {
+              $entry = $bundleArchive.GetEntry([string]$package.FileName)
+              if ($null -eq $entry) { throw "Application package entry is missing: $($package.FileName)" }
+
+              $tempPackage = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName([string]$package.FileName))
+              [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tempPackage, $true)
+              try {
+                $innerArchive = [IO.Compression.ZipFile]::OpenRead($tempPackage)
+                try {
+                  $innerManifestEntry = $innerArchive.GetEntry('AppxManifest.xml')
+                  if ($null -eq $innerManifestEntry) { throw 'Inner AppxManifest.xml is missing.' }
+
+                  $reader = [IO.StreamReader]::new($innerManifestEntry.Open())
+                  try { $innerManifest = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
+
+                  $startupTasks = @($innerManifest.SelectNodes("//*[local-name()='StartupTask']"))
+                  if ($startupTasks.Count -ne 1) { throw 'Background startup task is missing.' }
+
+                  $startupExtension = $startupTasks[0].ParentNode
+                  if ([string]$startupExtension.GetAttribute('Executable') -cne 'Wino.Mail.BackgroundSyncHost.exe') {
+                    throw 'Background startup task target mismatch.'
+                  }
+
+                  if ($null -eq $innerArchive.GetEntry('Wino.Mail.BackgroundSyncHost.exe')) {
+                    throw 'Background sync host executable is missing from the package.'
+                  }
+                }
+                finally { $innerArchive.Dispose() }
+              }
+              finally { Remove-Item -LiteralPath $tempPackage -Force -ErrorAction SilentlyContinue }
+            }
+          }
+          finally { $bundleArchive.Dispose() }
+
+          Write-Host 'Bundle structure, publisher, version, startup task, host executable, and installer certificate are valid.'
+
+      - name: Install signed bundle smoke test
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $progressPreference = 'SilentlyContinue'
+          Start-Transcript -Path (Join-Path $env:RUNNER_TEMP 'WinoMail-install-smoke.log') -Force
+          $manifest = [xml](Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest')
+          $version = [string]$manifest.Package.Identity.Version
+          $folder = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
+          $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
+          $certificate = Join-Path $folder "WinoMail_Beta_${version}_SigningCertificate.cer"
+
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "MSIXBundle not found: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Signing certificate not found: $certificate" }
+
+          & certutil.exe -user -f -addstore TrustedPeople $certificate | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "TrustedPeople certificate import failed with exit code $LASTEXITCODE." }
+          & certutil.exe -user -f -addstore Root $certificate | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Root certificate import failed with exit code $LASTEXITCODE." }
+
+          Get-AppxPackage -Name 'WinoMail.Beta' | ForEach-Object {
+              try { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }
+              catch { Write-Host "Existing WinoMail.Beta cleanup failed: $($_.Exception.Message)" }
+          }
+
+          $dependencyRoot = Join-Path $folder 'Dependencies'
+          $x64DependencyRoot = Join-Path $dependencyRoot 'x64'
+          if (Test-Path -LiteralPath $x64DependencyRoot -PathType Container) {
+              $dependencyRoot = $x64DependencyRoot
+          }
+
+          $dependencies = @(
+              Get-ChildItem -LiteralPath $dependencyRoot -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension -in '.msix', '.appx' } |
+              Select-Object -ExpandProperty FullName
+          )
+
+          Write-Host "Package: $bundle"
+          Write-Host "Dependencies: $($dependencies.Count)"
+          Write-Host "Beginning Add-AppxPackage deployment."
+
+          $deployment = [System.Diagnostics.Process]::new()
+          $deployment.StartInfo.FileName = 'pwsh.exe'
+          $deployment.StartInfo.UseShellExecute = $false
+          $deployment.StartInfo.RedirectStandardOutput = $true
+          $deployment.StartInfo.RedirectStandardError = $true
+          $deployment.StartInfo.ArgumentList.Add('-NoProfile')
+          $deployment.StartInfo.ArgumentList.Add('-NonInteractive')
+          $deploymentScript = Join-Path $env:RUNNER_TEMP 'install-bundle.ps1'
+          @'
+param(
+    [string]$Bundle,
+    [string[]]$Dependencies
+)
+$ErrorActionPreference = "Stop"
+if ($Dependencies.Count -gt 0) {
+    Add-AppxPackage -Path $Bundle -DependencyPath $Dependencies -ForceUpdateFromAnyVersion -ErrorAction Stop
+}
+else {
+    Add-AppxPackage -Path $Bundle -ForceUpdateFromAnyVersion -ErrorAction Stop
+}
+'@ | Set-Content -LiteralPath $deploymentScript -Encoding utf8
+          $deployment.StartInfo.ArgumentList.Add('-File')
+          $deployment.StartInfo.ArgumentList.Add($deploymentScript)
+          $deployment.StartInfo.ArgumentList.Add('-Bundle')
+          $deployment.StartInfo.ArgumentList.Add($bundle)
+          if ($dependencies.Count -gt 0) {
+              $deployment.StartInfo.ArgumentList.Add('-Dependencies')
+              foreach ($dependency in $dependencies) {
+                  $deployment.StartInfo.ArgumentList.Add($dependency)
+              }
+          }
+
+          if (-not $deployment.Start()) { throw 'Failed to start deployment helper process.' }
+          if (-not $deployment.WaitForExit(600000)) {
+              try { $deployment.Kill() } catch {}
+              throw 'Add-AppxPackage deployment exceeded the 10 minute timeout.'
+          }
+
+          $stdout = $deployment.StandardOutput.ReadToEnd()
+          $stderr = $deployment.StandardError.ReadToEnd()
+          if ($stdout) { Write-Host $stdout }
+          if ($stderr) { Write-Host $stderr }
+          if ($deployment.ExitCode -ne 0) {
+              throw "Add-AppxPackage deployment failed with exit code $($deployment.ExitCode)."
+          }
+
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta'
+          if ($null -eq $installed) { throw 'WinoMail.Beta was not installed.' }
+          if ([string]$installed.Version -ne $version) { throw "Installed version $($installed.Version) does not match $version." }
+
+          $backgroundHost = Join-Path $installed.InstallLocation 'Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHost -PathType Leaf)) { throw 'Installed package is missing Wino.Mail.BackgroundSyncHost.exe.' }
+
+          Remove-AppxPackage -Package $installed.PackageFullName -ErrorAction Stop
+          if ($null -ne (Get-AppxPackage -Name 'WinoMail.Beta')) { throw 'WinoMail.Beta remained installed after uninstall.' }
+
+          Write-Host "Installed and removed WinoMail.Beta $version successfully."
+          Stop-Transcript
+
+      - name: Upload install smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-install-smoke-log
+          path: ${{ runner.temp }}/WinoMail-install-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload installable MSIXBundle and certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-x64-Installable
+          path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
+          if-no-files-found: error
+          retention-days: 14
+
