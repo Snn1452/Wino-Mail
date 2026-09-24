@@ -29,6 +29,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Mark package validation started
+        shell: pwsh
+        env:
+          STARTED_TAG: ci-msixbundle-started-${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$env:STARTED_TAG" "$env:GITHUB_SHA"
+          git push origin "refs/tags/$env:STARTED_TAG"
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -259,6 +269,17 @@ else {
           path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Mark failed package validation
+        if: failure()
+        shell: pwsh
+        env:
+          FAILED_TAG: ci-msixbundle-failed-${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$env:FAILED_TAG" "$env:GITHUB_SHA"
+          git push origin "refs/tags/$env:FAILED_TAG"
 
       - name: Mark successful package validation
         if: success()
