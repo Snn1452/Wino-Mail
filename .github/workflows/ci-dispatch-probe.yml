@@ -4,10 +4,10 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  issue_comment:
+    types:
+      - created
 
 permissions:
   contents: read
@@ -19,6 +19,9 @@ concurrency:
 
 jobs:
   build-and-install:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request && github.event.comment.body == '/run-msixbundle')
     name: Build, sign, and install x64 MSIXBundle
     runs-on: windows-2025
     timeout-minutes: 180
@@ -27,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: feature/background-sync-final
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup .NET
