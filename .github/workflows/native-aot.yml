@@ -50,6 +50,23 @@ jobs:
           ref: ${{ github.event_name == 'issue_comment' && steps.resolve-pr.outputs.sha || github.sha }}
           persist-credentials: false
 
+      - name: Report package validation started
+        if: github.event_name == 'issue_comment'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.resolve-pr.outputs.sha }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $body = @{ body = "🟦 MSIXBundle validation STARTED for head $env:HEAD_SHA." } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
