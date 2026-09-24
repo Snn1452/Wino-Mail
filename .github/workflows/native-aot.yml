@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-and-install:
-    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/run-msixbundle'))
+    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/run-msixbundle'))
     name: Build, sign, and install x64 MSIXBundle
     runs-on: windows-2025
     timeout-minutes: 180
