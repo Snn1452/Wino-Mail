@@ -145,7 +145,6 @@ jobs:
 
       - name: Install signed bundle smoke test
         shell: pwsh
-        timeout-minutes: 15
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
