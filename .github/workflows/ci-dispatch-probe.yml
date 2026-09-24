@@ -27,6 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: feature/background-sync-final
           persist-credentials: false
 
       - name: Setup .NET
