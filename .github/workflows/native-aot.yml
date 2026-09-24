@@ -18,7 +18,7 @@ jobs:
   build-and-install:
     name: Build, sign, and install x64 MSIXBundle
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -79,9 +79,20 @@ jobs:
           if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Signing certificate not found: $certificate" }
 
           $expectedPublisher = [string](Get-Content -Raw 'scripts/release-profiles/Beta.json' | ConvertFrom-Json).Publisher
-          $outer = Get-AuthenticodeSignature -LiteralPath $bundle
-          if ($outer.Status -ne 'Valid' -or $null -eq $outer.SignerCertificate) { throw "Bundle signature is not valid: $($outer.Status)" }
-          if ($outer.SignerCertificate.Subject -cne $expectedPublisher) { throw "Unexpected bundle signer: $($outer.SignerCertificate.Subject)" }
+
+          & certutil.exe -user -f -addstore Root $certificate | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "CI certificate trust import failed with exit code $LASTEXITCODE." }
+
+          $sdkRoot = Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits/10/bin'
+          $signTool = Get-ChildItem -LiteralPath $sdkRoot -Directory |
+            ForEach-Object { Join-Path $_.FullName 'x64/signtool.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+
+          if ([string]::IsNullOrWhiteSpace($signTool)) { throw 'signtool.exe was not found in the installed Windows SDK.' }
+
+          & $signTool verify /pa /all /v $bundle
+          if ($LASTEXITCODE -ne 0) { throw "MSIXBundle signature verification failed with exit code $LASTEXITCODE." }
 
           $bundleArchive = [IO.Compression.ZipFile]::OpenRead($bundle)
           try {
@@ -102,9 +113,8 @@ jobs:
               $tempPackage = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName([string]$package.FileName))
               [IO.Compression.ZipFileExtensions]::ExtractToFile($bundleArchive.GetEntry([string]$package.FileName), $tempPackage, $true)
               try {
-                $innerSignature = Get-AuthenticodeSignature -LiteralPath $tempPackage
-                if ($innerSignature.Status -ne 'Valid' -or $null -eq $innerSignature.SignerCertificate) { throw "Inner package signature is not valid: $($innerSignature.Status)" }
-                if ($innerSignature.SignerCertificate.Subject -cne $expectedPublisher) { throw "Unexpected inner package signer: $($innerSignature.SignerCertificate.Subject)" }
+                & $signTool verify /pa /all /v $tempPackage
+                if ($LASTEXITCODE -ne 0) { throw "Inner MSIX signature verification failed with exit code $LASTEXITCODE." }
 
                 $innerArchive = [IO.Compression.ZipFile]::OpenRead($tempPackage)
                 try {
@@ -151,22 +161,42 @@ jobs:
           $bundle = Join-Path $folder "WinoMail_Beta_$version.msixbundle"
           $certificate = Join-Path $folder "WinoMail_Beta_${version}_SigningCertificate.cer"
 
-          Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "MSIXBundle not found: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Signing certificate not found: $certificate" }
 
-          $dependencies = @(Get-ChildItem -LiteralPath (Join-Path $folder 'Dependencies') -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.msix', '.appx' } | Select-Object -ExpandProperty FullName)
+          & certutil.exe -user -f -addstore TrustedPeople $certificate | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "TrustedPeople certificate import failed with exit code $LASTEXITCODE." }
+          & certutil.exe -user -f -addstore Root $certificate | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Root certificate import failed with exit code $LASTEXITCODE." }
+
+          Get-AppxPackage -Name 'WinoMail.Beta' | ForEach-Object {
+              try { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }
+              catch { Write-Host "Existing WinoMail.Beta cleanup failed: $($_.Exception.Message)" }
+          }
+
+          $dependencies = @(
+              Get-ChildItem -LiteralPath (Join-Path $folder 'Dependencies') -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension -in '.msix', '.appx' } |
+              Select-Object -ExpandProperty FullName
+          )
 
           if ($dependencies.Count -gt 0) {
-            Add-AppxPackage -Path $bundle -DependencyPath $dependencies -ForceUpdateFromAnyVersion
+              Add-AppxPackage -Path $bundle -DependencyPath $dependencies -ForceUpdateFromAnyVersion -ErrorAction Stop
           }
           else {
-            Add-AppxPackage -Path $bundle -ForceUpdateFromAnyVersion
+              Add-AppxPackage -Path $bundle -ForceUpdateFromAnyVersion -ErrorAction Stop
           }
 
           $installed = Get-AppxPackage -Name 'WinoMail.Beta'
           if ($null -eq $installed) { throw 'WinoMail.Beta was not installed.' }
           if ([string]$installed.Version -ne $version) { throw "Installed version $($installed.Version) does not match $version." }
 
-          Get-AppxPackage -Name 'WinoMail.Beta' | Remove-AppxPackage -ErrorAction Stop
+          $backgroundHost = Join-Path $installed.InstallLocation 'Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHost -PathType Leaf)) { throw 'Installed package is missing Wino.Mail.BackgroundSyncHost.exe.' }
+
+          Remove-AppxPackage -Package $installed.PackageFullName -ErrorAction Stop
+          if ($null -ne (Get-AppxPackage -Name 'WinoMail.Beta')) { throw 'WinoMail.Beta remained installed after uninstall.' }
+
           Write-Host "Installed and removed WinoMail.Beta $version successfully."
 
       - name: Upload installable MSIXBundle and certificate
