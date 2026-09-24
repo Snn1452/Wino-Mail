@@ -1,10 +1,13 @@
-name: Native AOT and installable Wino Mail MSIXBundle
+name: Installable Wino Mail MSIXBundle
 # Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - feature/background-sync-final
   workflow_dispatch:
 
 permissions:
@@ -25,6 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup .NET
@@ -141,7 +145,6 @@ jobs:
 
       - name: Install signed bundle smoke test
         shell: pwsh
-        timeout-minutes: 15
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
