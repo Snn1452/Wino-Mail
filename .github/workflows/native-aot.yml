@@ -1,12 +1,13 @@
 name: Native AOT and installable Wino Mail MSIXBundle
+# Final packaging validation runs from the trusted main-branch workflow definition.
 
 on:
   pull_request:
     branches:
       - main
-  issue_comment:
-    types:
-      - created
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -15,56 +16,37 @@ permissions:
   issues: write
 
 concurrency:
-  group: wino-msixbundle-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  group: wino-msixbundle-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-install:
-    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/run-msixbundle'))
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[validate-msix]'))
     name: Build, sign, and install x64 MSIXBundle
     runs-on: windows-2025
     timeout-minutes: 180
 
     steps:
-      - name: Resolve PR head
-        id: resolve-pr
-        if: github.event_name == 'issue_comment'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          $pr = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/pulls/$env:PR_NUMBER" -Headers $headers -Method Get
-          if (-not $pr.head.sha) { throw "Unable to resolve PR #$env:PR_NUMBER head SHA." }
-          "sha=$($pr.head.sha)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'issue_comment' && steps.resolve-pr.outputs.sha || github.sha }}
+          ref: ${{ github.event_name == 'push' && 'feature/background-sync-final' || github.sha }}
           persist-credentials: false
 
-      - name: Report package validation started
-        if: github.event_name == 'issue_comment'
+      - name: Report validation started
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          HEAD_SHA: ${{ steps.resolve-pr.outputs.sha }}
+          PR_NUMBER: "4"
         run: |
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             Accept = "application/vnd.github+json"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          $body = @{ body = "🟦 MSIXBundle validation STARTED for head $env:HEAD_SHA." } | ConvertTo-Json
+          $body = @{ body = "🟦 Final MSIXBundle validation STARTED from main CI. Validating feature/background-sync-final." } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
 
       - name: Setup .NET
@@ -298,38 +280,35 @@ else {
           if-no-files-found: error
           retention-days: 14
 
-      - name: Report package validation success
-        if: success() && github.event_name == 'issue_comment'
+      - name: Report validation success
+        if: success() && github.event_name == 'push'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          HEAD_SHA: ${{ steps.resolve-pr.outputs.sha }}
+          PR_NUMBER: "4"
         run: |
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             Accept = "application/vnd.github+json"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          $body = @{
-            body = "✅ MSIXBundle validation PASSED. x64 bundle was built, signed, structurally verified, installed, verified, and uninstalled successfully. Head: $env:HEAD_SHA. Artifact: WinoMail-Beta-x64-Installable."
-          } | ConvertTo-Json
+          $body = @{ body = "✅ Final MSIXBundle validation PASSED. x64 bundle built, signed, verified, installed, version-checked, background host checked, and uninstalled successfully." } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
 
-      - name: Report package validation failure
-        if: failure() && github.event_name == 'issue_comment'
+      - name: Report validation failure
+        if: failure() && github.event_name == 'push'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: "4"
         run: |
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             Accept = "application/vnd.github+json"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          $body = @{ body = "❌ MSIXBundle validation FAILED. Check the workflow run for the exact failing packaging/install step." } | ConvertTo-Json
+          $body = @{ body = "❌ Final MSIXBundle validation FAILED. The main-CI validation run stopped in the packaging/install chain; inspect the workflow for the exact step." } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
 
