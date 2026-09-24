@@ -209,9 +209,11 @@ else {
           $deployment.StartInfo.ArgumentList.Add($deploymentScript)
           $deployment.StartInfo.ArgumentList.Add('-Bundle')
           $deployment.StartInfo.ArgumentList.Add($bundle)
-          foreach ($dependency in $dependencies) {
+          if ($dependencies.Count -gt 0) {
               $deployment.StartInfo.ArgumentList.Add('-Dependencies')
-              $deployment.StartInfo.ArgumentList.Add($dependency)
+              foreach ($dependency in $dependencies) {
+                  $deployment.StartInfo.ArgumentList.Add($dependency)
+              }
           }
 
           if (-not $deployment.Start()) { throw 'Failed to start deployment helper process.' }
