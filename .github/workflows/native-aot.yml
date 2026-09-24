@@ -184,11 +184,11 @@ jobs:
           $deployment.StartInfo.ArgumentList.Add('-NonInteractive')
           $deploymentScript = Join-Path $env:RUNNER_TEMP 'install-bundle.ps1'
           @'
-$ErrorActionPreference = "Stop"
 param(
     [string]$Bundle,
     [string[]]$Dependencies
 )
+$ErrorActionPreference = "Stop"
 if ($Dependencies.Count -gt 0) {
     Add-AppxPackage -Path $Bundle -DependencyPath $Dependencies -ForceUpdateFromAnyVersion -ErrorAction Stop
 }
