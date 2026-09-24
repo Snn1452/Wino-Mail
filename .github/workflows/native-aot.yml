@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - feature/background-sync-final
+      - feature/background-sync-final-ci2
   workflow_dispatch:
 
 permissions:
