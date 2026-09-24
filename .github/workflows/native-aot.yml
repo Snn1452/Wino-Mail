@@ -1,4 +1,5 @@
 name: Native AOT Compatibility
+# Upstream vNext base verification marker.
 
 on:
   pull_request:
