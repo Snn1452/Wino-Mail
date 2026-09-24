@@ -4,26 +4,50 @@ on:
   pull_request:
     branches:
       - main
+  issue_comment:
+    types:
+      - created
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: read
+  issues: write
 
 concurrency:
-  group: wino-msixbundle-${{ github.ref }}
+  group: wino-msixbundle-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-install:
+    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/run-msixbundle'))
     name: Build, sign, and install x64 MSIXBundle
     runs-on: windows-2025
     timeout-minutes: 180
 
     steps:
+      - name: Resolve PR head
+        id: resolve-pr
+        if: github.event_name == 'issue_comment'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $pr = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/pulls/$env:PR_NUMBER" -Headers $headers -Method Get
+          if (-not $pr.head.sha) { throw "Unable to resolve PR #$env:PR_NUMBER head SHA." }
+          "sha=$($pr.head.sha)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'issue_comment' && steps.resolve-pr.outputs.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup .NET
@@ -256,4 +280,39 @@ else {
           path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Report package validation success
+        if: success() && github.event_name == 'issue_comment'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.resolve-pr.outputs.sha }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $body = @{
+            body = "✅ MSIXBundle validation PASSED. x64 bundle was built, signed, structurally verified, installed, verified, and uninstalled successfully. Head: $env:HEAD_SHA. Artifact: WinoMail-Beta-x64-Installable."
+          } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
+
+      - name: Report package validation failure
+        if: failure() && github.event_name == 'issue_comment'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $body = @{ body = "❌ MSIXBundle validation FAILED. Check the workflow run for the exact failing packaging/install step." } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/comments" -Headers $headers -Method Post -ContentType "application/json" -Body $body | Out-Null
 
