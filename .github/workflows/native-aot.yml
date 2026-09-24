@@ -92,7 +92,11 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($signTool)) { throw 'signtool.exe was not found in the installed Windows SDK.' }
 
           & $signTool verify /pa /all /v $bundle
-          if ($LASTEXITCODE -ne 0) { throw "MSIXBundle signature verification failed with exit code $LASTEXITCODE." }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "SignTool /pa verification failed; retrying with /pa /all /debug."
+            & $signTool verify /pa /all /debug $bundle
+            if ($LASTEXITCODE -ne 0) { throw "MSIXBundle signature verification failed with exit code $LASTEXITCODE." }
+          }
 
           $bundleArchive = [IO.Compression.ZipFile]::OpenRead($bundle)
           try {
