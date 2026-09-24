@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 concurrency:
@@ -257,3 +257,15 @@ else {
           path: src/Wino.Mail.WinUI/AppPackages/WinoMail_Beta_*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Mark successful package validation
+        if: success()
+        shell: pwsh
+        env:
+          GREEN_TAG: ci-msixbundle-green-${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$env:GREEN_TAG" "$env:GITHUB_SHA"
+          git push origin "refs/tags/$env:GREEN_TAG"
+          Write-Host "Created successful package validation tag: $env:GREEN_TAG"
