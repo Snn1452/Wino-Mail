@@ -1,1 +1,1 @@
-Temporary PR CI validation trigger. Remove after the final MSIXBundle validation.
+Temporary PR CI validation trigger (final package workflow).
