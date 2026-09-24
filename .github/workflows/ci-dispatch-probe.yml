@@ -1,0 +1,20 @@
+name: Wino Actions dispatcher probe
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Minimal Windows Actions probe
+    runs-on: windows-latest
+    steps:
+      - name: Probe
+        shell: pwsh
+        run: |
+          Write-Host "GitHub Actions dispatcher probe reached a real runner."
+          Write-Host "SHA: $env:GITHUB_SHA"
