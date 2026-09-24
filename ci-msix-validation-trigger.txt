@@ -1,1 +1,1 @@
-Temporary CI trigger for final MSIXBundle validation. This file is removed after the validation run.
+Temporary CI trigger for final MSIXBundle validation. Safe to remove after the green packaging/install run.
