@@ -596,10 +596,10 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         // before and after asynchronous draft/compose confirmation.
         var closeBehavior = PreferencesService.AppCloseBehavior;
 
+        e.Cancel = true;
+
         if (app is not null && await app.TryExitApplicationOnShellWindowCloseAsync(closeBehavior))
             return;
-
-        e.Cancel = true;
 
         if (_isCloseRequestInProgress)
             return;
