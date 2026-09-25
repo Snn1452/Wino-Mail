@@ -23,31 +23,84 @@ internal static class Program
         "Wino Mail",
         "background-sync-host.lock");
 
+    private static readonly string StartupDiagnosticPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "background-sync-host-startup.log");
+
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
-        WinRT.ComWrappersSupport.InitializeComWrappers();
+        var stage = "WinRT initialization";
 
         try
         {
+            WriteStartupDiagnostic("START", stage);
+
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+
+            stage = "package identity";
             var package = Package.Current;
+            WriteStartupDiagnostic(
+                "PACKAGE",
+                $"Name={package.Id.Name}; Publisher={package.Id.Publisher}; Family={package.Id.FamilyName}; Location={package.InstalledLocation.Path}");
+
+            stage = "release identity";
             ReleaseIdentity.Initialize(
                 package.InstalledLocation.Path,
                 package.Id.Name,
                 package.Id.Publisher,
                 package.Id.FamilyName);
 
-            Serilog.Log.Information("Wino Mail background synchronization host starting.");
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable("WINO_BACKGROUND_SYNC_HOST_SMOKE_TEST"),
+                    "1",
+                    StringComparison.Ordinal))
+            {
+                WriteStartupDiagnostic("SMOKE", "Release identity initialized successfully.");
+                return 0;
+            }
+
+            stage = "instance lock";
             using var instanceLock = AcquireInstanceLock();
             if (instanceLock is null)
+            {
+                WriteStartupDiagnostic("LOCK", "Another background synchronization host instance is already running.");
                 return 0;
+            }
 
+            WriteStartupDiagnostic("STARTING", "Dependency initialization starting.");
             return RunAsync().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Background synchronization host failed.");
+            WriteStartupDiagnostic("FAIL", $"{stage}: {ex}");
+            try
+            {
+                Serilog.Log.Error(ex, "Background synchronization host failed during {Stage}.", stage);
+            }
+            catch
+            {
+                // Logging may not have been initialized yet; the startup diagnostic file is the fallback.
+            }
+
             return 1;
+        }
+    }
+
+    private static void WriteStartupDiagnostic(string state, string message)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(StartupDiagnosticPath)!;
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                StartupDiagnosticPath,
+                $"{DateTimeOffset.UtcNow:O} [{state}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Startup diagnostics must never become the reason startup fails.
         }
     }
 
