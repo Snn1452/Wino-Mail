@@ -333,9 +333,7 @@
                       ReferenceOutputAssembly="false"
                       Private="false"
                       GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />
-    <ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
-                      ReferenceOutputAssembly="false"
-                      Private="false" />
+    <ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />
 	<ProjectReference Include="..\Wino.Calendar.ViewModels\Wino.Calendar.ViewModels.csproj" />
 	<ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
 	<ProjectReference Include="..\Wino.Core.ViewModels\Wino.Core.ViewModels.csproj" />
