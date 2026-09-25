@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
 using Serilog;
+using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -104,9 +105,7 @@ public partial class App : WinoApplication,
         if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
             or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
         {
-            StartBackgroundSyncHostIfNeeded();
-            DisposeTrayIcon();
-            ExitApplication();
+            _ = ExitToBackgroundAfterHostStartAsync();
             return true;
         }
 
@@ -680,7 +679,7 @@ public partial class App : WinoApplication,
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
 
             if (_hasConfiguredAccounts)
-                StartBackgroundSyncHostIfNeeded();
+                _ = StartBackgroundSyncHostIfNeededAsync();
 
             if (_companionIntegration != null)
             {
@@ -1843,7 +1842,7 @@ public partial class App : WinoApplication,
 
             await SynchronizeCreatedAccountAsync(message.Account);
 
-            StartBackgroundSyncHostIfNeeded();
+            _ = StartBackgroundSyncHostIfNeededAsync();
         });
     }
 
@@ -1851,7 +1850,7 @@ public partial class App : WinoApplication,
         Wino.Core.Domain.Entities.Shared.MailAccount account)
     {
         await SynchronizeCreatedAccountAsync(account).ConfigureAwait(false);
-        StartBackgroundSyncHostIfNeeded();
+        _ = StartBackgroundSyncHostIfNeededAsync();
     }
 
     private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
@@ -1927,7 +1926,7 @@ public partial class App : WinoApplication,
 
             CloseWelcomeWindowIfPresent();
 
-            StartBackgroundSyncHostIfNeeded();
+            _ = StartBackgroundSyncHostIfNeededAsync();
             await UpdateJumpListOptionsSafeAsync();
 
             Services.GetRequiredService<IMailDialogService>().InfoBarMessage(
@@ -2143,7 +2142,7 @@ public partial class App : WinoApplication,
             UpdateTrayIconState(allowCreation: true);
 
             if (propertyName == nameof(IPreferencesService.AppCloseBehavior))
-                StartBackgroundSyncHostIfNeeded();
+                _ = StartBackgroundSyncHostIfNeededAsync();
         }
     }
 
@@ -2153,33 +2152,29 @@ public partial class App : WinoApplication,
 
 
 
-    private void StartBackgroundSyncHostIfNeeded()
+    private async Task ExitToBackgroundAfterHostStartAsync()
+    {
+        await StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true);
+        DisposeTrayIcon();
+        ExitApplication();
+    }
+
+    private async Task StartBackgroundSyncHostIfNeededAsync()
     {
         if (_preferencesService?.AppCloseBehavior is not (
                 AppCloseBehavior.RunInBackgroundWithTrayIcon or
                 AppCloseBehavior.RunInBackgroundWithoutTrayIcon))
             return;
 
-        var hostPath = Path.Combine(AppContext.BaseDirectory, "BackgroundSyncHost", "Wino.Mail.BackgroundSyncHost.exe");
-        if (!File.Exists(hostPath))
-        {
-            LogActivation($"Background sync host executable was not found: {hostPath}");
-            return;
-        }
-
         try
         {
-            _ = Process.Start(new ProcessStartInfo
-            {
-                FileName = hostPath,
-                WorkingDirectory = AppContext.BaseDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
+            await FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
+            LogActivation("Background synchronization host launch requested through the package full-trust launcher.");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to start the background synchronization host.");
+            Log.Error(ex, "Failed to launch the background synchronization host through the package full-trust launcher.");
+            LogActivation($"Background synchronization host launch failed: {ex}");
         }
     }
 
