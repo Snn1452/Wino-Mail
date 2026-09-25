@@ -130,20 +130,20 @@ foreach ($relative in $brandingPaths) {
 }
 $profile | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $layout 'release-profile.json') -Encoding utf8
 
-$priCandidates = @(Get-ChildItem -LiteralPath $layout -Filter 'application.pri' -File -Recurse)
+$priCandidates = @(Get-ChildItem -LiteralPath $layout -File -Recurse | Where-Object { $_.Name -in @('resources.pri', 'application.pri') })
 if ($priCandidates.Count -eq 0) {
     $topLevelEntries = @(Get-ChildItem -LiteralPath $layout -Force | ForEach-Object {
         [IO.Path]::GetRelativePath($layout, $_.FullName).Replace('\', '/')
     })
-    throw "The input application package is missing application.pri. Top-level entries: $($topLevelEntries -join ', ')"
+    throw "The input application package is missing resources.pri/application.pri. Top-level entries: $($topLevelEntries -join ', ')"
 }
-if ($priCandidates.Count -gt 1) {
-    $relativeCandidates = $priCandidates | ForEach-Object { [IO.Path]::GetRelativePath($layout, $_.FullName).Replace('\', '/') }
-    throw "The input application package contains multiple application.pri files: $($relativeCandidates -join ', ')"
-}
-$applicationPri = $priCandidates[0].FullName
-Write-Host "Using application PRI: $([IO.Path]::GetRelativePath($layout, $applicationPri))"
-Copy-Item -LiteralPath $applicationPri -Destination (Join-Path $priInput 'application.pri') -Force
+
+$applicationPri = $priCandidates |
+    Sort-Object @{ Expression = { if ($_.Name -ieq 'resources.pri') { 0 } else { 1 } } }, @{ Expression = { [IO.Path]::GetRelativePath($layout, $_.FullName).Length } } |
+    Select-Object -First 1 -ExpandProperty FullName
+$applicationPriName = [IO.Path]::GetFileName($applicationPri)
+Write-Host "Using application resource PRI: $([IO.Path]::GetRelativePath($layout, $applicationPri))"
+Copy-Item -LiteralPath $applicationPri -Destination (Join-Path $priInput $applicationPriName) -Force
 @' 
 <?xml version="1.0" encoding="utf-8"?>
 <resources targetOsVersion="10.0.0" majorVersion="1">
