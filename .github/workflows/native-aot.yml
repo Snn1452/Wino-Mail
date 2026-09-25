@@ -8,6 +8,10 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: native-aot-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-aot:
     name: Publish x64 and run SQLite AOT smoke test
