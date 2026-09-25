@@ -74,6 +74,12 @@
 					DisplayName="Wino Startup Service" />
 			</uap5:Extension>
 
+			<desktop:Extension
+				Category="windows.fullTrustProcess"
+				Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe">
+				<desktop:FullTrustProcess />
+			</desktop:Extension>
+
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
 				<uap:Protocol Name="mailto" />
