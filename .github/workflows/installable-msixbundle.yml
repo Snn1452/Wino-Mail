@@ -23,6 +23,10 @@ on:
       - 'global.json'
   workflow_dispatch:
 
+concurrency:
+  group: installable-msixbundle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: read
@@ -31,6 +35,7 @@ jobs:
   package-install:
     name: Build, install and uninstall x64 MSIXBundle
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
