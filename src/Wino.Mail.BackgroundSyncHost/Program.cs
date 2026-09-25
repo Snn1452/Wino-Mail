@@ -37,6 +37,7 @@ internal static class Program
                 package.Id.Publisher,
                 package.Id.FamilyName);
 
+            Serilog.Log.Information("Wino Mail background synchronization host starting.");
             using var instanceLock = AcquireInstanceLock();
             if (instanceLock is null)
                 return 0;
