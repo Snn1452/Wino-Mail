@@ -15,7 +15,6 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
 using Serilog;
-using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -2163,7 +2162,7 @@ public partial class App : WinoApplication,
 
         try
         {
-            await FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
+            await Windows.ApplicationModel.FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
             LogActivation("Background synchronization host launch requested through the package full-trust launcher.");
         }
         catch (Exception ex)
