@@ -9,7 +9,7 @@ namespace Wino.Mail.WinUI.Services;
 /// supported Win32 route. The P/Invoke is kept in the app layer so notification policy stays
 /// unit-testable against the interface.
 /// </summary>
-public sealed partial class ShellUserPresenceStateProvider : IUserPresenceStateProvider
+public sealed class ShellUserPresenceStateProvider : IUserPresenceStateProvider
 {
     private enum UserNotificationState
     {
@@ -22,8 +22,8 @@ public sealed partial class ShellUserPresenceStateProvider : IUserPresenceStateP
         App = 7
     }
 
-    [LibraryImport("shell32.dll")]
-    private static partial int SHQueryUserNotificationState(out UserNotificationState state);
+    [DllImport("shell32.dll")]
+    private static extern int SHQueryUserNotificationState(out UserNotificationState state);
 
     public bool IsPresenting()
     {

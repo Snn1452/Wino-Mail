@@ -25,7 +25,9 @@ public sealed class PreferencesPropertyGenerator : IIncrementalGenerator
             var preferenceInterface = compilation.GetTypeByMetadataName(InterfaceMetadataName);
             var preferenceService = compilation.GetTypeByMetadataName(ServiceMetadataName);
 
-            if (preferenceInterface == null || preferenceService == null)
+            if (preferenceInterface == null ||
+                preferenceService == null ||
+                !preferenceService.Locations.Any(static location => location.IsInSource))
             {
                 return ImmutableArray<IPropertySymbol>.Empty;
             }

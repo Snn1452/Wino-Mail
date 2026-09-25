@@ -1,0 +1,219 @@
+name: Installable Beta MSIXBundle
+
+on:
+  pull_request:
+    paths:
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.Mail.NotificationHost/**'
+      - 'src/Wino.Calendar.NotificationHost/**'
+      - 'src/Wino.People.NotificationHost/**'
+      - 'src/Wino.Tasks.NotificationHost/**'
+      - 'controls/**'
+      - 'scripts/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'nuget.config'
+      - 'global.json'
+      - '.github/workflows/installable-msixbundle.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: installable-beta-msixbundle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  package-install:
+    name: Build, install and uninstall x64 Beta MSIXBundle
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check preinstalled .NET SDK
+        shell: pwsh
+        run: |
+          $hasRequiredSdk = @(dotnet --list-sdks | Where-Object {
+            if ($_ -match '^([0-9]+)\.([0-9]+)\.([0-9]+)\s') {
+              return ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -eq 0 -and [int]$Matches[3] -ge 301)
+            }
+            return $false
+          }).Count -gt 0
+          "DOTNET_SDK_PRESENT=$($hasRequiredSdk.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
+      - name: Setup .NET SDK
+        if: env.DOTNET_SDK_PRESENT != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.301
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore x64 package build
+        shell: pwsh
+        run: |
+          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release -p:UseNativeAot=false
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI package restore failed.' }
+          dotnet restore src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw 'Background sync host restore failed.' }
+
+      - name: Build unsigned x64 base MSIXBundle
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\base-msix'
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+          dotnet msbuild src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -nologo -m:1 -nr:false -verbosity:minimal -t:Build -p:Configuration=Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:UseNativeAot=false -p:PublishAot=false -p:PublishTrimmed=false -p:SelfContained=true -p:WinoPackageOutputDir="$packageDir"
+          if ($LASTEXITCODE -ne 0) { throw 'x64 base MSIXBundle build failed.' }
+          $bundles = @(Get-ChildItem -LiteralPath $packageDir -Filter '*.msixbundle' -File -Recurse)
+          if ($bundles.Count -ne 1) { throw "Expected exactly one base MSIXBundle, found $($bundles.Count)." }
+          "BASE_BUNDLE_PATH=$($bundles[0].FullName)" >> $env:GITHUB_ENV
+
+      - name: Build Beta package from verified base payload
+        shell: pwsh
+        run: |
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\beta'
+          New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+          & ./scripts/ci-build-beta-test.ps1 -InputBundle $env:BASE_BUNDLE_PATH -BetaAssetsPath (Join-Path $env:GITHUB_WORKSPACE 'release-assets\Beta') -OutputRoot $outputRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Beta package transformation failed.' }
+          "BETA_BUNDLE_PATH=$(Join-Path $outputRoot (Get-ChildItem -LiteralPath $outputRoot -Filter 'WinoMail_Beta_*.msixbundle' -File | Select-Object -First 1 -ExpandProperty Name))" >> $env:GITHUB_ENV
+
+      - name: Create Beta test signing certificate
+        shell: pwsh
+        run: |
+          $profile = Get-Content -Raw 'scripts/release-profiles/Beta.json' | ConvertFrom-Json
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject ([string]$profile.Publisher) -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(30)
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Beta test signing certificate creation failed.' }
+          $certPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\beta\WinoMail_Beta_TestCertificate.cer'
+          Export-Certificate -Cert $cert -FilePath $certPath -Type CERT -Force | Out-Null
+          "BETA_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          "BETA_CERT_PATH=$certPath" >> $env:GITHUB_ENV
+
+      - name: Sign Beta MSIXBundle
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits\10\bin'
+          $signTool = Get-ChildItem -LiteralPath $sdkRoot -Filter signtool.exe -File -Recurse | Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signTool) { throw 'signtool.exe was not found.' }
+          & $signTool.FullName sign /fd SHA256 /sha1 $env:BETA_TEST_CERT_THUMBPRINT $env:BETA_BUNDLE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle signing failed.' }
+
+      - name: Validate final Beta bundle
+        shell: pwsh
+        run: |
+          $profile = Get-Content -Raw 'scripts/release-profiles/Beta.json' | ConvertFrom-Json
+          $bundle = [IO.Compression.ZipFile]::OpenRead($env:BETA_BUNDLE_PATH)
+          try {
+            $entry = $bundle.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $entry) { throw 'Beta bundle is missing AppxBundleManifest.xml.' }
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if ([string]$manifest.Bundle.Identity.Name -cne [string]$profile.PackageName) { throw "Wrong Beta package identity: $($manifest.Bundle.Identity.Name)" }
+            if ([string]$manifest.Bundle.Identity.Publisher -cne [string]$profile.Publisher) { throw 'Wrong Beta publisher identity.' }
+            [xml]$sourceManifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+            if ([string]$manifest.Bundle.Identity.Version -cne [string]$sourceManifest.Package.Identity.Version) { throw 'Beta version mismatch.' }
+          } finally { $bundle.Dispose() }
+          Write-Host "Verified Beta identity: $($profile.PackageName)"
+          Write-Host "Verified Beta name: $($profile.DisplayNames.Mail)"
+
+      - name: Install Beta signing certificate
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath $env:BETA_CERT_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+
+      - name: Install signed Beta MSIXBundle
+        shell: pwsh
+        run: |
+          $identityName = 'WinoMail.Beta'
+          Get-AppxPackage -Name $identityName -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }
+          $dependencyRoot = Join-Path (Split-Path $env:BASE_BUNDLE_PATH) 'Dependencies'
+          $dependencyFiles = @(Get-ChildItem -LiteralPath $dependencyRoot -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.appx', '.msix') })
+          if ($dependencyFiles.Count -gt 0) {
+            Add-AppxPackage -Path $env:BETA_BUNDLE_PATH -DependencyPath @($dependencyFiles.FullName) -ForceApplicationShutdown -ErrorAction Stop
+          } else {
+            Add-AppxPackage -Path $env:BETA_BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
+          }
+          $installed = @(Get-AppxPackage -Name $identityName -ErrorAction Stop)
+          if ($installed.Count -ne 1) { throw "Expected exactly one $identityName package, found $($installed.Count)." }
+          $installedManifest = Get-AppxPackageManifest $installed[0]
+          if ([string]$installedManifest.Package.Identity.Name -cne $identityName) { throw 'Installed package identity is not WinoMail.Beta.' }
+          if ([string]$installedManifest.Package.Properties.DisplayName -cne 'Wino Mail Beta') { throw 'Installed package name is not Wino Mail Beta.' }
+          $hostPath = Join-Path $installed[0].InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw 'Installed Beta package is missing BackgroundSyncHost.' }
+
+      - name: Launch BackgroundSyncHost packaged activation test
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
+          $aumid = "$($installed.PackageFamilyName)!BackgroundSyncHost"
+          $diagnostic = Join-Path $env:LOCALAPPDATA 'Wino Mail\background-sync-host-startup.log'
+          Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
+
+          Write-Host "Launching packaged BackgroundSyncHost AUMID: $aumid"
+          Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$aumid" | Out-Null
+
+          $deadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+          $completed = $false
+          $lastDiagnostic = ''
+          while ([DateTimeOffset]::UtcNow -lt $deadline) {
+            if (Test-Path -LiteralPath $diagnostic -PathType Leaf) {
+              $lastDiagnostic = Get-Content -LiteralPath $diagnostic -Raw
+              Write-Host $lastDiagnostic
+
+              if ($lastDiagnostic -match '(?m)^.*\[EXIT\].*code (?<code>\d+)\.') {
+                $completed = $true
+                $exitCode = [int]$Matches['code']
+                break
+              }
+
+              if ($lastDiagnostic -match '(?m)^.*\[FAIL\]') {
+                throw ("BackgroundSyncHost reported a startup failure." + [Environment]::NewLine + $lastDiagnostic)
+              }
+            }
+
+            Start-Sleep -Seconds 1
+          }
+
+          if (-not $completed) {
+            if (Test-Path -LiteralPath $diagnostic -PathType Leaf) {
+              $lastDiagnostic = Get-Content -LiteralPath $diagnostic -Raw
+            }
+            throw ("BackgroundSyncHost packaged activation did not report an exit within 60 seconds." + [Environment]::NewLine + $lastDiagnostic)
+          }
+
+          if ($exitCode -ne 0) {
+            throw ("BackgroundSyncHost packaged activation exited with code $exitCode." + [Environment]::NewLine + $lastDiagnostic)
+          }
+
+          Write-Host 'BackgroundSyncHost packaged activation test passed.'
+
+      - name: Uninstall Beta package and remove test trust
+        if: always()
+        shell: pwsh
+        run: |
+          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }
+          if ($env:BETA_TEST_CERT_THUMBPRINT) {
+            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $env:BETA_TEST_CERT_THUMBPRINT } | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force }
+            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $env:BETA_TEST_CERT_THUMBPRINT } | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force }
+          }
+
+      - name: Upload installable Beta artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-Beta-x64-Installable
+          path: |
+            artifacts\beta\*.msixbundle
+            artifacts\beta\WinoMail_Beta_TestCertificate.cer
+          if-no-files-found: error

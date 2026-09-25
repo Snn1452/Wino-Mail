@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWinUI>true</UseWinUI>
     <RootNamespace>Wino.Mail.Controls</RootNamespace>
+    <!-- This is a WinUI class library, not an MSIX package project. It must never invoke MakeAppx when
+         the parent application is being packaged. -->
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <AppxBundle>Never</AppxBundle>
+    <WindowsPackageType>None</WindowsPackageType>
     <Platforms>x86;x64;ARM64</Platforms>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!--

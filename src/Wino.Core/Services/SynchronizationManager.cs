@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,6 +38,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private static readonly Lazy<SynchronizationManager> _instance = new(() => new SynchronizationManager());
     public static SynchronizationManager Instance => _instance.Value;
 
+    private static readonly string SynchronizationLockRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "SynchronizationLocks");
+
     private readonly ConcurrentDictionary<Guid, IWinoSynchronizerBase> _synchronizerCache = new();
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _accountSynchronizationCancellationSources = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _calendarSynchronizationLocks = new();
@@ -65,6 +71,39 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private bool _isRegisteredForProgressMessages;
 
     private SynchronizationManager() { }
+
+
+    private static async Task<FileStream> AcquireAccountSynchronizationLockAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(SynchronizationLockRoot);
+
+        var lockPath = Path.Combine(
+            SynchronizationLockRoot,
+            $"{accountId:D}.lock");
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
 
     /// <summary>
     /// Initializes the SynchronizationManager with required dependencies.
@@ -217,6 +256,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                                                                       CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
 
         if (options.Type == MailSynchronizationType.ExecuteRequests && HasPendingUndoAction(options.AccountId))
@@ -844,20 +886,32 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <param name="options">Calendar synchronization options</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Synchronization result</returns>
-    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(CalendarSynchronizationOptions options,
-                                                                               CancellationToken cancellationToken = default)
-        => options.Type == CalendarSynchronizationType.Strict
+    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(
+        CalendarSynchronizationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureInitialized();
+
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
+
+        return options.Type == CalendarSynchronizationType.Strict
             ? await SynchronizeCalendarStrictAsync(options, cancellationToken).ConfigureAwait(false)
             : await RunCalendarSynchronizationWithLockAsync(
                 options.AccountId,
                 cancellationToken,
                 () => SynchronizeCalendarCoreAsync(options, cancellationToken, reportState: true)).ConfigureAwait(false);
+    }
 
     public async Task<ContactSynchronizationResult> SynchronizeContactsAsync(
         ContactSynchronizationOptions options,
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
@@ -921,6 +975,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
 
