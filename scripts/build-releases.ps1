@@ -779,6 +779,35 @@ function New-SideloadAppInstaller {
     Write-Host "Update feed: $($Distribution.AppInstallerUri.AbsoluteUri)"
 }
 
+function Sign-SideloadReleaseWithCertificate {
+    param([string]$Bundle, [object]$Plan, [object]$Tools, [object]$Signing, [string]$Staging, [string]$Channel = 'Beta')
+
+    if ($Channel -ne 'Beta') {
+        throw 'The local test certificate mode is only supported for Beta packages.'
+    }
+
+    $profile = Get-ReleaseProfile $Plan 'Beta'
+    $manifest = Get-ArchiveXml $Bundle 'AppxMetadata/AppxBundleManifest.xml'
+    Assert-ReleaseIdentity $manifest.Bundle.Identity $profile.PackageName $Signing.Certificate.Subject $Plan.Version
+
+    Invoke-ReleaseTool $Tools.SignTool @(
+        'sign', '/fd', 'SHA256', '/sha1', $Signing.Certificate.Thumbprint, $Bundle
+    ) (Join-Path $Staging 'logs/sign-beta-test.log')
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Bundle
+    if ($null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.Thumbprint -cne $Signing.Certificate.Thumbprint) {
+        throw 'The Beta test bundle signature does not match the selected certificate.'
+    }
+
+    $certificatePath = Join-Path $Staging 'signed-Beta.cer'
+    Export-Certificate -Cert $Signing.Certificate -FilePath $certificatePath -Type CERT -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+        throw 'The Beta test signing certificate could not be exported.'
+    }
+
+    return $certificatePath
+}
 function Sign-SideloadRelease {
     param([string]$Bundle, [object]$Plan, [object]$Tools, [object]$Signing, [string]$Staging, [string]$Channel = 'Sideload')
 
@@ -915,14 +944,24 @@ function Invoke-ReleaseBuild {
                 }
             }
             else { $storeHashes = $hashes }
-            $stage = 'Azure signing'
-            Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
+            $stage = 'package signing'
+            $useTestCertificate = $null -ne $Signing -and
+                $Signing.PSObject.Properties['Mode'] -and $Signing.Mode -eq 'TestCertificate'
+            $certificatePath = if ($useTestCertificate) {
+                Sign-SideloadReleaseWithCertificate $bundle $Plan $Tools $Signing $channelStage $channel.Name
+            }
+            else {
+                Sign-SideloadRelease $bundle $Plan $Tools $Signing $channelStage $channel.Name
+            }
             $signedHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
             $folder = Join-Path $staging "ready/$($channel.FolderName)"
             $null = New-Item -ItemType Directory -Path $folder -Force
             $channelBundle = Join-Path $folder "$($channel.FolderName).msixbundle"
             Copy-Item -LiteralPath $bundle -Destination $channelBundle
             if ((Get-FileHash -LiteralPath $channelBundle -Algorithm SHA256).Hash -cne $signedHash) { throw 'The final bundle differs from its verified signed package.' }
+            if (-not [string]::IsNullOrWhiteSpace([string]$certificatePath) -and (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+                Copy-Item -LiteralPath $certificatePath -Destination (Join-Path $folder "$($channel.FolderName)_SigningCertificate.cer")
+            }
             Copy-ReleaseDependencies (Join-Path $staging 'sdk') (Join-Path $folder 'Dependencies')
             New-SideloadAppInstaller $channelBundle $Plan $Signing.Distributions[$channel.Name] $channel.Name
         }
@@ -979,7 +1018,15 @@ function Invoke-InteractiveRelease {
     $plan.Destinations | ForEach-Object { Write-Host "Output: $_" }
     $tools = Get-ReleaseTools $selection
     $storeCertificate = if ($selection.Store) { Get-StoreSigningCertificate $plan $StoreTestCertificateThumbprint } else { $null }
-    $signing = if ($selection.Beta -or $selection.Sideload) { Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload } else { $null }
+    $signing = if ($selection.Beta -or $selection.Sideload) {
+        if ($selection.Beta -and -not $selection.Sideload -and -not [string]::IsNullOrWhiteSpace($BetaTestCertificateThumbprint)) {
+            Get-BetaTestSigningConfiguration $plan $BetaTestCertificateThumbprint
+        }
+        else {
+            Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload
+        }
+    }
+    else { $null }
     $symbolsPath = Invoke-ReleaseBuild $plan $tools $signing $storeCertificate
     if (-not $NonInteractive -and -not [string]::IsNullOrWhiteSpace([string]$symbolsPath)) {
         $upload = Read-ReleaseChoice "Upload symbols for $($plan.Version) now? (yes/no)" @{ yes = $true; y = $true; no = $false; n = $false }
