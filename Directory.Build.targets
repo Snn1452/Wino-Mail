@@ -76,4 +76,11 @@
       </PackagingOutputs>
     </ItemGroup>
   </Target>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Wino.Mail.BackgroundSyncHost' or '$(MSBuildProjectName)' == 'Wino.Platform.Windows'">
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
 </Project>
