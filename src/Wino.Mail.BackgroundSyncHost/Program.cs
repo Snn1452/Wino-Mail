@@ -70,7 +70,9 @@ internal static class Program
             }
 
             WriteStartupDiagnostic("STARTING", "Dependency initialization starting.");
-            return RunAsync().GetAwaiter().GetResult();
+            var exitCode = RunAsync().GetAwaiter().GetResult();
+            WriteStartupDiagnostic("EXIT", $"Background synchronization host exited with code {exitCode}.");
+            return exitCode;
         }
         catch (Exception ex)
         {
