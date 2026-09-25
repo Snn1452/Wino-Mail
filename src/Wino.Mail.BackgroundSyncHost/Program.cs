@@ -120,45 +120,64 @@ internal static class Program
         services.AddSingleton<BackgroundNotificationHostClient>();
         services.AddSingleton<INotificationBuilder, HeadlessNotificationBuilder>();
         services.AddSingleton<AutoSynchronizationService>();
+        WriteStartupDiagnostic("SERVICES", "Registering shared and core services.");
         services.AddSingleton<CalendarReminderService>();
 
+        WriteStartupDiagnostic("SERVICES", "Building dependency injection provider.");
         await using var provider = services.BuildServiceProvider();
 
+        WriteStartupDiagnostic("PATHS", "Configuring application paths.");
         ConfigureApplicationPaths(provider);
+
+        WriteStartupDiagnostic("LOGGING", "Configuring structured logging.");
         ConfigureLogging(provider);
 
-        if (provider.GetRequiredService<IPreferencesService>().AppCloseBehavior == AppCloseBehavior.Terminate)
+        WriteStartupDiagnostic("PREFERENCES", "Reading AppCloseBehavior.");
+        var closeBehavior = provider.GetRequiredService<IPreferencesService>().AppCloseBehavior;
+        WriteStartupDiagnostic("PREFERENCES", $"AppCloseBehavior={closeBehavior}");
+        if (closeBehavior == AppCloseBehavior.Terminate)
+        {
+            WriteStartupDiagnostic("EXIT", "Background synchronization is disabled by AppCloseBehavior.Terminate.");
             return 0;
+        }
 
+        WriteStartupDiagnostic("MIGRATION", "Inspecting migration state.");
         var migrationPlan = await provider.GetRequiredService<IMigrationCoordinator>()
             .InspectAsync()
             .ConfigureAwait(false);
+        WriteStartupDiagnostic("MIGRATION", $"Status={migrationPlan.Status}");
 
         if (migrationPlan.Status != Wino.Core.Domain.Models.Migration.MigrationStatus.NotRequired)
         {
             Serilog.Log.Information(
                 "Background synchronization host is idle because migration status is {MigrationStatus}.",
                 migrationPlan.Status);
+            WriteStartupDiagnostic("EXIT", $"Migration status is {migrationPlan.Status}; host is idle.");
             return 0;
         }
 
+        WriteStartupDiagnostic("DATABASE", "Initializing database.");
         await provider.GetRequiredService<IDatabaseService>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
+        WriteStartupDiagnostic("TRANSLATIONS", "Initializing translations.");
         await provider.GetRequiredService<ITranslationService>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
+        WriteStartupDiagnostic("SYNC", "Initializing SynchronizationManager.");
         await provider.GetRequiredService<SynchronizationManagerInitializer>()
             .InitializeAsync()
             .ConfigureAwait(false);
 
+        WriteStartupDiagnostic("LOOPS", "Starting automatic synchronization and calendar reminder loops.");
         await Task.WhenAll(
             provider.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
             provider.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None))
             .ConfigureAwait(false);
 
+        WriteStartupDiagnostic("EXIT", "Background synchronization host loops completed.");
         return 0;
     }
 
