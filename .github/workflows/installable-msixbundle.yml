@@ -136,8 +136,8 @@ jobs:
           $identityName = [string]$manifest.Package.Identity.Name
           Get-AppxPackage -Name $identityName -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }
 
-          $dependencyRoot = Split-Path $env:BUNDLE_PATH
-          $dependencyFiles = @(Get-ChildItem -LiteralPath $dependencyRoot -File -Recurse | Where-Object { $_.Extension -in '.appx', '.msix' })
+          $dependencyRoot = Join-Path (Split-Path $env:BUNDLE_PATH) 'Dependencies'
+          $dependencyFiles = @(Get-ChildItem -LiteralPath $dependencyRoot -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.appx', '.msix' })
 
           if ($dependencyFiles.Count -gt 0) {
             Add-AppxPackage -Path $env:BUNDLE_PATH -DependencyPath @($dependencyFiles.FullName) -ForceApplicationShutdown -ErrorAction Stop
