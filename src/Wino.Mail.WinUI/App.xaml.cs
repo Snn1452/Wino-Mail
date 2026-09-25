@@ -104,7 +104,12 @@ public partial class App : WinoApplication,
         if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
             or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
         {
-            await StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true);
+            if (!await StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true))
+            {
+                LogActivation("Background synchronization host did not start; keeping WinUI alive.");
+                return true;
+            }
+
             DisposeTrayIcon();
             ExitApplication();
             return true;
@@ -2153,22 +2158,24 @@ public partial class App : WinoApplication,
 
 
 
-    private async Task StartBackgroundSyncHostIfNeededAsync()
+    private async Task<bool> StartBackgroundSyncHostIfNeededAsync()
     {
         if (_preferencesService?.AppCloseBehavior is not (
                 AppCloseBehavior.RunInBackgroundWithTrayIcon or
                 AppCloseBehavior.RunInBackgroundWithoutTrayIcon))
-            return;
+            return true;
 
         try
         {
             await Windows.ApplicationModel.FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
             LogActivation("Background synchronization host launch requested through the package full-trust launcher.");
+            return true;
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to launch the background synchronization host through the package full-trust launcher.");
             LogActivation($"Background synchronization host launch failed: {ex}");
+            return false;
         }
     }
 
