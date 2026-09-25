@@ -1,0 +1,170 @@
+name: Installable MSIXBundle
+
+on:
+  pull_request:
+    paths:
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.Mail.NotificationHost/**'
+      - 'src/Wino.Calendar.NotificationHost/**'
+      - 'src/Wino.People.NotificationHost/**'
+      - 'src/Wino.Tasks.NotificationHost/**'
+      - 'controls/**'
+      - 'scripts/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'nuget.config'
+      - 'global.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  package-install:
+    name: Build, install and uninstall x64 MSIXBundle
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore x64 package build
+        shell: pwsh
+        run: |
+          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release -p:UseNativeAot=false
+          if ($LASTEXITCODE -ne 0) { throw 'WinUI package restore failed.' }
+
+      - name: Build unsigned x64 MSIXBundle
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\msix'
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+          dotnet msbuild src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -nologo -m:1 -nr:false -verbosity:minimal -t:Build -p:Configuration=Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:GenerateAppxPackageOnBuild=true -p:AppxBundle=Always -p:AppxBundlePlatforms=x64 -p:UapAppxPackageBuildMode=SideloadOnly -p:AppxPackageSigningEnabled=false -p:GenerateTemporaryStoreCertificate=false -p:GenerateAppInstallerFile=false -p:AppxAutoIncrementPackageRevision=false -p:AppxSymbolPackageEnabled=false -p:UseNativeAot=false -p:PublishAot=false -p:PublishTrimmed=false -p:SelfContained=true -p:EnableMsixTooling=true -p:AppxPackageDir="$packageDir\"
+          if ($LASTEXITCODE -ne 0) { throw 'x64 MSIXBundle build failed.' }
+
+          $bundles = @(Get-ChildItem -LiteralPath $packageDir -Filter '*.msixbundle' -File -Recurse)
+          if ($bundles.Count -ne 1) { throw "Expected exactly one MSIXBundle, found $($bundles.Count)." }
+
+          "BUNDLE_PATH=$($bundles[0].FullName)" >> $env:GITHUB_ENV
+
+      - name: Create install certificate
+        shell: pwsh
+        run: |
+          $certDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\certificate'
+          New-Item -ItemType Directory -Path $certDir -Force | Out-Null
+
+          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $publisher = [string]$manifest.Package.Identity.Publisher
+          if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'Package publisher is missing from Package.appxmanifest.' }
+
+          $certPath = Join-Path $certDir 'WinoMail_InstallCertificate.cer'
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'WinoMail_InstallCertificate.pfx'
+          $password = ConvertTo-SecureString 'WinoMail-CI-Install-Only' -AsPlainText -Force
+
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(30)
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'The install signing certificate was not created with a private key.' }
+
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $password -Force | Out-Null
+          Export-Certificate -Cert $cert -FilePath $certPath -Type CERT -Force | Out-Null
+
+          if (-not (Test-Path -LiteralPath $certPath -PathType Leaf)) { throw 'CER export failed.' }
+
+          "CERT_PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Sign MSIXBundle
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits\10\bin'
+          $signTool = Get-ChildItem -LiteralPath $sdkRoot -Filter signtool.exe -File -Recurse | Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signTool) { throw 'signtool.exe was not found in the Windows SDK.' }
+
+          & $signTool.FullName sign /fd SHA256 /f "$env:CERT_PFX_PATH" /p 'WinoMail-CI-Install-Only' "$env:BUNDLE_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'MSIXBundle signing failed.' }
+
+      - name: Validate bundle structure
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $expectedName = [string]$manifest.Package.Identity.Name
+          $expectedPublisher = [string]$manifest.Package.Identity.Publisher
+          $expectedVersion = [string]$manifest.Package.Identity.Version
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($env:BUNDLE_PATH)
+          try {
+            $entry = $archive.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $entry) { throw 'The bundle is missing AppxBundleManifest.xml.' }
+            $reader = New-Object System.IO.StreamReader($entry.Open())
+            try { [xml]$bundleManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+          } finally {
+            $archive.Dispose()
+          }
+
+          $identity = $bundleManifest.Bundle.Identity
+          if ([string]$identity.Name -cne $expectedName) { throw 'Bundle identity name mismatch.' }
+          if ([string]$identity.Publisher -cne $expectedPublisher) { throw 'Bundle publisher mismatch.' }
+          if ([string]$identity.Version -cne $expectedVersion) { throw 'Bundle version mismatch.' }
+
+      - name: Install signer certificate
+        shell: pwsh
+        run: |
+          $certPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\certificate\WinoMail_InstallCertificate.cer'
+          Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'The package signer certificate could not be trusted.' }
+
+      - name: Install signed MSIXBundle
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $identityName = [string]$manifest.Package.Identity.Name
+          Get-AppxPackage -Name $identityName -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }
+
+          $dependencyRoot = Split-Path $env:BUNDLE_PATH
+          $dependencyFiles = @(Get-ChildItem -LiteralPath $dependencyRoot -File -Recurse | Where-Object { $_.Extension -in '.appx', '.msix' })
+
+          if ($dependencyFiles.Count -gt 0) {
+            Add-AppxPackage -Path $env:BUNDLE_PATH -DependencyPath @($dependencyFiles.FullName) -ForceApplicationShutdown -ErrorAction Stop
+          } else {
+            Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
+          }
+
+          $installed = @(Get-AppxPackage -Name $identityName -ErrorAction Stop)
+          if ($installed.Count -ne 1) { throw "Expected exactly one installed Wino Mail package, found $($installed.Count)." }
+
+          $hostPath = Join-Path $installed[0].InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw "Installed package is missing the background sync host: $hostPath" }
+
+      - name: Uninstall package and remove test trust
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $identityName = [string]$manifest.Package.Identity.Name
+          Get-AppxPackage -Name $identityName -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }
+
+          Get-ChildItem 'Cert:\CurrentUser\TrustedPeople' | Where-Object { $_.Thumbprint -eq $env:CERT_THUMBPRINT } | ForEach-Object {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\TrustedPeople\$($_.Thumbprint)" -Force
+          }
+
+      - name: Upload installable artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-x64-installable
+          path: |
+            artifacts\msix\**\*.msixbundle
+            artifacts\certificate\WinoMail_InstallCertificate.cer
+          if-no-files-found: error

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs"
+             Link="Services\ConfigurationService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs"
+             Link="Services\PreferencesService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs"
+             Link="Services\ShellUserPresenceStateProvider.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
+    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+  </ItemGroup>
+</Project>

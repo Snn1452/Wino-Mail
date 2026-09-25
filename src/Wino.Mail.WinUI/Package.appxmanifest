@@ -64,7 +64,10 @@
       </uap:VisualElements>
 
 		<Extensions>
-			<uap5:Extension Category="windows.startupTask">
+			<uap5:Extension
+				Category="windows.startupTask"
+				Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
+				EntryPoint="Windows.FullTrustApplication">
 				<uap5:StartupTask
 					TaskId="WinoStartupId"
 					Enabled="true"
