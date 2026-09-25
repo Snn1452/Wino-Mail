@@ -21,6 +21,7 @@ on:
       - 'WinoMail.slnx'
       - 'nuget.config'
       - 'global.json'
+      - '.github/workflows/installable-msixbundle.yml'
   workflow_dispatch:
 
 concurrency:
