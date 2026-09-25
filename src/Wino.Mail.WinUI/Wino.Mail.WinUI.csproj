@@ -271,10 +271,6 @@
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.dll" Link="Wino.Tasks.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.deps.json" Link="Wino.Tasks.NotificationHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(TasksNotificationHostOutput)Wino.Tasks.NotificationHost.runtimeconfig.json" Link="Wino.Tasks.NotificationHost.runtimeconfig.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
-    <Content Include="$(BackgroundSyncHostOutput)**\*"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest"
-             Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -547,6 +543,15 @@
     <Error
       Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
       Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
+    <!-- PublishBackgroundSyncHost creates these files during the build. Add them to MSIX Content
+         after publication; an evaluation-time wildcard would run before the files exist. -->
+    <ItemGroup>
+      <BackgroundSyncHostContent Include="$(BackgroundSyncHostOutput)**\*" />
+      <Content Include="@(BackgroundSyncHostContent)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
   </Target>
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
