@@ -346,10 +346,10 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Build the notification hosts before the app's packaging target publishes them. -->
-    <ProjectReference Include="..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;EnableMsixTooling;AppxBundle;AppxBundlePlatforms;AppxPackageSigningEnabled" />
-    <ProjectReference Include="..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;EnableMsixTooling;AppxBundle;AppxBundlePlatforms;AppxPackageSigningEnabled" />
-    <ProjectReference Include="..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;EnableMsixTooling;AppxBundle;AppxBundlePlatforms;AppxPackageSigningEnabled" />
-    <ProjectReference Include="..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;EnableMsixTooling;AppxBundle;AppxBundlePlatforms;AppxPackageSigningEnabled" />
+
+
+
+
   </ItemGroup>
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Ical.Net" />
@@ -550,10 +550,18 @@
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(MailNotificationHostOutput);$(CalendarNotificationHostOutput);$(PeopleNotificationHostOutput);$(TasksNotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(MailNotificationHostOutput);Restore=false" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(CalendarNotificationHostOutput);Restore=false" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(PeopleNotificationHostOutput);Restore=false" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(TasksNotificationHostOutput);Restore=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.NotificationHost\Wino.Mail.NotificationHost.csproj"
+            Targets="Publish"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(MailNotificationHostOutput);Restore=false;GenerateAppxPackageOnBuild=false;EnableMsixTooling=false;AppxBundle=Never;AppxPackageSigningEnabled=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Calendar.NotificationHost\Wino.Calendar.NotificationHost.csproj"
+            Targets="Publish"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(CalendarNotificationHostOutput);Restore=false;GenerateAppxPackageOnBuild=false;EnableMsixTooling=false;AppxBundle=Never;AppxPackageSigningEnabled=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.People.NotificationHost\Wino.People.NotificationHost.csproj"
+            Targets="Publish"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(PeopleNotificationHostOutput);Restore=false;GenerateAppxPackageOnBuild=false;EnableMsixTooling=false;AppxBundle=Never;AppxPackageSigningEnabled=false" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.Tasks.NotificationHost\Wino.Tasks.NotificationHost.csproj"
+            Targets="Publish"
+            Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(TasksNotificationHostOutput);Restore=false;GenerateAppxPackageOnBuild=false;EnableMsixTooling=false;AppxBundle=Never;AppxPackageSigningEnabled=false" />
   </Target>
 
   <Target Name="RestoreNotificationHost" BeforeTargets="Restore">
