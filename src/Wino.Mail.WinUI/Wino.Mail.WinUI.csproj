@@ -331,7 +331,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
                       ReferenceOutputAssembly="false"
-                      Private="false" />
+                      Private="false"
+                      GlobalPropertiesToRemove="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />
     <ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj"
                       ReferenceOutputAssembly="false"
                       Private="false" />
@@ -542,7 +543,8 @@
     <MSBuild
       Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
       Targets="Publish"
-      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;PublishDir=$(BackgroundSyncHostOutput)" />
+      RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" 
+      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error
       Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
       Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
