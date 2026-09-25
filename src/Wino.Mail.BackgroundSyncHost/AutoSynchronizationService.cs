@@ -51,6 +51,9 @@ internal sealed class AutoSynchronizationService(
             if (preferencesService.AppCloseBehavior == AppCloseBehavior.Terminate)
                 return;
 
+            if (!(await accountService.GetAccountsAsync().ConfigureAwait(false)).Any())
+                return;
+
             var now = DateTimeOffset.UtcNow;
             var configuredInterval = intervalProvider();
 
