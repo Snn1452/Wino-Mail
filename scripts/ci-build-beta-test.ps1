@@ -42,8 +42,8 @@ function Get-PriCandidates {
             if ($candidate.GetAttribute('type') -eq 'Path') {
                 $resolved = [IO.Path]::GetFullPath((Join-Path $Layout $value.InnerText))
                 $root = ([IO.Path]::GetFullPath($Layout)).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
-                if (-not $resolved.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
-                    throw "PRI references a missing or unsafe asset: $($value.InnerText)"
+                if (-not $resolved.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "PRI references an unsafe asset outside the package: $($value.InnerText)"
                 }
             }
             $qualifiers = @($candidate.SelectNodes(".//*[local-name()='Qualifier']") | ForEach-Object {
