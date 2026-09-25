@@ -6,11 +6,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
+using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Services;
 using Wino.NotificationHost.Contracts;
 using Wino.Mail.WinUI.Services;
+using Wino.Services;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
@@ -108,7 +110,7 @@ internal static class Program
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
     {
-        var configuration = provider.GetRequiredService<IApplicationConfiguration>();
+        var configuration = (ApplicationConfiguration)provider.GetRequiredService<IApplicationConfiguration>();
         var appData = ApplicationData.Current;
         var releaseIdentity = ReleaseIdentity.Current;
 
@@ -116,7 +118,7 @@ internal static class Program
         configuration.AllowLegacyDataMigration = releaseIdentity.AllowsLegacyMigration;
         configuration.ApplicationDisplayName = releaseIdentity.DisplayNames["Mail"];
         configuration.PublisherSharedFolderPath = releaseIdentity.AllowsLegacyMigration
-            ? appData.GetPublisherCacheFolder(ApplicationConfiguration.SharedFolderName).Path
+            ? appData.GetPublisherCacheFolder(Wino.Services.ApplicationConfiguration.SharedFolderName).Path
             : string.Empty;
         configuration.ApplicationTempFolderPath = appData.TemporaryFolder.Path;
     }
