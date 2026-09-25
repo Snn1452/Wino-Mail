@@ -121,7 +121,8 @@ jobs:
             try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
             if ([string]$manifest.Bundle.Identity.Name -cne [string]$profile.PackageName) { throw "Wrong Beta package identity: $($manifest.Bundle.Identity.Name)" }
             if ([string]$manifest.Bundle.Identity.Publisher -cne [string]$profile.Publisher) { throw 'Wrong Beta publisher identity.' }
-            if ([string]$manifest.Bundle.Identity.Version -cne [string]((Get-Content -Raw 'src/Wino.Mail.WinUI/Package.appxmanifest' | ConvertFrom-Json).Package.Identity.Version)) { throw 'Beta version mismatch.' }
+            [xml]$sourceManifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+            if ([string]$manifest.Bundle.Identity.Version -cne [string]$sourceManifest.Package.Identity.Version) { throw 'Beta version mismatch.' }
           } finally { $bundle.Dispose() }
           Write-Host "Verified Beta identity: $($profile.PackageName)"
           Write-Host "Verified Beta name: $($profile.DisplayNames.Mail)"
