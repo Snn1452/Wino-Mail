@@ -2167,7 +2167,7 @@ public partial class App : WinoApplication,
 
         try
         {
-            await Windows.ApplicationModel.FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
+            await Windows.ApplicationModel.FullTrustProcessLauncher.LaunchFullTrustProcessForAppAsync("BackgroundSyncHost");
             LogActivation("Background synchronization host launch requested through the package full-trust launcher.");
             return true;
         }
