@@ -537,9 +537,9 @@
     <MakeDir Directories="$(BackgroundSyncHostOutput)" />
     <MSBuild
       Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-      Targets="Publish"
+      Targets="Restore;Publish"
       RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" 
-      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=false;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)" />
+      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);Restore=true;SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)" />
     <Error
       Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
       Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
