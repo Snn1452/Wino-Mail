@@ -209,6 +209,4 @@ internal sealed class AutoSynchronizationService(
         }
     }
 
-    private static Task DelayUntilNextTickAsync(CancellationToken token)
-        => Task.Delay(PreferencePollInterval, token);
 }
