@@ -54,6 +54,9 @@ jobs:
           dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release -p:UseNativeAot=false
           if ($LASTEXITCODE -ne 0) { throw 'WinUI package restore failed.' }
 
+          dotnet restore src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw 'Background sync host restore failed.' }
+
       - name: Build unsigned x64 MSIXBundle
         shell: pwsh
         run: |
