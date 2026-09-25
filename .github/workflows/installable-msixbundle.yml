@@ -64,7 +64,7 @@ jobs:
           $packageDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\msix'
           New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
-          dotnet msbuild src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -nologo -m:1 -nr:false -verbosity:minimal -t:Build -p:Configuration=Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:GenerateAppxPackageOnBuild=true -p:AppxBundle=Always -p:AppxBundlePlatforms=x64 -p:UapAppxPackageBuildMode=SideloadOnly -p:AppxPackageSigningEnabled=false -p:GenerateTemporaryStoreCertificate=false -p:GenerateAppInstallerFile=false -p:AppxAutoIncrementPackageRevision=false -p:AppxSymbolPackageEnabled=false -p:UseNativeAot=false -p:PublishAot=false -p:PublishTrimmed=false -p:SelfContained=true -p:EnableMsixTooling=true -p:AppxPackageDir="$packageDir\"
+          dotnet msbuild src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -nologo -m:1 -nr:false -verbosity:minimal -t:Build -p:Configuration=Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:UseNativeAot=false -p:PublishAot=false -p:PublishTrimmed=false -p:SelfContained=true -p:WinoPackageOutputDir="$packageDir"
           if ($LASTEXITCODE -ne 0) { throw 'x64 MSIXBundle build failed.' }
 
           $bundles = @(Get-ChildItem -LiteralPath $packageDir -Filter '*.msixbundle' -File -Recurse)
