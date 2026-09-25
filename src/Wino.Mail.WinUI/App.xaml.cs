@@ -1964,7 +1964,6 @@ public partial class App : WinoApplication,
             return;
 
         Services.GetRequiredService<WelcomeWizardContext>().Reset();
-        StopAutoSynchronizationLoops();
         UpdateTrayIconState(allowCreation: true);
 
         // Keep an active XAML window throughout the shell-to-welcome handoff. Closing
