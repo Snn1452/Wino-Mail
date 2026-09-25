@@ -166,7 +166,7 @@ jobs:
           $psi.UseShellExecute = $false
           $psi.Environment['WINO_BACKGROUND_SYNC_HOST_SMOKE_TEST'] = '1'
           $process = [Diagnostics.Process]::Start($psi)
-          if (-not $process.WaitForExit(30_000)) {
+          if (-not $process.WaitForExit(30000)) {
             try { $process.Kill($true) } catch {}
             throw 'BackgroundSyncHost smoke test exceeded 30 seconds.'
           }
@@ -195,7 +195,7 @@ jobs:
           $psi.UseShellExecute = $false
           $process = [Diagnostics.Process]::Start($psi)
 
-          if (-not $process.WaitForExit(60_000)) {
+          if (-not $process.WaitForExit(60000)) {
             try { $process.Kill($true) } catch {}
             $diagnostic = Join-Path $env:LOCALAPPDATA 'Wino Mail\background-sync-host-startup.log'
             if (Test-Path -LiteralPath $diagnostic) { Get-Content -LiteralPath $diagnostic -Tail 120 }
