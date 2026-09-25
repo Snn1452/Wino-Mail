@@ -147,8 +147,12 @@ jobs:
         shell: pwsh
         run: |
           $certPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\certificate\WinoMail_InstallCertificate.cer'
-          Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'The package signer certificate could not be trusted.' }
+          Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+
+          $trustedCert = Get-ChildItem -LiteralPath "Cert:\LocalMachine\TrustedPeople\$env:CERT_THUMBPRINT" -ErrorAction SilentlyContinue
+          if ($null -eq $trustedCert) {
+            throw "The package signer certificate was not found in LocalMachine\TrustedPeople: $env:CERT_THUMBPRINT"
+          }
 
       - name: Install signed MSIXBundle
         shell: pwsh
@@ -179,8 +183,8 @@ jobs:
           $identityName = [string]$manifest.Package.Identity.Name
           Get-AppxPackage -Name $identityName -ErrorAction SilentlyContinue | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }
 
-          Get-ChildItem 'Cert:\CurrentUser\TrustedPeople' | Where-Object { $_.Thumbprint -eq $env:CERT_THUMBPRINT } | ForEach-Object {
-            Remove-Item -LiteralPath "Cert:\CurrentUser\TrustedPeople\$($_.Thumbprint)" -Force
+          Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' | Where-Object { $_.Thumbprint -eq $env:CERT_THUMBPRINT } | ForEach-Object {
+            Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force
           }
 
       - name: Upload installable artifacts
