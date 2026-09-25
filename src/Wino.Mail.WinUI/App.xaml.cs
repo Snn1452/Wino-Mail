@@ -679,6 +679,9 @@ public partial class App : WinoApplication,
 
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
 
+            if (_hasConfiguredAccounts)
+                StartBackgroundSyncHostIfNeeded();
+
             if (_companionIntegration != null)
             {
                 await _companionIntegration.SetReadinessAsync(_hasConfiguredAccounts
