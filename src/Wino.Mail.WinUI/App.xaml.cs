@@ -95,7 +95,7 @@ public partial class App : WinoApplication,
 
     internal bool IsExiting => _isExiting;
 
-    internal bool TryExitApplicationOnShellWindowClose(AppCloseBehavior closeBehavior)
+    internal async Task<bool> TryExitApplicationOnShellWindowCloseAsync(AppCloseBehavior closeBehavior)
     {
         if (_isExiting)
             return true;
@@ -105,7 +105,9 @@ public partial class App : WinoApplication,
         if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
             or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
         {
-            _ = ExitToBackgroundAfterHostStartAsync();
+            await StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true);
+            DisposeTrayIcon();
+            ExitApplication();
             return true;
         }
 
@@ -2151,13 +2153,6 @@ public partial class App : WinoApplication,
 
 
 
-
-    private async Task ExitToBackgroundAfterHostStartAsync()
-    {
-        await StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true);
-        DisposeTrayIcon();
-        ExitApplication();
-    }
 
     private async Task StartBackgroundSyncHostIfNeededAsync()
     {
