@@ -152,6 +152,67 @@ jobs:
           $hostPath = Join-Path $installed[0].InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
           if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw 'Installed Beta package is missing BackgroundSyncHost.' }
 
+      - name: Launch BackgroundSyncHost smoke test
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
+          $hostPath = Join-Path $installed.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw "BackgroundSyncHost.exe is missing: $hostPath" }
+
+          $psi = [Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = $hostPath
+          $psi.WorkingDirectory = $installed.InstallLocation
+          $psi.UseShellExecute = $false
+          $psi.Environment['WINO_BACKGROUND_SYNC_HOST_SMOKE_TEST'] = '1'
+          $process = [Diagnostics.Process]::Start($psi)
+          if (-not $process.WaitForExit(30_000)) {
+            try { $process.Kill($true) } catch {}
+            throw 'BackgroundSyncHost smoke test exceeded 30 seconds.'
+          }
+
+          $diagnostic = Join-Path $env:LOCALAPPDATA 'Wino Mail\background-sync-host-startup.log'
+          if (Test-Path -LiteralPath $diagnostic) {
+            Get-Content -LiteralPath $diagnostic -Tail 80
+          }
+
+          if ($process.ExitCode -ne 0) {
+            throw "BackgroundSyncHost smoke test exited with code $($process.ExitCode)."
+          }
+
+          Write-Host 'BackgroundSyncHost smoke test passed.'
+
+      - name: Launch BackgroundSyncHost full initialization test
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $installed = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
+          $hostPath = Join-Path $installed.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+
+          $psi = [Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = $hostPath
+          $psi.WorkingDirectory = $installed.InstallLocation
+          $psi.UseShellExecute = $false
+          $process = [Diagnostics.Process]::Start($psi)
+
+          if (-not $process.WaitForExit(60_000)) {
+            try { $process.Kill($true) } catch {}
+            $diagnostic = Join-Path $env:LOCALAPPDATA 'Wino Mail\background-sync-host-startup.log'
+            if (Test-Path -LiteralPath $diagnostic) { Get-Content -LiteralPath $diagnostic -Tail 120 }
+            throw 'BackgroundSyncHost full initialization did not exit within 60 seconds.'
+          }
+
+          $diagnostic = Join-Path $env:LOCALAPPDATA 'Wino Mail\background-sync-host-startup.log'
+          if (Test-Path -LiteralPath $diagnostic) {
+            Get-Content -LiteralPath $diagnostic -Tail 120
+          }
+
+          if ($process.ExitCode -ne 0) {
+            throw "BackgroundSyncHost full initialization exited with code $($process.ExitCode)."
+          }
+
+          Write-Host 'BackgroundSyncHost full initialization passed.'
+
       - name: Uninstall Beta package and remove test trust
         if: always()
         shell: pwsh
