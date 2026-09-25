@@ -83,4 +83,14 @@
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
   </PropertyGroup>
+
+  <!-- Only the foreground WinUI application owns the MSIX package. Windows App SDK libraries and
+       helper executables are build inputs/payloads, never nested package projects. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Wino.Mail.WinUI'">
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <AppxBundle>Never</AppxBundle>
+    <WindowsPackageType>None</WindowsPackageType>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+  </PropertyGroup>
 </Project>
