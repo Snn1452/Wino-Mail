@@ -17,11 +17,33 @@ internal sealed class AutoSynchronizationService(
     IPreferencesService preferencesService)
 {
     private const int InboxSyncsPerFullSync = 20;
-    private static readonly TimeSpan PreferencePollInterval = TimeSpan.FromSeconds(30);
     private readonly ConcurrentDictionary<Guid, int> _inboxSyncCounters = [];
 
-    public async Task RunAsync(CancellationToken token)
+    public Task RunAsync(CancellationToken token)
+        => Task.WhenAll(
+            RunMailLoopAsync(token),
+            RunCalendarLoopAsync(token));
+
+    private Task RunMailLoopAsync(CancellationToken token)
+        => RunIntervalLoopAsync(
+            () => TimeSpan.FromMinutes(Math.Max(1, preferencesService.EmailSyncIntervalMinutes)),
+            RunMailTickAsync,
+            token);
+
+    private Task RunCalendarLoopAsync(CancellationToken token)
+        => RunIntervalLoopAsync(
+            () => TimeSpan.FromMinutes(Math.Max(1, preferencesService.CalendarSyncIntervalMinutes)),
+            RunCalendarTickAsync,
+            token);
+
+    private async Task RunIntervalLoopAsync(
+        Func<TimeSpan> intervalProvider,
+        Func<CancellationToken, Task> tick,
+        CancellationToken token)
     {
+        DateTimeOffset? nextRunAt = null;
+        TimeSpan? activeInterval = null;
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
@@ -29,10 +51,33 @@ internal sealed class AutoSynchronizationService(
             if (preferencesService.AppCloseBehavior == AppCloseBehavior.Terminate)
                 return;
 
+            var now = DateTimeOffset.UtcNow;
+            var configuredInterval = intervalProvider();
+
+            if (activeInterval != configuredInterval)
+            {
+                var lastRunAt = nextRunAt.HasValue && activeInterval.HasValue
+                    ? nextRunAt.Value - activeInterval.Value
+                    : now;
+
+                nextRunAt = lastRunAt + configuredInterval;
+                activeInterval = configuredInterval;
+            }
+
+            var delay = nextRunAt!.Value - now;
+            if (delay > TimeSpan.Zero)
+            {
+                var maxPoll = TimeSpan.FromSeconds(30);
+                await Task.Delay(
+                        delay <= maxPoll ? delay : maxPoll,
+                        token)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
             try
             {
-                await RunMailTickAsync(token).ConfigureAwait(false);
-                await RunCalendarTickAsync(token).ConfigureAwait(false);
+                await tick(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -43,7 +88,8 @@ internal sealed class AutoSynchronizationService(
                 Log.Error(ex, "Automatic background synchronization tick failed.");
             }
 
-            await DelayUntilNextTickAsync(token).ConfigureAwait(false);
+            activeInterval = intervalProvider();
+            nextRunAt = DateTimeOffset.UtcNow + activeInterval.Value;
         }
     }
 
