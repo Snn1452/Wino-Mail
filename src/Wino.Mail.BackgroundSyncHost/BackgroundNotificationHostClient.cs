@@ -4,9 +4,9 @@ using Microsoft.Windows.AppNotifications;
 using Wino.NotificationHost.Contracts;
 using Wino.Platform.Windows;
 
-namespace Wino.Mail.WinUI.Services;
+namespace Wino.Mail.BackgroundSyncHost;
 
-internal sealed class NotificationHostClient : INotificationHostClient
+internal sealed class BackgroundNotificationHostClient
 {
     public Task ShowAsync(
         NotificationHostApplication application,

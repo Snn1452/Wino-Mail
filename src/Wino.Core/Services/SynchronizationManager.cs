@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,6 +38,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private static readonly Lazy<SynchronizationManager> _instance = new(() => new SynchronizationManager());
     public static SynchronizationManager Instance => _instance.Value;
 
+    private static readonly string SynchronizationLockRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "SynchronizationLocks");
+
     private readonly ConcurrentDictionary<Guid, IWinoSynchronizerBase> _synchronizerCache = new();
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _accountSynchronizationCancellationSources = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _calendarSynchronizationLocks = new();
@@ -50,7 +56,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private readonly ILogger _logger = Log.ForContext<SynchronizationManager>();
 
     private SynchronizerFactory _concreteSynchronizerFactory;
-    private IMailServerTestService _mailServerTestService;
+    private IImapTestService _imapTestService;
     private IAccountService _accountService;
     private IAuthenticationProvider _authenticationProvider;
     private INotificationBuilder _notificationBuilder;
@@ -66,17 +72,50 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
 
     private SynchronizationManager() { }
 
+
+    private static async Task<FileStream> AcquireAccountSynchronizationLockAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(SynchronizationLockRoot);
+
+        var lockPath = Path.Combine(
+            SynchronizationLockRoot,
+            $"{accountId:D}.lock");
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
     /// <summary>
     /// Initializes the SynchronizationManager with required dependencies.
     /// This must be called before using any other methods.
     /// Note: Synchronizers are created lazily to avoid requiring window handles during app initialization.
     /// </summary>
     /// <param name="synchronizerFactory">Factory for creating synchronizers</param>
-    /// <param name="mailServerTestService">Service for testing IMAP connectivity</param>
+    /// <param name="imapTestService">Service for testing IMAP connectivity</param>
     /// <param name="accountService">Service for account operations</param>
     /// <param name="authenticationProvider">Provider for OAuth authentication</param>
     public async Task InitializeAsync(ISynchronizerFactory synchronizerFactory,
-                                     IMailServerTestService mailServerTestService,
+                                     IImapTestService imapTestService,
                                      IAccountService accountService,
                                      INotificationBuilder notificationBuilder,
                                      IAuthenticationProvider authenticationProvider,
@@ -92,7 +131,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (_isInitialized) return;
 
             _concreteSynchronizerFactory = synchronizerFactory as SynchronizerFactory ?? throw new ArgumentException("SynchronizerFactory must be the concrete implementation");
-            _mailServerTestService = mailServerTestService ?? throw new ArgumentNullException(nameof(mailServerTestService));
+            _imapTestService = imapTestService ?? throw new ArgumentNullException(nameof(imapTestService));
             _accountService = accountService ?? throw new ArgumentNullException(nameof(accountService));
             _authenticationProvider = authenticationProvider ?? throw new ArgumentNullException(nameof(authenticationProvider));
             _notificationBuilder = notificationBuilder ?? throw new ArgumentNullException(nameof(notificationBuilder));
@@ -134,7 +173,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                               serverInformation.IncomingServer,
                               serverInformation.IncomingServerPort);
 
-            await _mailServerTestService.TestImapAsync(serverInformation);
+            await _imapTestService.TestImapConnectionAsync(serverInformation);
 
             _logger.Information("IMAP connectivity test successful");
             return ImapConnectivityTestResults.Success();
@@ -217,6 +256,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                                                                       CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
 
         if (options.Type == MailSynchronizationType.ExecuteRequests && HasPendingUndoAction(options.AccountId))
@@ -844,20 +886,32 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <param name="options">Calendar synchronization options</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Synchronization result</returns>
-    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(CalendarSynchronizationOptions options,
-                                                                               CancellationToken cancellationToken = default)
-        => options.Type == CalendarSynchronizationType.Strict
+    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(
+        CalendarSynchronizationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureInitialized();
+
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
+
+        return options.Type == CalendarSynchronizationType.Strict
             ? await SynchronizeCalendarStrictAsync(options, cancellationToken).ConfigureAwait(false)
             : await RunCalendarSynchronizationWithLockAsync(
                 options.AccountId,
                 cancellationToken,
                 () => SynchronizeCalendarCoreAsync(options, cancellationToken, reportState: true)).ConfigureAwait(false);
+    }
 
     public async Task<ContactSynchronizationResult> SynchronizeContactsAsync(
         ContactSynchronizationOptions options,
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
@@ -882,8 +936,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (result.Exception is AuthenticationAttentionException authenticationException)
             {
                 var account = authenticationException.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-                // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
-                if (account is not null && account.ContactIntegrationSource != AccountIntegrationSource.Local)
+                if (account is not null)
                 {
                     account.IsContactReauthorizationRequired = true;
                     await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -894,8 +947,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         catch (AuthenticationAttentionException ex)
         {
             var account = ex.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-            // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
-            if (account is not null && account.ContactIntegrationSource != AccountIntegrationSource.Local)
+            if (account is not null)
             {
                 account.IsContactReauthorizationRequired = true;
                 await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -923,6 +975,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(
+            options.AccountId,
+            cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
 
@@ -949,8 +1004,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (result.Exception is AuthenticationAttentionException authenticationException)
             {
                 var account = authenticationException.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-                // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
-                if (account is not null && account.TaskIntegrationSource != AccountIntegrationSource.Local)
+                if (account is not null)
                 {
                     account.IsTaskReauthorizationRequired = true;
                     await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -973,8 +1027,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         catch (AuthenticationAttentionException ex)
         {
             var account = ex.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-            // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
-            if (account is not null && account.TaskIntegrationSource != AccountIntegrationSource.Local)
+            if (account is not null)
             {
                 account.IsTaskReauthorizationRequired = true;
                 await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);

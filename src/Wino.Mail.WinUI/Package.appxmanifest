@@ -23,7 +23,7 @@
   <Identity
     Name="58272BurakKSE.WinoMailPreview"
     Publisher="CN=51FBDAF3-E212-4149-89A2-A2636B3BC911"
-    Version="2.1.5.0" />
+    Version="2.1.3.0" />
 
   <mp:PhoneIdentity PhoneProductId="7b7e90e9-cc55-4409-9769-99b4b5ed6e9b" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -52,7 +52,7 @@
         Description="Wino.Mail.WinUI"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\MailAssets\Square150x150Logo.png"
-        Square44x44Logo="Assets\AppEntries\MailAssets\Square44x44Logo.png">
+        Square44x44Logo="Assets\AppEntries\MailAssets\Square44x44Logo.png" ToastCapable="true">
         <uap:DefaultTile Wide310x150Logo="Assets\AppEntries\MailAssets\Wide310x150Logo.png" Square71x71Logo="Assets\AppEntries\MailAssets\SmallTile.png" Square310x310Logo="Assets\AppEntries\MailAssets\LargeTile.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="square150x150Logo" />
@@ -64,13 +64,6 @@
       </uap:VisualElements>
 
 		<Extensions>
-			<uap5:Extension Category="windows.startupTask">
-				<uap5:StartupTask
-					TaskId="WinoStartupId"
-					Enabled="true"
-					DisplayName="Wino Mail" />
-			</uap5:Extension>
-
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
 				<uap:Protocol Name="mailto" />
@@ -111,6 +104,37 @@
 		</Extensions>
     </Application>
 
+    <Application Id="BackgroundSyncHost"
+      Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="Wino Mail Background Service"
+        Description="Wino Mail background synchronization service"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\AppEntries\MailAssets\Square150x150Logo.png"
+        Square44x44Logo="Assets\AppEntries\MailAssets\Square44x44Logo.png">
+        <uap:DefaultTile />
+      </uap:VisualElements>
+      <Extensions>
+        <uap5:Extension
+          Category="windows.startupTask"
+          Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask
+            TaskId="WinoStartupId"
+            Enabled="true"
+            DisplayName="Wino Startup Service" />
+        </uap5:Extension>
+
+        <desktop:Extension
+          Category="windows.fullTrustProcess"
+          Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe">
+          <desktop:FullTrustProcess />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+
     <Application Id="CalendarApp"
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$"
@@ -120,7 +144,7 @@
         Description="Wino.Mail.WinUI.Calendar"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\CalendarAssets\Square150x150Logo.png"
-        Square44x44Logo="Assets\AppEntries\CalendarAssets\Square44x44Logo.png">
+        Square44x44Logo="Assets\AppEntries\CalendarAssets\Square44x44Logo.png" ToastCapable="true">
         <uap:DefaultTile Wide310x150Logo="Assets\AppEntries\CalendarAssets\Wide310x150Logo.png" Square71x71Logo="Assets\AppEntries\CalendarAssets\SmallTile.png" Square310x310Logo="Assets\AppEntries\CalendarAssets\LargeTile.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="square150x150Logo" />
@@ -163,7 +187,7 @@
         Description="Wino.Mail.WinUI.Contacts"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\PeopleAssets\Square150x150Logo.png"
-        Square44x44Logo="Assets\AppEntries\PeopleAssets\Square44x44Logo.png">
+        Square44x44Logo="Assets\AppEntries\PeopleAssets\Square44x44Logo.png" ToastCapable="true">
         <uap:DefaultTile Wide310x150Logo="Assets\AppEntries\PeopleAssets\Wide310x150Logo.png" Square71x71Logo="Assets\AppEntries\PeopleAssets\SmallTile.png" Square310x310Logo="Assets\AppEntries\PeopleAssets\LargeTile.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="square150x150Logo" />
@@ -183,7 +207,7 @@
         Description="Wino.Mail.WinUI.ToDo"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\ToDoAssets\Square150x150Logo.png"
-        Square44x44Logo="Assets\AppEntries\ToDoAssets\Square44x44Logo.png">
+        Square44x44Logo="Assets\AppEntries\ToDoAssets\Square44x44Logo.png" ToastCapable="true">
         <uap:DefaultTile Wide310x150Logo="Assets\AppEntries\ToDoAssets\Wide310x150Logo.png" Square71x71Logo="Assets\AppEntries\ToDoAssets\SmallTile.png" Square310x310Logo="Assets\AppEntries\ToDoAssets\LargeTile.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="square150x150Logo" />
@@ -201,6 +225,7 @@
       <uap:VisualElements
         AppListEntry="none"
         DisplayName="Wino Mail"
+        ToastCapable="true"
         Description="Wino Mail notification host"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\MailAssets\Square150x150Logo.png"
@@ -218,6 +243,9 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="Wino.Mail.NotificationHost.exe">
+          <desktop:FullTrustProcess />
+        </desktop:Extension>
       </Extensions>
     </Application>
 
@@ -227,6 +255,7 @@
       <uap:VisualElements
         AppListEntry="none"
         DisplayName="Wino Calendar"
+        ToastCapable="true"
         Description="Wino Calendar notification host"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\CalendarAssets\Square150x150Logo.png"
@@ -244,6 +273,9 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="Wino.Calendar.NotificationHost.exe">
+          <desktop:FullTrustProcess />
+        </desktop:Extension>
       </Extensions>
     </Application>
 
@@ -253,6 +285,7 @@
       <uap:VisualElements
         AppListEntry="none"
         DisplayName="Wino People"
+        ToastCapable="true"
         Description="Wino People notification host"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\PeopleAssets\Square150x150Logo.png"
@@ -270,6 +303,9 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="Wino.People.NotificationHost.exe">
+          <desktop:FullTrustProcess />
+        </desktop:Extension>
       </Extensions>
     </Application>
 
@@ -279,6 +315,7 @@
       <uap:VisualElements
         AppListEntry="none"
         DisplayName="Wino To Do"
+        ToastCapable="true"
         Description="Wino To Do notification host"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\AppEntries\ToDoAssets\Square150x150Logo.png"
@@ -296,6 +333,9 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="Wino.Tasks.NotificationHost.exe">
+          <desktop:FullTrustProcess />
+        </desktop:Extension>
       </Extensions>
     </Application>
   </Applications>

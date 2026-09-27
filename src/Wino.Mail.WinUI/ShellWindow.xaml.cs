@@ -47,7 +47,6 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     IRecipient<WinoIntelligenceAccessChanged>,
     IRecipient<WinoIntelligenceEntitlementChanged>,
     IRecipient<WhatsNewOpened>,
-    IRecipient<WhatsNewOpenRequested>,
     IRecipient<AccountSynchronizationProgressUpdatedMessage>
 {
     private bool _allowClose;
@@ -56,10 +55,10 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     public INavigationService NavigationService { get; } = WinoApplication.Current.Services.GetService<INavigationService>() ?? throw new Exception("NavigationService not registered in DI container.");
     private IMailDialogService MailDialogService { get; } = WinoApplication.Current.Services.GetRequiredService<IMailDialogService>();
     private IWinoAccountProfileService WinoAccountProfileService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoAccountProfileService>();
-    private IWinoAccountIntelligenceSnapshotService EntitlementService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoAccountIntelligenceSnapshotService>();
+    private IWinoIntelligenceEntitlementService EntitlementService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoIntelligenceEntitlementService>();
     private ILocalIntelligenceService LocalIntelligenceService { get; } = WinoApplication.Current.Services.GetRequiredService<ILocalIntelligenceService>();
     private IWhatsNewService WhatsNewService { get; } = WinoApplication.Current.Services.GetRequiredService<IWhatsNewService>();
-    private IWinoWindowManager WindowManager { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoWindowManager>();
+    private IWhatsNewWindowLauncher WhatsNewWindowLauncher { get; } = WinoApplication.Current.Services.GetRequiredService<IWhatsNewWindowLauncher>();
 
     private bool _calendarReminderServerStartAttempted;
     private ITitleBarSearchHost? _activeTitleBarSearchHost;
@@ -98,7 +97,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         ApplyShellSynchronizationProvider();
         _ = RefreshDailyBriefingStateAsync();
         _ = RefreshWhatsNewButtonAsync();
-        _ = EntitlementService.RefreshEntitlementAsync();
+        _ = EntitlementService.RefreshAsync();
 
         // Handle window closing event for terminate vs background/tray behavior.
         Closed += OnWindowClosed;
@@ -349,18 +348,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     }
 
     private async void WhatsNewButtonClicked(object sender, RoutedEventArgs e)
-        => await ShowWhatsNewAsync();
-
-    public async void Receive(WhatsNewOpenRequested message)
-        => await ShowWhatsNewAsync();
-
-    private async Task ShowWhatsNewAsync()
-    {
-        await WindowManager.ShowThemedWindowAsync(WinoWindowKind.WhatsNew, () => new WhatsNewWindow());
-
-        WhatsNewService.MarkOpenedForCurrentVersion();
-        WeakReferenceMessenger.Default.Send(new WhatsNewOpened());
-    }
+        => await WhatsNewWindowLauncher.ShowAsync();
 
     private async void DailyBriefingToggleButtonClicked(object sender, RoutedEventArgs e)
     {
@@ -375,7 +363,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     {
         try
         {
-            var entitlement = await EntitlementService.GetEntitlementAsync().ConfigureAwait(false);
+            var entitlement = await EntitlementService.GetAsync().ConfigureAwait(false);
             var hasAccess = entitlement.CanAccessSurfaces;
             var eligible = hasAccess
                 ? await LocalIntelligenceService.GetEligibleAccountsAsync().ConfigureAwait(false)
@@ -604,8 +592,6 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         if (_allowClose || app?.IsExiting == true)
             return;
 
-        // Snapshot the preference once so a single close request cannot take different branches
-        // before and after asynchronous draft/compose confirmation.
         var closeBehavior = PreferencesService.AppCloseBehavior;
 
         if (app?.TryExitApplicationOnShellWindowClose(closeBehavior) == true)
@@ -623,13 +609,16 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
-            if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
-                return;
+            if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
+                or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+            {
+                if (app is null || !await app.StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true))
+                    return;
+            }
 
             PrepareForClose();
-
-            // PrepareForClose removes this handler and permits the real close. The managed
-            // app and tray keep running, but this HWND and its complete XAML tree do not.
+            // No WinUI lifetime window is retained in background mode. BackgroundSyncHost owns
+            // synchronization after the interactive process exits.
             Close();
         }
         finally
@@ -939,7 +928,6 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         WeakReferenceMessenger.Default.Register<WinoIntelligenceAccessChanged>(this);
         WeakReferenceMessenger.Default.Register<WinoIntelligenceEntitlementChanged>(this);
         WeakReferenceMessenger.Default.Register<WhatsNewOpened>(this);
-        WeakReferenceMessenger.Default.Register<WhatsNewOpenRequested>(this);
         WeakReferenceMessenger.Default.Register<AccountSynchronizationProgressUpdatedMessage>(this);
     }
 
@@ -955,7 +943,6 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         WeakReferenceMessenger.Default.Unregister<WinoIntelligenceAccessChanged>(this);
         WeakReferenceMessenger.Default.Unregister<WinoIntelligenceEntitlementChanged>(this);
         WeakReferenceMessenger.Default.Unregister<WhatsNewOpened>(this);
-        WeakReferenceMessenger.Default.Unregister<WhatsNewOpenRequested>(this);
         WeakReferenceMessenger.Default.Unregister<AccountSynchronizationProgressUpdatedMessage>(this);
     }
 

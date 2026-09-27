@@ -12,14 +12,21 @@ public static class NotificationHostRuntime
 
     public static int Run(string[] args)
     {
-        WinRT.ComWrappersSupport.InitializeComWrappers();
+        NotificationHostLogger.Write("startup", exception: null);
 
         try
         {
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+            NotificationHostLogger.Write("winrt-initialized");
+
             var package = Package.Current;
             ReleaseIdentity.Initialize(package.InstalledLocation.Path, package.Id.Name, package.Id.Publisher, package.Id.FamilyName);
+            NotificationHostLogger.Write("identity-initialized");
 
             var localCachePath = ApplicationData.Current.LocalCacheFolder.Path;
+            NotificationHostLogger.Write(
+                "package",
+                message: $"Package={package.Id.Name}; AUMID={CurrentAppIdentity.GetAppUserModelId()}; LocalCache={localCachePath}");
             _ = NotificationHostFileStore.CleanupStaleFiles(localCachePath, StaleEnvelopeAge);
 
             if (Environment.CommandLine.Contains(AppNotificationActivatedCommandLinePrefix, StringComparison.OrdinalIgnoreCase))
@@ -28,7 +35,9 @@ public static class NotificationHostRuntime
             if (!TryParseRequestId(args, out var requestId))
                 throw new ArgumentException("Notification host requires a valid request ID.");
 
+            NotificationHostLogger.Write("request-parsed", requestId);
             ProcessRequest(localCachePath, requestId);
+            NotificationHostLogger.Write("request-completed", requestId);
             return 0;
         }
         catch (Exception ex)
@@ -42,8 +51,13 @@ public static class NotificationHostRuntime
     {
         try
         {
+            NotificationHostLogger.Write("request-reading", requestId);
             var request = NotificationHostFileStore.ReadRequest(localCachePath, requestId);
             var currentAppUserModelId = CurrentAppIdentity.GetAppUserModelId();
+            NotificationHostLogger.Write(
+                "request-read",
+                requestId,
+                message: $"AUMID={currentAppUserModelId}; Application={request.Application}; Operation={request.Operation}");
 
             if (!NotificationHostApplicationIds.TryResolveFromAppUserModelId(currentAppUserModelId, out var currentApplication) ||
                 currentApplication != request.Application)
@@ -51,8 +65,29 @@ public static class NotificationHostRuntime
                 throw new InvalidDataException("The notification request does not match the current application identity.");
             }
 
-            ExecuteRequest(AppNotificationManager.Default, request);
-            NotificationHostLogger.Write(request.Operation.ToString(), requestId);
+            var notificationManager = AppNotificationManager.Default;
+            NotificationHostLogger.Write("register-start", requestId);
+            notificationManager.Register();
+            NotificationHostLogger.Write("register-complete", requestId);
+
+            try
+            {
+                NotificationHostLogger.Write("execute-start", requestId);
+                ExecuteRequest(notificationManager, request);
+                NotificationHostLogger.Write(request.Operation.ToString(), requestId);
+                NotificationHostLogger.Write("execute-complete", requestId);
+            }
+            finally
+            {
+                try
+                {
+                    notificationManager.Unregister();
+                }
+                catch (Exception ex)
+                {
+                    NotificationHostLogger.Write("unregister-failed", requestId, ex);
+                }
+            }
         }
         finally
         {
