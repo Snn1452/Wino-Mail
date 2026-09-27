@@ -28,7 +28,7 @@
                     AutomationProperties.Name="{x:Bind Label}"
                     Background="Transparent"
                     BorderThickness="0"
-                    Command="{Binding ElementName=Root, Path=ViewModel.ToggleOptionCommand}"
+                    Click="ColorOptionButton_Click"
                     CommandParameter="{x:Bind}">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
@@ -80,6 +80,7 @@
                         <coreControls:WinoFontIcon
                             Grid.Column="3"
                             VerticalAlignment="Center"
+                            FontFamily="{ThemeResource WinoIconFontFamily}"
                             FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Icon="ChevronRight"
@@ -87,6 +88,7 @@
                         <coreControls:WinoFontIcon
                             Grid.Column="3"
                             VerticalAlignment="Center"
+                            FontFamily="{ThemeResource WinoIconFontFamily}"
                             FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Icon="ChevronDown"
@@ -162,7 +164,7 @@
                                 <Button
                                     VerticalAlignment="Center"
                                     AutomationProperties.AutomationId="ApplicationThemeEditorResetColorButton"
-                                    Command="{Binding ElementName=Root, Path=ViewModel.ResetColorCommand}"
+                                    Click="ResetColorButton_Click"
                                     CommandParameter="{x:Bind}"
                                     Content="{x:Bind domain:Translator.ApplicationThemeEditor_ResetToDefault, Mode=OneTime}"
                                     IsEnabled="{x:Bind IsOverridden, Mode=OneWay}" />
@@ -179,6 +181,7 @@
                                 Spacing="8"
                                 Visibility="{x:Bind local:ApplicationThemeEditorPage.GetContrastPassVisibility(HasContrastReport, IsContrastSufficient), Mode=OneWay}">
                                 <coreControls:WinoFontIcon
+                                    FontFamily="{ThemeResource WinoIconFontFamily}"
                                     FontSize="14"
                                     Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                                     Icon="Checkmark" />
@@ -194,6 +197,7 @@
                                 Spacing="8"
                                 Visibility="{x:Bind local:ApplicationThemeEditorPage.GetContrastWarningVisibility(HasContrastReport, IsContrastSufficient), Mode=OneWay}">
                                 <coreControls:WinoFontIcon
+                                    FontFamily="{ThemeResource WinoIconFontFamily}"
                                     FontSize="14"
                                     Foreground="{ThemeResource SystemFillColorCautionBrush}"
                                     Icon="Warning" />
@@ -571,7 +575,7 @@
                                     Padding="6"
                                     AutomationProperties.AutomationId="ApplicationThemeEditorPresetButton"
                                     AutomationProperties.Name="{x:Bind Name}"
-                                    Command="{Binding ElementName=Root, Path=ViewModel.ApplyBasePresetCommand}"
+                                    Click="BasePresetButton_Click"
                                     CommandParameter="{x:Bind}">
                                     <StackPanel Spacing="6">
                                         <Grid

@@ -14,6 +14,7 @@ using Wino.Core.Domain.Entities.Mail;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Exceptions;
+using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.MenuItems;
 using Wino.Core.Domain.Models;
@@ -85,17 +86,15 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
     private readonly IUnreadBadgeService _unreadBadgeService;
     private readonly IMailCategoryService _mailCategoryService;
     private readonly IConfigurationService _configurationService;
-    private readonly IStartupBehaviorService _startupBehaviorService;
     private readonly IAccountService _accountService;
     private readonly IContextMenuItemService _contextMenuItemService;
-    private readonly IStoreRatingService _storeRatingService;
-    private readonly ILaunchProtocolService _launchProtocolService;
+    private readonly IMicrosoftStoreService _storeService;
+    private readonly IActivationStateService _activationStateService;
     private readonly INotificationBuilder _notificationBuilder;
     private readonly IWinoRequestDelegator _winoRequestDelegator;
     private readonly IMailDialogService _dialogService;
     private readonly IMimeFileService _mimeFileService;
-    private readonly IWebView2RuntimeValidatorService _webView2RuntimeValidatorService;
-    private readonly IShareActivationService _shareActivationService;
+    private readonly IAccountReauthenticationService _accountReauthenticationService;
 
     private readonly INativeAppService _nativeAppService;
     private readonly IMailService _mailService;
@@ -118,18 +117,16 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
                              IMailCategoryService mailCategoryService,
                              IAccountService accountService,
                              IContextMenuItemService contextMenuItemService,
-                             IStoreRatingService storeRatingService,
+                             IMicrosoftStoreService storeService,
                              IPreferencesService preferencesService,
-                             ILaunchProtocolService launchProtocolService,
+                             IActivationStateService activationStateService,
                              INotificationBuilder notificationBuilder,
                              IWinoRequestDelegator winoRequestDelegator,
                              IFolderService folderService,
                              IUnreadBadgeService unreadBadgeService,
                              IStatePersistanceService statePersistanceService,
                              IConfigurationService configurationService,
-                             IStartupBehaviorService startupBehaviorService,
-                             IWebView2RuntimeValidatorService webView2RuntimeValidatorService,
-                             IShareActivationService shareActivationService)
+                             IAccountReauthenticationService accountReauthenticationService)
     {
         StatePersistenceService = statePersistanceService;
 
@@ -138,7 +135,6 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         NavigationService = navigationService;
 
         _configurationService = configurationService;
-        _startupBehaviorService = startupBehaviorService;
         _mimeFileService = mimeFileService;
         _nativeAppService = nativeAppService;
         _mailService = mailService;
@@ -147,12 +143,11 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         _unreadBadgeService = unreadBadgeService;
         _accountService = accountService;
         _contextMenuItemService = contextMenuItemService;
-        _storeRatingService = storeRatingService;
-        _launchProtocolService = launchProtocolService;
+        _storeService = storeService;
+        _activationStateService = activationStateService;
         _notificationBuilder = notificationBuilder;
         _winoRequestDelegator = winoRequestDelegator;
-        _webView2RuntimeValidatorService = webView2RuntimeValidatorService;
-        _shareActivationService = shareActivationService;
+        _accountReauthenticationService = accountReauthenticationService;
     }
 
     protected override void OnDispatcherAssigned()
@@ -299,7 +294,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         else if (isModeReactivation)
         {
             await RecreateMenuItemsAsync();
-            await RestoreSelectedAccountAfterMenuRefreshAsync(false);
+            await RestoreSelectedAccountAfterMenuRefreshAsync(true);
         }
 
         var shouldProcessDefaultLaunch = !isModeReactivation || !hasExistingAccountMenuItems;
@@ -349,7 +344,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
     private async Task ValidateWebView2RuntimeAsync()
     {
-        var isRuntimeAvailable = await _webView2RuntimeValidatorService.IsRuntimeAvailableAsync();
+        var isRuntimeAvailable = await _nativeAppService.IsWebView2RuntimeAvailableAsync();
 
         if (!isRuntimeAvailable)
         {
@@ -389,7 +384,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
     {
         if (!_configurationService.Get<bool>(IsActivateStartupLaunchAskedKey, false))
         {
-            var currentBehavior = await _startupBehaviorService.GetCurrentStartupBehaviorAsync();
+            var currentBehavior = await _nativeAppService.GetCurrentStartupBehaviorAsync();
 
             // User somehow already enabled Wino before the first launch.
             if (currentBehavior == StartupBehaviorResult.Enabled)
@@ -408,7 +403,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
             if (isAccepted)
             {
-                var behavior = await _startupBehaviorService.ToggleStartupBehavior(true);
+                var behavior = await _nativeAppService.ToggleStartupBehavior(true);
 
                 shouldDisplayLaterOnMessage = behavior != StartupBehaviorResult.Enabled;
             }
@@ -456,11 +451,11 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
             // Check whether we have saved navigation item from toast.
 
-            bool hasToastActivation = _launchProtocolService.LaunchParameter != null;
+            bool hasToastActivation = _activationStateService.LaunchParameter != null;
 
             if (hasToastActivation)
             {
-                if (_launchProtocolService.LaunchParameter is AccountMenuItemExtended accountExtendedMessage)
+                if (_activationStateService.LaunchParameter is AccountMenuItemExtended accountExtendedMessage)
                 {
                     // Find the account that this folder and mail belongs to.
                     var account = await _mailService.GetMailAccountByUniqueIdAsync(accountExtendedMessage.NavigateMailItem.UniqueId);
@@ -471,7 +466,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
                         WeakReferenceMessenger.Default.Send(accountExtendedMessage);
 
-                        _launchProtocolService.LaunchParameter = null;
+                        _activationStateService.LaunchParameter = null;
                     }
                     else
                     {
@@ -481,7 +476,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
             }
             else
             {
-                bool hasMailtoActivation = _launchProtocolService.MailToUri != null;
+                bool hasMailtoActivation = _activationStateService.MailToUri != null;
 
                 if (hasMailtoActivation)
                 {
@@ -859,6 +854,31 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         }
     }
 
+    public async Task MarkAccountInboxesAsReadAsync(IAccountMenuItem accountMenuItem)
+    {
+        if (accountMenuItem?.HoldingAccounts == null)
+            return;
+
+        foreach (var account in accountMenuItem.HoldingAccounts.ToList())
+        {
+            try
+            {
+                var inbox = await _folderService.GetSpecialFolderByAccountIdAsync(account.Id, SpecialFolderType.Inbox);
+                if (inbox == null)
+                {
+                    Log.Warning("Mark all as read skipped account {AccountId}: no Inbox folder is configured.", account.Id);
+                    continue;
+                }
+
+                await _winoRequestDelegator.ExecuteAsync(new FolderOperationPreperationRequest(FolderOperation.MarkAllAsRead, inbox));
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to mark the Inbox of account {AccountId} as read.", account.Id);
+            }
+        }
+    }
+
     public async Task CreateRootFolderAsync(IAccountMenuItem accountMenuItem)
     {
         var account = accountMenuItem?.HoldingAccounts?.FirstOrDefault();
@@ -909,28 +929,25 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
     {
         try
         {
+            // Expired Gmail/Outlook credentials and enabled contacts or To Do waiting for provider
+            // consent share one sign-in. Sign-in alone leaves a restored account without its profile
+            // picture, folders, aliases and non-mail data, so the post-authentication work of
+            // account setup is replayed too.
+            if (account.CanBeFixedBySigningIn())
+            {
+                await _accountReauthenticationService.ReauthenticateAsync(account.Id);
+
+                _dialogService.InfoBarMessage(
+                    Translator.Info_AccountIssueFixSuccessTitle,
+                    Translator.Info_AccountIssueFixSuccessMessage,
+                    InfoBarMessageType.Success);
+
+                await _accountReauthenticationService.SynchronizeAfterReauthenticationAsync(account.Id);
+                return;
+            }
+
             if (account.AttentionReason is AccountAttentionReason.InvalidCredentials or AccountAttentionReason.CertificateValidationFailed)
             {
-                if (account.AttentionReason == AccountAttentionReason.InvalidCredentials &&
-                    (account.ProviderType is MailProviderType.Gmail or MailProviderType.Outlook))
-                {
-                    await SynchronizationManager.Instance.HandleAuthorizationAsync(
-                        account.ProviderType,
-                        account,
-                        account.ProviderType == MailProviderType.Gmail,
-                        forceInteractive: true);
-
-                    await _accountService.ClearAccountAttentionAsync(account.Id);
-
-                    _dialogService.InfoBarMessage(
-                        Translator.Info_AccountIssueFixSuccessTitle,
-                        Translator.Info_AccountIssueFixSuccessMessage,
-                        InfoBarMessageType.Success);
-
-                    TriggerFullSynchronization(account);
-                    return;
-                }
-
                 NavigationService.Navigate(WinoPage.SettingsPage, WinoPage.ManageAccountsPage);
                 Messenger.Send(new BreadcrumbNavigationRequested(
                     Translator.ImapCalDavSettingsPage_TitleEdit,
@@ -980,7 +997,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         }
         else if (clickedMenuItem is RateMenuItem)
         {
-            await _storeRatingService.LaunchStorePageForReviewAsync();
+            await _storeService.LaunchStorePageForReviewAsync();
         }
         else if (clickedMenuItem is NewMailMenuItem)
         {
@@ -993,7 +1010,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
             // Theory: This is a special folder like Categories or More. Don't navigate to it.
 
             // Prompt user rating dialog if eligible.
-            _ = _storeRatingService.PromptRatingDialogAsync();
+            _ = _storeService.PromptRatingDialogAsync();
 
             await NavigateFolderAsync(baseFolderMenuItem);
         }
@@ -1183,12 +1200,43 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         if (inboxFolder != null)
         {
             await NavigateFolderAsync(inboxFolder, folderInitAwaitTask);
+            return;
         }
+
+        await NavigateToAccountIdleStateAsync(clickedBaseAccountMenuItem);
+    }
+
+    /// <summary>
+    /// An account restored from a backup has no folders until it is signed in and synced.
+    /// Mail mode must still land a page: the shell publishes the account list only when a
+    /// page arrives, and an empty frame keeps showing whatever the previous mode left.
+    /// </summary>
+    private async Task NavigateToAccountIdleStateAsync(IAccountMenuItem accountMenuItem)
+    {
+        var accounts = accountMenuItem.HoldingAccounts?.ToList() ?? [];
+        if (accounts.Count == 0)
+            return;
+
+        var account = accounts.FirstOrDefault(a => a.AttentionReason != AccountAttentionReason.None) ?? accounts[0];
+        var state = new MailAccountIdleState(
+            account.Id,
+            string.IsNullOrWhiteSpace(account.Name) ? account.Address : account.Name,
+            account.AttentionReason != AccountAttentionReason.None);
+
+        await ExecuteUIThread(() =>
+        {
+            SelectedMenuItem = null;
+            NavigationService.Navigate(
+                WinoPage.IdlePage,
+                state,
+                NavigationReferenceFrame.InnerShellFrame,
+                NavigationTransitionType.None);
+        }).ConfigureAwait(false);
     }
 
     public async Task HandleCreateNewMailAsync()
     {
-        _ = _storeRatingService.PromptRatingDialogAsync();
+        _ = _storeService.PromptRatingDialogAsync();
 
         MailAccount operationAccount = null;
 
@@ -1280,6 +1328,28 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
             if (draftFolder == null)
             {
+                // An account restored from a backup, or one whose sign-in expired, has no
+                // folders yet. Configuring special folders cannot help there; signing in can.
+                if (Wino.Core.Domain.Models.Accounts.AppModeReadiness.NeedsSignIn(account, WinoApplicationMode.Mail))
+                {
+                    var accountName = string.IsNullOrWhiteSpace(account.Name) ? account.Address : account.Name;
+                    _dialogService.InfoBarMessage(string.Format(Translator.MailAccountIdle_SignInTitle, accountName),
+                                                 Translator.AppModeReadiness_Mail_SignInMessage,
+                                                 InfoBarMessageType.Warning,
+                                                 Translator.MailAccountIdle_SignIn,
+                                                 () => _ = HandleAccountAttentionAsync(account));
+                    return;
+                }
+
+                var accountFolders = await _folderService.GetFoldersAsync(account.Id);
+                if (accountFolders == null || accountFolders.Count == 0)
+                {
+                    _dialogService.InfoBarMessage(Translator.AppModeReadiness_Mail_WaitingTitle,
+                                                 Translator.AppModeReadiness_Mail_WaitingMessage,
+                                                 InfoBarMessageType.Information);
+                    return;
+                }
+
                 _dialogService.InfoBarMessage(Translator.Info_DraftFolderMissingTitle,
                                              Translator.Info_DraftFolderMissingMessage,
                                              InfoBarMessageType.Error,
@@ -1304,7 +1374,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
             var draftOptions = new DraftCreationOptions
             {
                 Reason = DraftCreationReason.Empty,
-                MailToUri = _launchProtocolService.MailToUri
+                MailToUri = _activationStateService.MailToUri
             };
 
             try
@@ -1313,7 +1383,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
                 if (shareRequest?.Files?.Count > 0)
                 {
-                    _shareActivationService.StagePendingComposeShareRequest(draftMailCopy.UniqueId, shareRequest);
+                    _activationStateService.StagePendingComposeShareRequest(draftMailCopy.UniqueId, shareRequest);
                 }
 
                 var draftPreparationRequest = new DraftPreparationRequest(account, draftMailCopy, draftBase64MimeMessage, draftOptions.Reason);
@@ -1363,7 +1433,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
     private async Task HandleMailToProtocolMessageAsync()
     {
-        var mailToUri = _launchProtocolService.MailToUri;
+        var mailToUri = _activationStateService.MailToUri;
         if (mailToUri == null)
             return;
 
@@ -1400,16 +1470,16 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         }
         finally
         {
-            if (ReferenceEquals(_launchProtocolService.MailToUri, mailToUri))
+            if (ReferenceEquals(_activationStateService.MailToUri, mailToUri))
             {
-                _launchProtocolService.MailToUri = null;
+                _activationStateService.MailToUri = null;
             }
         }
     }
 
     public async Task HandlePendingShareRequestAsync()
     {
-        var shareRequest = _shareActivationService.ConsumePendingShareRequest();
+        var shareRequest = _activationStateService.ConsumePendingShareRequest();
 
         if (shareRequest?.Files == null || shareRequest.Files.Count == 0)
             return;
@@ -1831,15 +1901,6 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         }
 
         await ChangeLoadedAccountAsync(createdMenuItem);
-
-        try
-        {
-            await _nativeAppService.PinAppToTaskbarAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to pin Wino to taskbar.");
-        }
     }
 
     public async void Receive(AccountUpdatedMessage message)

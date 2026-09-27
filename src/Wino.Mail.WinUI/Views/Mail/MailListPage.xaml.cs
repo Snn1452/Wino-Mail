@@ -105,7 +105,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     private IContactService ContactService { get; } = WinoApplication.Current.Services.GetRequiredService<IContactService>();
     private IFolderService FolderService { get; } = WinoApplication.Current.Services.GetRequiredService<IFolderService>();
-    private IWinoIntelligenceEntitlementService EntitlementService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoIntelligenceEntitlementService>();
+    private IWinoAccountIntelligenceSnapshotService EntitlementService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoAccountIntelligenceSnapshotService>();
     private IMailDialogService MailDialogService { get; } = WinoApplication.Current.Services.GetRequiredService<IMailDialogService>();
     private IKeyboardShortcutService KeyboardShortcutService { get; } = WinoApplication.Current.Services.GetRequiredService<IKeyboardShortcutService>();
 
@@ -224,7 +224,9 @@ public sealed partial class MailListPage : MailListPageAbstract,
         SelectionModeToggle.IsChecked = false;
 
         MailListView.ClearSelection();
-        await MailListView.WaitForSelectionSyncAsync();
+
+        // The page can be torn down while the selection settles, e.g. when switching app modes.
+        if (!await MailListView.WaitForSelectionSyncAsync()) return;
 
         UpdateSelectAllButtonStatus();
         ViewModel.SelectedPivotChangedCommand.Execute(ViewModel.SelectedFolderPivot);
@@ -845,7 +847,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     private async Task RefreshIntelligenceEntitlementAsync()
     {
-        var entitlement = await EntitlementService.GetAsync().ConfigureAwait(false);
+        var entitlement = await EntitlementService.GetEntitlementAsync().ConfigureAwait(false);
         DispatcherQueue.TryEnqueue(async () => await ApplyIntelligenceEntitlementAsync(entitlement.CanAccessSurfaces));
     }
 

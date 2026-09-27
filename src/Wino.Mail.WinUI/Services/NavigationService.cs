@@ -20,7 +20,7 @@ using Wino.Views.Mail;
 
 namespace Wino.Services;
 
-public class NavigationService : NavigationServiceBase, INavigationService
+public class NavigationService : INavigationService
 {
     private readonly IStatePersistanceService _statePersistanceService;
     private readonly IDispatcher _dispatcher;
@@ -604,7 +604,7 @@ public class NavigationService : NavigationServiceBase, INavigationService
         // Detail pages keep the menu their mode root published, so drilling into one does
         // not blank the navigation pane.
         if (innerShellFrame.Content is not BasePage page ||
-            page.AssociatedViewModel is not IShellMenuOwner menuOwner)
+            page.AssociatedViewModel is not IShellMenuOwner { ShellMenuProvider: not null } menuOwner)
         {
             return;
         }
@@ -626,4 +626,14 @@ public class NavigationService : NavigationServiceBase, INavigationService
     }
 
     #endregion
+
+    private static NavigationTransitionInfo GetNavigationTransitionInfo(NavigationTransitionType transition)
+    {
+        return transition switch
+        {
+            NavigationTransitionType.DrillIn => new DrillInNavigationTransitionInfo(),
+            NavigationTransitionType.Entrance => new EntranceNavigationTransitionInfo(),
+            _ => new SuppressNavigationTransitionInfo(),
+        };
+    }
 }

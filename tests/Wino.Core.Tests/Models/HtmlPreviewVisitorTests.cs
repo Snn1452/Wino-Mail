@@ -50,6 +50,38 @@ public class HtmlPreviewVisitorTests
     }
 
     [Fact]
+    public void HtmlPreviewVisitor_Should_Keep_Only_Color_Scheme_Meta_Tags()
+    {
+        var html = """
+            <html>
+                <head>
+                    <meta name="color-scheme" content="light dark">
+                    <meta name="supported-color-schemes" content="light dark" data-extra="dropped">
+                    <meta http-equiv="refresh" content="0; url=https://malicious.example">
+                    <meta name="color-scheme" http-equiv="refresh" content="light dark">
+                    <meta name="viewport" content="width=device-width">
+                    <meta name="color-scheme" content="light; url=https://malicious.example">
+                </head>
+                <body><p>hello</p></body>
+            </html>
+            """;
+
+        var message = new MimeMessage();
+        message.Body = new TextPart("html") { Text = html };
+
+        var visitor = new HtmlPreviewVisitor(Path.GetTempPath());
+        message.Accept(visitor);
+        var output = visitor.HtmlBody;
+
+        output.Should().Contain("name=\"color-scheme\" content=\"light dark\"", "the sender's color-scheme hint drives dark-mode rendering");
+        output.Should().Contain("name=\"supported-color-schemes\" content=\"light dark\"", "the legacy Apple Mail hint is kept without extra attributes");
+        output.Should().NotContain("http-equiv", "meta refresh and other pragma directives must never reach the renderer");
+        output.Should().NotContain("viewport", "unrelated meta tags stay blocked");
+        output.Should().NotContain("malicious.example", "a hint with anything but scheme keywords is dropped");
+        output.Should().NotContain("data-extra", "only the name and content attributes are written");
+    }
+
+    [Fact]
     public void HtmlPreviewVisitor_Should_Sanitize_Dangerous_Url_Attributes()
     {
         // Arrange
@@ -396,6 +428,80 @@ public class HtmlPreviewVisitorTests
 
         // Assert
         accessibilityName.Should().Be("Better inbox. Mail actions are easier to find.");
+    }
+
+    [Fact]
+    public void HtmlPreviewVisitor_Should_Render_OpenPgp_Signed_Message_Without_Registered_Context()
+    {
+        // Issue #1083: mailbox.org sends PGP/MIME signed mail. Wino registers no OpenPGP context,
+        // so the visitor must render the clear-text part instead of asking MimeKit to verify it.
+        const string raw = """
+            From: support@mailbox.example
+            To: user@wino.test
+            Subject: Welcome
+            MIME-Version: 1.0
+            Content-Type: multipart/signed; micalg=pgp-sha256; protocol="application/pgp-signature"; boundary="sig"
+
+            --sig
+            Content-Type: text/html; charset=utf-8
+
+            <html><body><p>Welcome to your mailbox</p></body></html>
+            --sig
+            Content-Type: application/pgp-signature; name="signature.asc"
+            Content-Disposition: attachment; filename="signature.asc"
+
+            -----BEGIN PGP SIGNATURE-----
+
+            iQEzBAEBCAAdFiEEAAAAAAAAAAAAAAAAAAAAAAAAAAAFAmAAAAAACgkQAAAAAAAA
+            -----END PGP SIGNATURE-----
+            --sig--
+            """;
+
+        var message = MimeMessage.Load(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(raw.ReplaceLineEndings("\r\n"))));
+        message.Body.Should().BeOfType<MultipartSigned>();
+
+        var visitor = new HtmlPreviewVisitor(Path.GetTempPath());
+
+        var accept = () => message.Accept(visitor);
+
+        accept.Should().NotThrow("an unverifiable OpenPGP signature must not block rendering");
+        visitor.HtmlBody.Should().Contain("Welcome to your mailbox");
+        visitor.Signatures.Should().BeEmpty("OpenPGP signatures are not verified");
+        visitor.CryptographyErrors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void HtmlPreviewVisitor_Should_Not_Throw_For_OpenPgp_Encrypted_Message()
+    {
+        const string raw = """
+            From: support@mailbox.example
+            To: user@wino.test
+            Subject: Invoice
+            MIME-Version: 1.0
+            Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="enc"
+
+            --enc
+            Content-Type: application/pgp-encrypted
+
+            Version: 1
+            --enc
+            Content-Type: application/octet-stream; name="encrypted.asc"
+
+            -----BEGIN PGP MESSAGE-----
+
+            hQEMAAAAAAAAAAAAAQf/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+            -----END PGP MESSAGE-----
+            --enc--
+            """;
+
+        var message = MimeMessage.Load(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(raw.ReplaceLineEndings("\r\n"))));
+        message.Body.Should().BeOfType<MultipartEncrypted>();
+
+        var visitor = new HtmlPreviewVisitor(Path.GetTempPath());
+
+        var accept = () => message.Accept(visitor);
+
+        accept.Should().NotThrow("Wino cannot decrypt OpenPGP mail, but it must still open it");
     }
 
     private static X509Certificate2 CreateSigningCertificate()

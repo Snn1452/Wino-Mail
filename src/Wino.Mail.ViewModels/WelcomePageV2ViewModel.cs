@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -12,7 +10,6 @@ using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Navigation;
-using Wino.Core.Domain.Models.WhatsNew;
 using Wino.Mail.ViewModels.Data;
 using Wino.Messaging.Client.Navigation;
 using Wino.Messaging.UI;
@@ -21,12 +18,8 @@ namespace Wino.Mail.ViewModels;
 
 public partial class WelcomePageV2ViewModel : MailBaseViewModel
 {
-    private readonly IWhatsNewService _whatsNewService;
     private readonly IMailDialogService _dialogService;
     private readonly IWinoAccountDataSyncService _syncService;
-
-    [ObservableProperty]
-    public partial List<WhatsNewFeature> UpdateSections { get; set; } = [];
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(GetStartedCommand))]
@@ -40,29 +33,11 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
 
     public bool HasImportStatus => !string.IsNullOrWhiteSpace(ImportStatusMessage);
 
-    public WelcomePageV2ViewModel(IWhatsNewService whatsNewService,
-                                  IMailDialogService dialogService,
+    public WelcomePageV2ViewModel(IMailDialogService dialogService,
                                   IWinoAccountDataSyncService syncService)
     {
-        _whatsNewService = whatsNewService;
         _dialogService = dialogService;
         _syncService = syncService;
-    }
-
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
-    {
-        base.OnNavigatedTo(mode, parameters);
-
-        try
-        {
-            var releases = await _whatsNewService.GetReleasesAsync().ConfigureAwait(false);
-            var latestFeatures = releases.Count > 0 ? releases[0].Features : [];
-            await ExecuteUIThread(() => UpdateSections = latestFeatures);
-        }
-        catch (Exception)
-        {
-            await ExecuteUIThread(() => UpdateSections = []);
-        }
     }
 
     [RelayCommand(CanExecute = nameof(CanOpenWelcomeActions))]
@@ -90,11 +65,16 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
 
             await ExecuteUIThread(() => IsImportInProgress = true);
 
-            var result = await _syncService.ImportAsync(new WinoAccountSyncSelection()).ConfigureAwait(false);
+            var result = await _syncService.ImportAsync(new WinoAccountSyncSelection(), PromptSyncSecretAsync).ConfigureAwait(false);
             if (result.ImportedMailboxCount > 0)
             {
-                ReportUIChange(new WelcomeImportCompletedMessage(result.ImportedMailboxCount));
+                ReportUIChange(new WelcomeImportCompletedMessage(result.ImportedMailboxCount, result.Appearance));
                 return;
+            }
+
+            if (result.Appearance != null)
+            {
+                await ExecuteUIThread(() => _syncService.ApplyAppearance(result.Appearance));
             }
 
             await ExecuteUIThread(() => ImportStatusMessage = BuildInlineImportMessage(result));
@@ -103,7 +83,7 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
         {
             await ExecuteUIThreadAsync(() =>
                 _dialogService.ShowMessageAsync(
-                    ex.Message,
+                    WinoAccountApiErrorTranslator.Describe(ex),
                     Translator.GeneralTitle_Error,
                     WinoCustomMessageDialogIcon.Error)).ConfigureAwait(false);
         }
@@ -120,7 +100,7 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
 
         try
         {
-            var fileContent = await _dialogService.PickWindowsFileContentAsync(".json");
+            var fileContent = await _dialogService.PickWindowsFileContentAsync(".winosnap", ".json");
             if (fileContent.Length == 0)
             {
                 return;
@@ -128,12 +108,16 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
 
             await ExecuteUIThread(() => IsImportInProgress = true);
 
-            var jsonContent = Encoding.UTF8.GetString(fileContent);
-            var result = await _syncService.ImportFromJsonAsync(jsonContent);
+            var result = await _syncService.ImportFromFileAsync(fileContent, PromptSyncSecretAsync);
             if (result.ImportedMailboxCount > 0)
             {
-                ReportUIChange(new WelcomeImportCompletedMessage(result.ImportedMailboxCount));
+                ReportUIChange(new WelcomeImportCompletedMessage(result.ImportedMailboxCount, result.Appearance));
                 return;
+            }
+
+            if (result.Appearance != null)
+            {
+                await ExecuteUIThread(() => _syncService.ApplyAppearance(result.Appearance));
             }
 
             await ExecuteUIThread(() => ImportStatusMessage = BuildInlineImportMessage(result));
@@ -148,7 +132,7 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
         }
         catch (Exception ex)
         {
-            await _dialogService.ShowMessageAsync(ex.Message, Translator.GeneralTitle_Error, WinoCustomMessageDialogIcon.Error);
+            await _dialogService.ShowMessageAsync(WinoAccountApiErrorTranslator.Describe(ex), Translator.GeneralTitle_Error, WinoCustomMessageDialogIcon.Error);
         }
         finally
         {
@@ -157,6 +141,9 @@ public partial class WelcomePageV2ViewModel : MailBaseViewModel
     }
 
     private bool CanOpenWelcomeActions() => !IsImportInProgress;
+
+    private Task<string?> PromptSyncSecretAsync(SyncSnapshotSecretRequest request)
+        => ExecuteUIThreadAsync(() => _dialogService.ShowWinoAccountSyncSecretDialogAsync(request));
 
     private static string BuildInlineImportMessage(WinoAccountSyncImportResult result)
     {

@@ -50,7 +50,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private readonly ILogger _logger = Log.ForContext<SynchronizationManager>();
 
     private SynchronizerFactory _concreteSynchronizerFactory;
-    private IImapTestService _imapTestService;
+    private IMailServerTestService _mailServerTestService;
     private IAccountService _accountService;
     private IAuthenticationProvider _authenticationProvider;
     private INotificationBuilder _notificationBuilder;
@@ -72,11 +72,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// Note: Synchronizers are created lazily to avoid requiring window handles during app initialization.
     /// </summary>
     /// <param name="synchronizerFactory">Factory for creating synchronizers</param>
-    /// <param name="imapTestService">Service for testing IMAP connectivity</param>
+    /// <param name="mailServerTestService">Service for testing IMAP connectivity</param>
     /// <param name="accountService">Service for account operations</param>
     /// <param name="authenticationProvider">Provider for OAuth authentication</param>
     public async Task InitializeAsync(ISynchronizerFactory synchronizerFactory,
-                                     IImapTestService imapTestService,
+                                     IMailServerTestService mailServerTestService,
                                      IAccountService accountService,
                                      INotificationBuilder notificationBuilder,
                                      IAuthenticationProvider authenticationProvider,
@@ -92,7 +92,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (_isInitialized) return;
 
             _concreteSynchronizerFactory = synchronizerFactory as SynchronizerFactory ?? throw new ArgumentException("SynchronizerFactory must be the concrete implementation");
-            _imapTestService = imapTestService ?? throw new ArgumentNullException(nameof(imapTestService));
+            _mailServerTestService = mailServerTestService ?? throw new ArgumentNullException(nameof(mailServerTestService));
             _accountService = accountService ?? throw new ArgumentNullException(nameof(accountService));
             _authenticationProvider = authenticationProvider ?? throw new ArgumentNullException(nameof(authenticationProvider));
             _notificationBuilder = notificationBuilder ?? throw new ArgumentNullException(nameof(notificationBuilder));
@@ -134,7 +134,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                               serverInformation.IncomingServer,
                               serverInformation.IncomingServerPort);
 
-            await _imapTestService.TestImapConnectionAsync(serverInformation);
+            await _mailServerTestService.TestImapAsync(serverInformation);
 
             _logger.Information("IMAP connectivity test successful");
             return ImapConnectivityTestResults.Success();
@@ -882,7 +882,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (result.Exception is AuthenticationAttentionException authenticationException)
             {
                 var account = authenticationException.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-                if (account is not null)
+                // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
+                if (account is not null && account.ContactIntegrationSource != AccountIntegrationSource.Local)
                 {
                     account.IsContactReauthorizationRequired = true;
                     await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -893,7 +894,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         catch (AuthenticationAttentionException ex)
         {
             var account = ex.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-            if (account is not null)
+            // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
+            if (account is not null && account.ContactIntegrationSource != AccountIntegrationSource.Local)
             {
                 account.IsContactReauthorizationRequired = true;
                 await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -947,7 +949,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             if (result.Exception is AuthenticationAttentionException authenticationException)
             {
                 var account = authenticationException.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-                if (account is not null)
+                // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
+                if (account is not null && account.TaskIntegrationSource != AccountIntegrationSource.Local)
                 {
                     account.IsTaskReauthorizationRequired = true;
                     await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
@@ -970,7 +973,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         catch (AuthenticationAttentionException ex)
         {
             var account = ex.Account ?? await _accountService.GetAccountAsync(options.AccountId).ConfigureAwait(false);
-            if (account is not null)
+            // A local-backed mode has no provider consent to renew, so it never asks for a sign-in.
+            if (account is not null && account.TaskIntegrationSource != AccountIntegrationSource.Local)
             {
                 account.IsTaskReauthorizationRequired = true;
                 await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);

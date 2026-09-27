@@ -170,8 +170,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     [NotifyPropertyChangedFor(nameof(CanChangeIntelligencePreferences))]
     [NotifyPropertyChangedFor(nameof(IsEnabledContentVisible))]
     [NotifyCanExecuteChangedFor(nameof(StartIndexingCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSemanticIndexCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteLocalIntelligenceCommand))]
+    [NotifyCanExecuteChangedFor(nameof(WipeIntelligenceDataCommand))]
     [NotifyPropertyChangedFor(nameof(IsStatusInfoBarVisible))]
     public partial bool IsPageReady { get; set; }
 
@@ -187,8 +186,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     [NotifyPropertyChangedFor(nameof(CanChangeSemanticIndexingState))]
     [NotifyPropertyChangedFor(nameof(CanChangeIntelligencePreferences))]
     [NotifyCanExecuteChangedFor(nameof(StartIndexingCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSemanticIndexCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteLocalIntelligenceCommand))]
+    [NotifyCanExecuteChangedFor(nameof(WipeIntelligenceDataCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelIndexingCommand))]
     [NotifyPropertyChangedFor(nameof(IsStatusInfoBarVisible))]
     public partial bool IsBusy { get; set; }
@@ -200,8 +198,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StartIndexingCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelIndexingCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSemanticIndexCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteLocalIntelligenceCommand))]
+    [NotifyCanExecuteChangedFor(nameof(WipeIntelligenceDataCommand))]
     [NotifyPropertyChangedFor(nameof(CanEditMessageRange))]
     [NotifyPropertyChangedFor(nameof(IsStatusInfoBarVisible))]
     [NotifyPropertyChangedFor(nameof(PlanCardTitle))]
@@ -220,14 +217,6 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     /// <summary>How many jobs for this account are still being processed.</summary>
     [ObservableProperty]
     public partial int ActiveJobCount { get; set; }
-
-    /// <summary>Progress of the Classification decision stage, reported separately from Enrichment.</summary>
-    [ObservableProperty]
-    public partial string ClassificationStageText { get; set; } = string.Empty;
-
-    /// <summary>Progress of the Enrichment stage.</summary>
-    [ObservableProperty]
-    public partial string EnrichmentStageText { get; set; } = string.Empty;
 
     /// <summary>Jobs still in flight, so the screen can show, retry and cancel each one.</summary>
     public ObservableCollection<MailIntelligenceJobState> ActiveJobs { get; } = [];
@@ -277,11 +266,11 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     public partial string StartButtonText { get; set; } = Translator.SemanticIndex_StartButton;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSemanticIndexCommand))]
+    [NotifyCanExecuteChangedFor(nameof(WipeIntelligenceDataCommand))]
     public partial bool HasIndexData { get; set; }
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DeleteLocalIntelligenceCommand))]
+    [NotifyCanExecuteChangedFor(nameof(WipeIntelligenceDataCommand))]
     public partial bool HasLocalIndexData { get; set; }
 
     [ObservableProperty]
@@ -301,28 +290,9 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
 
     public bool HasRemoteRefreshError => !string.IsNullOrWhiteSpace(RemoteRefreshError);
 
-    
-    
-    
-    
-    [ObservableProperty]
-    public partial int ProgressMaximum { get; set; } = 1;
-
-    [ObservableProperty]
-    public partial int ProgressValue { get; set; }
-
-    [ObservableProperty]
-    public partial string ProgressText { get; set; } = string.Empty;
-
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PlanCardDescription))]
     public partial string ProgressSummary { get; set; } = string.Empty;
-
-    [ObservableProperty]
-    public partial int MetadataProgressValue { get; set; }
-
-    [ObservableProperty]
-    public partial string MetadataProgressText { get; set; } = string.Empty;
 
     #region Hero summary
 
@@ -384,10 +354,6 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         ? string.Join(", ", IntelligenceFolderCoverageItems.Select(item => item.DisplayName))
         : Translator.SemanticIndex_FoldersNoneSelected;
 
-    /// <summary>
-    /// The hero already carries the busy message and the healthy state, so the status
-    /// bar is only raised for what the hero cannot say on its own.
-    /// </summary>
     public bool IsIndexingInProgress => JobStatus is
         MailIntelligenceJobStatus.Calculating or
         MailIntelligenceJobStatus.Uploading or
@@ -396,9 +362,15 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     public string StatusInfoBarTitle => IsIndexingInProgress ? Translator.SemanticIndex_IndexingInfoBarTitle : string.Empty;
     public string StatusInfoBarMessage => IsIndexingInProgress ? Translator.SemanticIndex_IndexingInfoBarMessage : StatusMessage;
     public InfoBarMessageType StatusInfoBarType => IsIndexingInProgress ? InfoBarMessageType.Information : StatusType;
+    /// <summary>
+    /// The hero already carries the busy message and the healthy state, and the plan card states
+    /// how many messages are still waiting, so the status bar is only raised for what needs the
+    /// user: consent, errors and a quota pause. Informational status text stays in the hero.
+    /// </summary>
     public bool IsStatusInfoBarVisible => IsPageReady && !IsBusy &&
         (IsIndexingInProgress ||
-         (!string.IsNullOrWhiteSpace(StatusMessage) && StatusType != InfoBarMessageType.Success));
+         (!string.IsNullOrWhiteSpace(StatusMessage) &&
+          StatusType is InfoBarMessageType.Warning or InfoBarMessageType.Error));
     /// <summary>
     /// True when every included folder is set to index its whole history. Each folder now carries
     /// its own rule, so this is the sum of those choices rather than one page-level range.
@@ -627,9 +599,6 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         try
         {
             await SetBusyAsync(true, isEnabled ? Translator.SemanticIndex_OperationEnabling : Translator.SemanticIndex_OperationDisabling);
-
-            if (isEnabled)
-
 
             Account.Preferences.IsSemanticIndexingEnabled = isEnabled;
             await _accountService.UpdateAccountAsync(Account).ConfigureAwait(false);
@@ -899,7 +868,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     }
 
     /// <summary>
-    /// The quota line shows the share of the period's budget used and when it resets.
+    /// The quota line shows how many of the month's intelligence messages are used and when it resets.
     /// </summary>
     private void ApplyQuota(AiUsageStatusDto? usage)
     {
@@ -912,7 +881,8 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
             : string.Format(
                 Translator.Intelligence_QuotaUsage,
                 headline.Used,
-                usage?.ResetsAtUtc is { } resetsAtUtc ? resetsAtUtc.LocalDateTime.ToString("d MMMM") : string.Empty);
+                usage?.ResetsAtUtc is { } resetsAtUtc ? resetsAtUtc.LocalDateTime.ToString("d MMMM") : string.Empty,
+                headline.Limit);
     }
 
     private Task ResetAccountAccessAsync() => ExecuteUIThread(() =>
@@ -966,65 +936,43 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
 
     private bool CanCancelIndexing() => IsJobActive;
 
-    private bool CanDeleteLocalIntelligence()
-        => IsPageReady && !IsBusy && !IsJobActive && HasLocalIndexData;
+    /// <summary>
+    /// Intelligence results exist only on this device and the server keeps no copy, so wiping is a
+    /// purely local operation with nothing to restore from afterwards.
+    /// </summary>
+    private bool CanWipeIntelligenceData()
+        => IsPageReady && !IsBusy && !IsJobActive && (HasLocalIndexData || HasIndexData);
 
-    [RelayCommand(CanExecute = nameof(CanDeleteLocalIntelligence))]
-    private async Task DeleteLocalIntelligenceAsync()
+    [RelayCommand(CanExecute = nameof(CanWipeIntelligenceData))]
+    private async Task WipeIntelligenceDataAsync()
     {
         if (Account is null)
             return;
 
-        try
-        {
-            await SetBusyAsync(true, Translator.SemanticIndex_OperationDeleting);
-            await _coordinator.DeleteLocalIntelligenceAsync(Account.Id).ConfigureAwait(false);
-            await ExecuteUIThread(() =>
-            {
-                HasLocalIndexData = false;
-                HasIndexData = false;
-                IndexedMessageCount = 0;
-            });
-            await RefreshLocalIndexStateAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            await ShowErrorAsync(exception);
-        }
-        finally
-        {
-            await SetBusyAsync(false);
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanDeleteSemanticIndex))]
-    private async Task DeleteSemanticIndexAsync()
-    {
         if (!await _dialogService.ShowConfirmationDialogAsync(
-                Translator.SemanticIndex_DeleteConfirmation,
-                Translator.SemanticIndex_DeleteTitle,
-                Translator.Buttons_Delete))
+                Translator.SemanticIndex_WipeDataConfirmation,
+                Translator.SemanticIndex_WipeData,
+                Translator.SemanticIndex_WipeDataConfirmButton))
             return;
+
         try
         {
             await SetBusyAsync(true, Translator.SemanticIndex_OperationDeleting);
-            await _coordinator.CancelAsync(Account.Id).ConfigureAwait(false);
             await _coordinator.DeleteLocalIntelligenceAsync(Account.Id).ConfigureAwait(false);
-            Account.Preferences.IsSemanticIndexingEnabled = false;
-            await _accountService.UpdateAccountAsync(Account).ConfigureAwait(false);
+
             await ExecuteUIThread(() =>
             {
-                IsSemanticIndexingEnabled = false;
-                SemanticMailboxId = null;
-                HasIndexData = false;
                 HasLocalIndexData = false;
+                HasIndexData = false;
                 _coveredRemoteMessageIds.Clear();
                 IndexedMessageCount = 0;
                 CoverageDescription = Translator.SemanticIndex_NoIndexedMessages;
-                StatusMessage = Translator.SemanticIndex_DisabledCallout;
+                RecomputeCoverage();
                 RefreshHeroState();
             });
-            await ExecuteUIThread(RecomputeCoverage);
+            await RefreshLocalIndexStateAsync().ConfigureAwait(false);
+
+            // Mail lists and the Daily Briefing read the same local store, so they refresh too.
             Messenger.Send(new WinoIntelligenceAccessChanged());
         }
         catch (Exception exception)
@@ -1035,6 +983,9 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         {
             await SetBusyAsync(false);
         }
+
+        if (IsSemanticIndexingEnabled)
+            await RecalculatePlanAsync().ConfigureAwait(false);
     }
 
     public void Receive(MailIntelligenceJobChanged message)
@@ -1086,11 +1037,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
                     FormatDuration(TimeSpan.FromSeconds(TotalMissingMessageCount)));
             ProgressSummary = TotalMissingMessageCount == 0
                 ? Translator.SemanticIndex_PlanEmpty
-                : string.Format(
-                    Translator.SemanticIndex_OverallProgress,
-                    0,
-                    TotalMissingMessageCount,
-                    TotalMissingMessageCount);
+                : FormatMessagesBeingIndexed(TotalMissingMessageCount);
         });
     }
 
@@ -1208,9 +1155,6 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         => IsPageReady && IsSemanticIndexingEnabled && !IsBusy && !IsCalculatingPlan && !IsJobActive &&
            _selectedRemoteMessageIds.Count > 0;
 
-    private bool CanDeleteSemanticIndex()
-        => IsPageReady && !IsBusy && !IsJobActive && HasIndexData;
-
     private void ApplyState(MailIntelligenceAccountState state)
     {
         HasError = false;
@@ -1220,12 +1164,10 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         IndexedMessageCount = state.ProcessedMessageCount;
         StartButtonText = Translator.SemanticIndex_StartButton;
         CoverageDescription = CreateCoverageDescription(state);
-        StatusMessage = state switch
-        {
-            { WaitingMessageCount: > 0 } => string.Format(Translator.SemanticIndex_CloudRemaining, state.WaitingMessageCount),
-            { IsUpToDate: true } => Translator.SemanticIndex_UpToDate,
-            _ => Translator.SemanticIndex_NotReady,
-        };
+
+        // Waiting and up-to-date counts are already stated by the hero and the plan card. A job
+        // snapshot applied below raises the actionable statuses (quota pause, failure) again.
+        StatusMessage = string.Empty;
         StatusType = state.IsUpToDate ? InfoBarMessageType.Success : InfoBarMessageType.Information;
         ApplySnapshot(_coordinator.GetJobSnapshot(Account.Id));
     }
@@ -1251,25 +1193,12 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         JobStatus = snapshot.Status;
         IsJobActive = snapshot.IsActive;
         ActiveJobCount = snapshot.ActiveJobCount;
-        ProgressValue = snapshot.ProcessedMessageCount;
-        ProgressMaximum = Math.Max(1, snapshot.SelectedMessageCount);
 
-        // Classification and Enrichment advance independently, so they are reported separately rather than
-        // blended into one percentage.
-        ClassificationStageText = FormatStage(Translator.SemanticIndex_EmbeddingProgress, snapshot.Classification, snapshot);
-        EnrichmentStageText = FormatStage(Translator.SemanticIndex_MetadataProgress, snapshot.Enrichment, snapshot);
-        ProgressText = ClassificationStageText;
-        MetadataProgressValue = snapshot.ProcessedMessageCount;
-        MetadataProgressText = EnrichmentStageText;
-
-        var remainingMessageCount = Math.Max(snapshot.SelectedMessageCount - snapshot.ProcessedMessageCount, 0);
-        ProgressSummary = snapshot.SelectedMessageCount == 0
-            ? Translator.SemanticIndex_PlanEmpty
-            : string.Format(
-                Translator.SemanticIndex_OverallProgress,
-                snapshot.ProcessedMessageCount,
-                snapshot.SelectedMessageCount,
-                remainingMessageCount);
+        // Progress is presented as indeterminate: the card states how many messages the job
+        // covers, never how many of them are done.
+        ProgressSummary = snapshot.IsActive || snapshot.SelectedMessageCount > 0
+            ? FormatMessagesBeingIndexed(snapshot.SelectedMessageCount)
+            : Translator.SemanticIndex_PlanEmpty;
 
         if (snapshot.Status == MailIntelligenceJobStatus.PausedForQuota)
         {
@@ -1284,15 +1213,14 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         RefreshHeroState();
     }
 
-    private static string FormatStage(
-        string format,
-        MailIntelligenceStageProgress stage,
-        MailIntelligenceJobSnapshot snapshot)
-        => string.Format(
-            format,
-            stage.IsAcknowledged ? snapshot.ProcessedMessageCount : 0,
-            snapshot.SelectedMessageCount,
-            snapshot.FailedMessageCount);
+    /// <summary>
+    /// "{n} messages are being indexed", with the singular form for one message and a
+    /// count-free line when the job has not reported its size yet.
+    /// </summary>
+    private static string FormatMessagesBeingIndexed(int messageCount)
+        => messageCount <= 0 ? Translator.SemanticIndex_MessagesBeingIndexed_Unknown
+            : messageCount == 1 ? string.Format(Translator.SemanticIndex_MessagesBeingIndexed_Singular, messageCount)
+            : string.Format(Translator.SemanticIndex_MessagesBeingIndexed_Plural, messageCount);
 
     /// <remarks>
     /// Deliberately local-only where coverage is concerned. Indexing writes each artifact to the
@@ -1651,8 +1579,8 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
     }
 
     /// <summary>
-    /// Reconciles the local and server counts after an operation that changed coverage.
-    /// Best effort: the cached mailbox status remains usable without it.
+    /// Re-reads the processed message count from the local intelligence store after an operation
+    /// that changed coverage. Best effort: the cached mailbox status remains usable without it.
     /// </summary>
     private async Task RefreshIndexedMessageCountAsync()
     {
@@ -1662,10 +1590,7 @@ public partial class WinoIntelligenceManagementPageViewModel : MailBaseViewModel
         try
         {
             var state = await _coordinator.GetStateAsync(Account.Id).ConfigureAwait(false);
-            var serverVectorCount = 0;
-            var indexedMessageCount = (int)Math.Max(
-                state?.ProcessedMessageCount ?? 0,
-                Math.Min(serverVectorCount, int.MaxValue));
+            var indexedMessageCount = state?.ProcessedMessageCount ?? 0;
             await ExecuteUIThread(() =>
             {
                 IndexedMessageCount = indexedMessageCount;

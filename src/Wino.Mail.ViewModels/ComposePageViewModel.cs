@@ -45,6 +45,9 @@ public partial class ComposePageViewModel : MailBaseViewModel,
     public Func<Task<string>> GetHTMLBodyFunction;
     public Func<string, Task> RenderHtmlBodyAsyncFunc { get; set; }
 
+    /// <summary>Wino Intelligence rewrite for this draft. Hidden unless the account is eligible.</summary>
+    public ComposerRewriteSession RewriteSession { get; }
+
     public override async Task KeyboardShortcutHook(KeyboardShortcutTriggerDetails args)
     {
         if (args.Handled || args.Mode != WinoApplicationMode.Mail)
@@ -186,13 +189,12 @@ public partial class ComposePageViewModel : MailBaseViewModel,
     private readonly IAccountService _accountService;
     private readonly IEmailTemplateService _emailTemplateService;
     private readonly IWinoRequestDelegator _worker;
-    public readonly IFontService FontService;
     public readonly IPreferencesService PreferencesService;
     public readonly IContactService ContactService;
     public readonly IRecipientSuggestionService RecipientSuggestionService;
     private readonly IRecipientHistoryService _recipientHistoryService;
     public readonly ISmimeCertificateService _smimeCertificateService;
-    private readonly IShareActivationService _shareActivationService;
+    private readonly IActivationStateService _activationStateService;
     private readonly IDraftSyncRetryService _draftSyncRetryService;
     private readonly IDraftUpdateCoordinator _draftUpdates;
     private readonly DraftUpdateRegistry _draftRegistry;
@@ -209,22 +211,21 @@ public partial class ComposePageViewModel : MailBaseViewModel,
                                 IEmailTemplateService emailTemplateService,
                                 IWinoRequestDelegator worker,
                                 IContactService contactService,
-                                IFontService fontService,
                                 IPreferencesService preferencesService,
                                 ISmimeCertificateService smimeCertificateService,
-                                IShareActivationService shareActivationService,
+                                IActivationStateService activationStateService,
                                 IDraftSyncRetryService draftSyncRetryService,
                                 IDraftUpdateCoordinator draftUpdates, DraftUpdateRegistry draftRegistry,
                                 IDraftSaveService draftSaveService,
                                 IRecipientSuggestionService recipientSuggestionService,
                                 IRecipientHistoryService recipientHistoryService,
-                                IAttachmentFileService attachmentFileService = null)
+                                IAttachmentFileService attachmentFileService = null,
+                                IWinoIntelligenceCoordinator intelligenceCoordinator = null)
     {
         NativeAppService = nativeAppService;
         ContactService = contactService;
         RecipientSuggestionService = recipientSuggestionService;
         _recipientHistoryService = recipientHistoryService;
-        FontService = fontService;
         PreferencesService = preferencesService;
 
         _folderService = folderService;
@@ -236,12 +237,19 @@ public partial class ComposePageViewModel : MailBaseViewModel,
         _emailTemplateService = emailTemplateService;
         _worker = worker;
         _smimeCertificateService = smimeCertificateService;
-        _shareActivationService = shareActivationService;
+        _activationStateService = activationStateService;
         _draftSyncRetryService = draftSyncRetryService;
         _draftUpdates = draftUpdates;
         _draftRegistry = draftRegistry;
         _draftSaveService = draftSaveService;
         _attachmentFileService = attachmentFileService;
+
+        RewriteSession = new ComposerRewriteSession(
+            intelligenceCoordinator,
+            async () => GetHTMLBodyFunction == null ? null : await GetHTMLBodyFunction(),
+            html => RenderHtmlBodyAsyncFunc?.Invoke(html) ?? Task.CompletedTask,
+            () => ComposingAccount?.Id,
+            error => _dialogService.InfoBarMessage(Translator.Composer_AiErrorTitle, error, InfoBarMessageType.Error));
 
         IncludedAttachments.CollectionChanged += (_, _) => OnPropertyChanged(nameof(AttachmentsSummary));
 
@@ -977,7 +985,7 @@ public partial class ComposePageViewModel : MailBaseViewModel,
         if (draftUniqueId == Guid.Empty)
             return;
 
-        var shareRequest = _shareActivationService.ConsumePendingComposeShareRequest(draftUniqueId);
+        var shareRequest = _activationStateService.ConsumePendingComposeShareRequest(draftUniqueId);
 
         if (shareRequest?.Files == null || shareRequest.Files.Count == 0)
             return;
@@ -1153,6 +1161,27 @@ public partial class ComposePageViewModel : MailBaseViewModel,
     {
         IsDraftSyncFailed = value?.MailCopy?.IsDraftSyncFailed == true;
         OnPropertyChanged(nameof(DraftSyncErrorMessage));
+
+        // A rewrite belongs to the draft it was made from.
+        RewriteSession.Reset();
+    }
+
+    partial void OnComposingAccountChanged(MailAccount value) => _ = RefreshRewriteAvailabilityAsync();
+
+    /// <summary>
+    /// Re-checks rewrite eligibility for the composing account. Called when the account changes and
+    /// when Wino Intelligence access changes.
+    /// </summary>
+    public async Task RefreshRewriteAvailabilityAsync()
+    {
+        try
+        {
+            await ExecuteUIThreadAsync(() => RewriteSession.RefreshAvailabilityAsync());
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not refresh composer rewrite availability.");
+        }
     }
 
     protected override async void OnDraftFailed(MailCopy draftMail, MailAccount account)

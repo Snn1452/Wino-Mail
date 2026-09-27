@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -70,7 +70,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private readonly HashSet<Guid> gmailUnreadFolderMarkedAsReadUniqueIds = [];
 
     public MailListStore MailCollection { get; } = new();
-    private readonly IWinoIntelligenceEntitlementService? _entitlementService;
+    private readonly IWinoAccountIntelligenceSnapshotService? _entitlementService;
 
     [ObservableProperty]
     public partial MailListProjectionOptions MailListOptions { get; set; } = new();
@@ -106,7 +106,6 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private readonly ILogger _logger = Log.ForContext<MailListPageViewModel>();
     private readonly IMailCategoryService _mailCategoryService;
     private readonly IWinoRequestDelegator _winoRequestDelegator;
-    private readonly IKeyPressService _keyPressService;
     private readonly IWinoLogger _winoLogger;
     private readonly ISynchronizationManager _synchronizationManager;
     private readonly IDraftSyncRetryService _draftSyncRetryService;
@@ -323,14 +322,13 @@ public partial class MailListPageViewModel : MailBaseViewModel,
                                  IContextMenuItemService contextMenuItemService,
                                  IMailCategoryService mailCategoryService,
                                  IWinoRequestDelegator winoRequestDelegator,
-                                 IKeyPressService keyPressService,
                                  IPreferencesService preferencesService,
                                  INewThemeService themeService,
                                  IWinoLogger winoLogger,
                                  ISynchronizationManager synchronizationManager,
                                  IDraftSyncRetryService draftSyncRetryService,
                                  IMailShellClient shellMenuProvider = null,
-                                 IWinoIntelligenceEntitlementService entitlementService = null)
+                                 IWinoAccountIntelligenceSnapshotService entitlementService = null)
     {
         ShellMenuProvider = shellMenuProvider;
 
@@ -343,7 +341,6 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         _contextMenuItemService = contextMenuItemService;
         _mailCategoryService = mailCategoryService;
         _winoRequestDelegator = winoRequestDelegator;
-        _keyPressService = keyPressService;
         _synchronizationManager = synchronizationManager;
         _draftSyncRetryService = draftSyncRetryService;
         _entitlementService = entitlementService;
@@ -375,7 +372,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private MailItemViewModel CreateMailItemViewModel(MailCopy mailCopy)
         => new(mailCopy, CurrentAccountNicknamePosition)
         {
-            CanShowIntelligence = _entitlementService?.Current.CanAccessSurfaces == true
+            CanShowIntelligence = _entitlementService?.CurrentEntitlement.CanAccessSurfaces == true
         };
 
     private void UpdateAccountNicknamePositionForItems()
@@ -413,8 +410,8 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     public bool HasSingleItemSelected => SelectedItemsCount == 1;
 
     public bool IsAllItemsSelected =>
-        MailCollection.AllItemsCount > 0 &&
-        SelectedItemsCount == MailCollection.AllItemsCount;
+        MailCollection.Count > 0 &&
+        SelectedItemsCount == MailCollection.Count;
 
     public bool HasSingleFullySelectedThread
     {
@@ -595,7 +592,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     /// <summary>
     /// Indicates current state of the mail list. Doesn't matter it's loading or no.
     /// </summary>
-    public bool IsEmpty => MailCollection.AllItemsCount == 0;
+    public bool IsEmpty => MailCollection.Count == 0;
 
     /// <summary>
     /// Progress ring only should be visible when the folder is initializing and there are no items. We don't need to show it when there are items.
@@ -1191,7 +1188,8 @@ public partial class MailListPageViewModel : MailBaseViewModel,
             await MailCollection.AddRangeAsync(
                 viewModels,
                 clearIdCache: false,
-                shouldApply: () => IsCurrentMailLoad(context));
+                shouldApply: () => IsCurrentMailLoad(context),
+                isPreferred: MatchesActiveListSeed);
             if (!IsCurrentMailLoad(context))
                 return;
 
@@ -1771,7 +1769,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     /// <returns>True if the ThreadId exists in the collection, false otherwise.</returns>
     private bool ThreadIdExistsInCollection(MailCopy mailItem)
     {
-        return MailCollection.ContainsThreadId(Wino.Core.Domain.Extensions.MailConversationIdentity.ThreadKey(mailItem));
+        return MailCollection.ContainsThreadKey(Wino.Core.Domain.Extensions.MailConversationIdentity.ThreadKey(mailItem));
     }
 
     protected override async void OnMailAdded(MailCopy addedMail, EntityUpdateSource source)
@@ -2211,27 +2209,12 @@ public partial class MailListPageViewModel : MailBaseViewModel,
                     return;
                 }
 
-                MailItemViewModel nextItem = null;
-                bool isDeletedMailSelected = false;
-
-                await ExecuteUIThread(() =>
-                {
-                    isDeletedMailSelected = IsMailSelected(removedMail.UniqueId);
-
-                    if (isDeletedMailSelected && PreferencesService.AutoSelectNextItem)
-                    {
-                        nextItem = MailCollection.GetNextItem(removedMail);
-                    }
-                });
-
-                // RemoveAsync already handles UI threading internally
+                // RemoveAsync already handles UI threading internally. When the removed mail
+                // was selected, the list view picks the row that takes its visible position
+                // (SelectAdjacentOnRemoval, bound to the AutoSelectNextItem preference) before
+                // it publishes a snapshot, so no empty selection reaches the reader.
                 await MailCollection.RemoveAsync(removedMail);
                 await PruneDraftThreadOrphansAsync(removedMail.ThreadId);
-
-                if (nextItem != null)
-                    WeakReferenceMessenger.Default.Send(new SelectMailItemContainerEvent(nextItem.UniqueId, ScrollToItem: true));
-                // If there is no replacement, the threaded list projection drops the
-                // removed selection token and publishes the resulting empty snapshot.
 
                 await ExecuteUIThread(() => { NotifyItemFoundState(); });
             }
@@ -3343,15 +3326,19 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         await ExecuteUIThread(() =>
         {
             appliesToActiveFolder =
-                message.Reason == AccountCacheResetReason.ExpiredCache &&
+                message.Reason is AccountCacheResetReason.ExpiredCache or AccountCacheResetReason.MailAccessDisabled &&
                 ActiveFolder?.HandlingFolders.Any(a => a.MailAccountId == message.AccountId) == true;
         });
 
-        if (appliesToActiveFolder)
-        {
-            // ClearAsync already handles UI threading internally
-            await MailCollection.ClearAsync();
+        if (!appliesToActiveFolder)
+            return;
 
+        // ClearAsync already handles UI threading internally
+        await MailCollection.ClearAsync();
+
+        // Turning the mail mode off is the user's own action, so it needs no warning.
+        if (message.Reason == AccountCacheResetReason.ExpiredCache)
+        {
             await ExecuteUIThread(() =>
             {
                 _mailDialogService.InfoBarMessage(Translator.AccountCacheReset_Title, Translator.AccountCacheReset_Message, InfoBarMessageType.Warning);

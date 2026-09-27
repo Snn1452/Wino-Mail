@@ -1,9 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +11,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Serilog;
 using Wino.Core.Domain;
+using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Entities.Mail;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
@@ -31,37 +31,36 @@ namespace Wino.Mail.ViewModels;
 
 public partial class AccountManagementViewModel : AccountManagementPageViewModelBase
 {
-    private const string LocalExportFileName = "wino-data-export.json";
-    private static readonly UTF8Encoding Utf8WithoutBom = new(false);
+    private const string LocalExportFileName = "wino-backup.winosnap";
 
     private readonly IWinoAccountDataSyncService _syncService;
     private readonly IWinoLogger _winoLogger;
     private readonly ISpecialImapProviderConfigResolver _specialImapProviderConfigResolver;
     private readonly ICalDavClient _calDavClient;
-    private readonly IStoreManagementService _storeManagementService;
+    private readonly IMicrosoftStoreService _storeService;
 
     public IMailDialogService MailDialogService { get; }
 
     public AccountManagementViewModel(IMailDialogService dialogService,
                                       INavigationService navigationService,
                                       IAccountService accountService,
-                                      IProviderService providerService,
+                                      IKnownImapProviderCatalog providerCatalog,
                                       IWinoBillingService billingService,
                                       IWinoAccountProfileService winoAccountProfileService,
                                       IWinoAccountDataSyncService syncService,
                                       IWinoLogger winoLogger,
                                       ISpecialImapProviderConfigResolver specialImapProviderConfigResolver,
                                       ICalDavClient calDavClient,
-                                      IStoreManagementService storeManagementService,
+                                      IMicrosoftStoreService storeService,
                                       IAuthenticationProvider authenticationProvider,
-                                      IPreferencesService preferencesService) : base(dialogService, navigationService, accountService, providerService, billingService, winoAccountProfileService, authenticationProvider, preferencesService)
+                                      IPreferencesService preferencesService) : base(dialogService, navigationService, accountService, providerCatalog, billingService, winoAccountProfileService, authenticationProvider, preferencesService)
     {
         MailDialogService = dialogService;
         _syncService = syncService;
         _winoLogger = winoLogger;
         _specialImapProviderConfigResolver = specialImapProviderConfigResolver;
         _calDavClient = calDavClient;
-        _storeManagementService = storeManagementService;
+        _storeService = storeService;
     }
 
     [ObservableProperty]
@@ -128,40 +127,9 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         if (channel != UnlimitedAccountsPurchaseChannel.MicrosoftStore)
             return;
 
-        try
+        if (await UnlimitedAccountsStorePurchase.PurchaseAsync(_storeService, DialogService, _winoLogger).ConfigureAwait(false))
         {
-            var purchaseResult = await _storeManagementService
-                .PurchaseAsync(WinoAddOnProductType.UNLIMITED_ACCOUNTS)
-                .ConfigureAwait(false);
-
-            if (purchaseResult == StorePurchaseResult.Succeeded)
-            {
-                DialogService.InfoBarMessage(
-                    Translator.Info_PurchaseThankYouTitle,
-                    Translator.Info_PurchaseThankYouMessage,
-                    InfoBarMessageType.Success);
-            }
-            else if (purchaseResult == StorePurchaseResult.AlreadyPurchased)
-            {
-                DialogService.InfoBarMessage(
-                    Translator.Info_PurchaseExistsTitle,
-                    Translator.Info_PurchaseExistsMessage,
-                    InfoBarMessageType.Warning);
-            }
-            else
-            {
-                return;
-            }
-
             await ManageStorePurchasesAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _winoLogger.CaptureException(ex, nameof(PurchaseUnlimitedAccountAsync));
-            DialogService.InfoBarMessage(
-                Translator.GeneralTitle_Error,
-                Translator.UnlimitedAccountsPurchaseDialog_MicrosoftStorePurchaseFailed,
-                InfoBarMessageType.Error);
         }
     }
 
@@ -247,8 +215,9 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
 
             await ExecuteUIThread(() => IsDataTransferInProgress = true);
 
-            var exportResult = await _syncService.ExportToJsonAsync(new()).ConfigureAwait(false);
-            await File.WriteAllTextAsync(exportPath, exportResult.JsonContent, Utf8WithoutBom).ConfigureAwait(false);
+            var exportResult = await _syncService.ExportToFileAsync(new(), PromptSyncSecretAsync).ConfigureAwait(false);
+            exportPath = Path.Combine(Path.GetDirectoryName(exportPath) ?? exportPath, exportResult.FileName);
+            await File.WriteAllBytesAsync(exportPath, exportResult.Content).ConfigureAwait(false);
 
             DialogService.InfoBarMessage(
                 Translator.GeneralTitle_Info,
@@ -259,7 +228,7 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         {
             DialogService.InfoBarMessage(
                 Translator.GeneralTitle_Error,
-                ex.Message,
+                WinoAccountApiErrorTranslator.Describe(ex),
                 InfoBarMessageType.Error);
         }
         finally
@@ -274,7 +243,7 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         try
         {
             var fileContent = await ExecuteUIThreadAsync(
-                () => MailDialogService.PickWindowsFileContentAsync(".json"))
+                () => MailDialogService.PickWindowsFileContentAsync(".winosnap", ".json"))
                 .ConfigureAwait(false);
 
             if (fileContent.Length == 0)
@@ -284,8 +253,11 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
 
             await ExecuteUIThread(() => IsDataTransferInProgress = true);
 
-            var jsonContent = Encoding.UTF8.GetString(fileContent);
-            var result = await _syncService.ImportFromJsonAsync(jsonContent).ConfigureAwait(false);
+            var result = await _syncService.ImportFromFileAsync(fileContent, PromptSyncSecretAsync).ConfigureAwait(false);
+            if (result.Appearance != null)
+            {
+                await ExecuteUIThread(() => _syncService.ApplyAppearance(result.Appearance));
+            }
 
             await InitializeAccountsAsync().ConfigureAwait(false);
 
@@ -309,7 +281,7 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         {
             DialogService.InfoBarMessage(
                 Translator.GeneralTitle_Error,
-                ex.Message,
+                WinoAccountApiErrorTranslator.Describe(ex),
                 InfoBarMessageType.Error);
         }
         finally
@@ -319,6 +291,9 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
     }
 
     private bool CanTransferLocalData() => !IsDataTransferInProgress;
+
+    private Task<string?> PromptSyncSecretAsync(SyncSnapshotSecretRequest request)
+        => ExecuteUIThreadAsync(() => MailDialogService.ShowWinoAccountSyncSecretDialogAsync(request));
 
     public override void OnNavigatedFrom(NavigationMode mode, object parameters)
     {
@@ -429,6 +404,11 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
             parts.Add(string.Format(Translator.WinoAccount_Management_ExportAccountDataSucceeded, result.ExportedAccountDataCount));
         }
 
+        if (result.ExportedAppDataCount > 0)
+        {
+            parts.Add(string.Format(Translator.WinoAccount_Management_ExportAppDataSucceeded, result.ExportedAppDataCount));
+        }
+
         if (parts.Count == 0)
         {
             parts.Add(Translator.WinoAccount_Management_ExportSucceeded);
@@ -461,6 +441,11 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         if (result.AppliedAccountDataCount > 0)
         {
             parts.Add(string.Format(Translator.WinoAccount_Management_ImportAccountDataSucceeded, result.AppliedAccountDataCount));
+        }
+
+        if (result.AppliedAppDataCount > 0)
+        {
+            parts.Add(string.Format(Translator.WinoAccount_Management_ImportAppDataSucceeded, result.AppliedAppDataCount));
         }
 
         if (parts.Count == 0)

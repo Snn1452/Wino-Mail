@@ -11,9 +11,12 @@ public sealed partial class WinoAccountSyncExportDialog : ContentDialog
     private readonly IWinoAccountDataSyncService _syncService;
     private bool _isBusy;
 
-    public WinoAccountSyncExportDialog(IWinoAccountDataSyncService syncService)
+    private readonly IMailDialogService _dialogService;
+
+    public WinoAccountSyncExportDialog(IWinoAccountDataSyncService syncService, IMailDialogService dialogService)
     {
         _syncService = syncService;
+        _dialogService = dialogService;
         InitializeComponent();
         UpdateButtonState();
     }
@@ -39,7 +42,7 @@ public sealed partial class WinoAccountSyncExportDialog : ContentDialog
             FailureException = null;
             Result = await _syncService.ExportAsync(new WinoAccountSyncSelection(
                 PreferencesCheckBox.IsChecked == true,
-                AccountsCheckBox.IsChecked == true));
+                AccountsCheckBox.IsChecked == true), PromptSecretAsync);
             Hide();
         }
         catch (Exception ex)
@@ -56,6 +59,21 @@ public sealed partial class WinoAccountSyncExportDialog : ContentDialog
 
     private void SelectionChanged(object sender, RoutedEventArgs e)
         => UpdateButtonState();
+
+    // The key is normally cached at sign-in. Only an account that signed in before this build,
+    // or one without a password, has to answer here. The dialog hides while the prompt is shown.
+    private async System.Threading.Tasks.Task<string?> PromptSecretAsync(SyncSnapshotSecretRequest request)
+    {
+        Hide();
+
+        var secret = await _dialogService.ShowWinoAccountSyncSecretDialogAsync(request);
+        if (secret != null)
+        {
+            _ = ShowAsync();
+        }
+
+        return secret;
+    }
 
     private void SetBusyState(bool isBusy)
     {

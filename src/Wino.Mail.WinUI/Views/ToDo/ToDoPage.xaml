@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:abstract="using:Wino.Views.Abstract"
+    xmlns:controls="using:Wino.Controls"
     xmlns:coreControls="using:Wino.Mail.WinUI.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:domain="using:Wino.Core.Domain"
@@ -89,6 +90,7 @@
                                             Spacing="4"
                                             Visibility="{x:Bind helpers:XamlHelpers.BoolToVisibilityConverter(HasDueDate), Mode=OneWay}">
                                             <coreControls:WinoFontIcon
+                                                FontFamily="{ThemeResource WinoIconFontFamily}"
                                                 FontSize="11"
                                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                 Icon="Calendar" />
@@ -117,6 +119,7 @@
                                             Spacing="4"
                                             Visibility="{x:Bind helpers:XamlHelpers.BoolToVisibilityConverter(IsInMyDay), Mode=OneWay}">
                                             <coreControls:WinoFontIcon
+                                                FontFamily="{ThemeResource WinoIconFontFamily}"
                                                 FontSize="11"
                                                 Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                                 Icon="WeatherSunny" />
@@ -127,6 +130,7 @@
                                         </StackPanel>
 
                                         <coreControls:WinoFontIcon
+                                            FontFamily="{ThemeResource WinoIconFontFamily}"
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                             Icon="Note"
@@ -145,11 +149,13 @@
                                     ToolTipService.ToolTip="{x:Bind ImportanceActionText, Mode=OneWay}">
                                     <Grid>
                                         <coreControls:WinoFontIcon
+                                            FontFamily="{ThemeResource WinoIconFontFamily}"
                                             FontSize="15"
                                             Foreground="{ThemeResource SystemFillColorCautionBrush}"
                                             Icon="Star"
                                             Visibility="{x:Bind helpers:XamlHelpers.BoolToVisibilityConverter(IsImportant), Mode=OneWay}" />
                                         <coreControls:WinoFontIcon
+                                            FontFamily="{ThemeResource WinoIconFontFamily}"
                                             FontSize="15"
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                             Icon="Star"
@@ -179,6 +185,7 @@
                                 <coreControls:WinoFontIcon
                                     Grid.Column="0"
                                     VerticalAlignment="Top"
+                                    FontFamily="{ThemeResource WinoIconFontFamily}"
                                     FontSize="14"
                                     Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                     Icon="Add" />
@@ -241,7 +248,10 @@
                                 IsEnabled="{x:Bind IsEditable, Mode=OneTime}"
                                 Style="{StaticResource TransparentActionButtonStyle}"
                                 ToolTipService.ToolTip="{x:Bind domain:Translator.ToDoPage_DeleteStep, Mode=OneTime}">
-                                <coreControls:WinoFontIcon FontSize="13" Icon="Dismiss" />
+                                <coreControls:WinoFontIcon
+                                    FontFamily="{ThemeResource WinoIconFontFamily}"
+                                    FontSize="13"
+                                    Icon="Dismiss" />
                             </Button>
                         </Grid>
                     </DataTemplate>
@@ -289,6 +299,7 @@
                                         </Grid.ColumnDefinitions>
                                         <coreControls:WinoFontIcon
                                             Grid.Column="0"
+                                            FontFamily="{ThemeResource WinoIconFontFamily}"
                                             FontSize="14"
                                             Icon="Folder" />
                                         <TextBlock
@@ -1359,6 +1370,13 @@
                 </StackPanel>
             </ScrollViewer>
         </Grid>
+
+        <!--  Blocked state. Replaces the task surface while To Do cannot be used yet.  -->
+        <controls:ModeReadinessPanel
+            Grid.ColumnSpan="2"
+            AutomationProperties.AutomationId="ToDoModeReadinessPanel"
+            ViewModel="{x:Bind ViewModel.Readiness}"
+            Visibility="{x:Bind helpers:XamlHelpers.BoolToVisibilityConverter(ViewModel.Readiness.IsBlocked), Mode=OneWay}" />
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="ResponsiveLayoutStates">
                 <VisualState x:Name="ExpandedLayout">

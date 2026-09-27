@@ -18,6 +18,7 @@ using Wino.Core.Domain.Models.Navigation;
 using Wino.Core.Domain.Models.Synchronization;
 using Wino.Core.Requests;
 using Wino.Core.Requests.Contact;
+using Wino.Core.ViewModels.Data;
 using Wino.Mail.ViewModels.Data;
 using Wino.Messaging.Client.Shell;
 using Wino.Messaging.UI;
@@ -54,7 +55,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     private readonly IWinoRequestDelegator _requestDelegator;
     private readonly INavigationService _navigationService;
     private readonly IMailDialogService _dialogService;
-    private readonly ILaunchProtocolService _launchProtocolService;
+    private readonly IActivationStateService _activationStateService;
     private readonly ICardDavSynchronizationStore _cardDavSynchronizationStore;
     private readonly IPreferencesService _preferencesService;
     private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
@@ -88,7 +89,24 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     [ObservableProperty] public partial bool IsConflictResolverOpen { get; set; }
     [ObservableProperty] public partial CardDavConflict CurrentConflict { get; set; }
 
+    /// <summary>
+    /// True when at least one writable address book can receive a new contact: the same
+    /// destinations the editor offers in its "Save to" picker. New contacts and new lists
+    /// are only offered while this holds.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(AddContactCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateListCommand))]
+    public partial bool HasCreateDestinations { get; set; }
+
     public bool IsEmpty => !IsLoading && Contacts.Count == 0;
+
+    /// <summary>
+    /// Blocked state while People cannot be used: no account, People turned off everywhere,
+    /// a sign-in pending, or the first sync still running. Creation is already gated on
+    /// <see cref="HasCreateDestinations"/>, which follows the same address books.
+    /// </summary>
+    public ModeReadinessViewModel Readiness { get; }
     public bool CanLoadMoreContacts => HasMoreContacts && !IsLoading && !IsLoadingMore;
     public bool CanDeleteSelectedContacts => SelectedContactsCount > 0;
     public bool IsDetailVisible => SelectedContact is not null;
@@ -113,17 +131,26 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     public ContactsPageViewModel(IContactQueryService contactService, IAccountService accountService,
         ISynchronizationManager synchronizationManager, IWinoRequestDelegator requestDelegator,
         INavigationService navigationService, IMailDialogService dialogService,
-        ILaunchProtocolService launchProtocolService,
+        IActivationStateService activationStateService,
         ICardDavSynchronizationStore cardDavSynchronizationStore = null,
-        IPreferencesService preferencesService = null)
+        IPreferencesService preferencesService = null,
+        IAppModeReadinessService appModeReadinessService = null,
+        IMailShellClient mailShell = null)
     {
+        Readiness = new ModeReadinessViewModel(
+            WinoApplicationMode.Contacts,
+            appModeReadinessService,
+            navigationService,
+            mailShell,
+            ExecuteUIThread);
+        Readiness.ReadinessChanged += ReadinessChanged;
         _contactService = contactService;
         _accountService = accountService;
         _synchronizationManager = synchronizationManager;
         _requestDelegator = requestDelegator;
         _navigationService = navigationService;
         _dialogService = dialogService;
-        _launchProtocolService = launchProtocolService;
+        _activationStateService = activationStateService;
         _preferencesService = preferencesService;
         _cardDavSynchronizationStore = cardDavSynchronizationStore;
         _primaryFilterGroup = [];
@@ -139,9 +166,11 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         SetMenuInteractionEnabled(true);
         SelectedContacts.CollectionChanged -= SelectedContactsChanged;
         SelectedContacts.CollectionChanged += SelectedContactsChanged;
+        _ = Readiness.ActivateAsync();
 
         if (mode == NavigationMode.Back && _isInitialized)
         {
+            await RefreshCreateDestinationAvailabilityAsync();
             await RefreshCardDavCreationAvailabilityAsync();
             await ReconcileContactsAsync();
             return;
@@ -155,6 +184,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         // is now something to synchronize.
         RefreshShellSynchronizationState();
 
+        await RefreshCreateDestinationAvailabilityAsync();
         await RefreshCardDavCreationAvailabilityAsync();
         await BuildFiltersAsync();
         await ReloadContactsAsync();
@@ -185,6 +215,34 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
                         InfoBarMessageType.Warning);
                 }
             });
+        }
+    }
+
+    /// <summary>
+    /// People just became usable: a sign-in finished, an account was added or People was
+    /// turned on. The account set this page loaded on arrival is stale, so load it again.
+    /// </summary>
+    private async void ReadinessChanged(object sender, EventArgs e)
+    {
+        if (!Readiness.IsReady || !_isPageActive)
+            return;
+
+        try
+        {
+            _accounts = (await _accountService.GetAccountsAsync())
+                .Where(account => account.IsContactAccessEnabled)
+                .ToDictionary(account => account.Id);
+
+            RefreshShellSynchronizationState();
+
+            await RefreshCreateDestinationAvailabilityAsync();
+            await RefreshCardDavCreationAvailabilityAsync();
+            await BuildFiltersAsync();
+            await ReloadContactsAsync();
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to reload People after it became available.");
         }
     }
 
@@ -230,6 +288,21 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
                 InfoBarMessageType.Error));
         }
     }
+
+    /// <summary>
+    /// Re-reads the editor's destinations. Address books come and go with account setup,
+    /// contact access changes and synchronization, so this runs on every arrival and after
+    /// each address book or synchronization change.
+    /// </summary>
+    private async Task RefreshCreateDestinationAvailabilityAsync()
+    {
+        var destinations = await _contactService.GetCreateDestinationsAsync().ConfigureAwait(false);
+        var hasDestinations = destinations?.Any(destination => !destination.IsReadOnly) == true;
+
+        await ExecuteUIThread(() => HasCreateDestinations = hasDestinations).ConfigureAwait(false);
+    }
+
+    partial void OnHasCreateDestinationsChanged(bool value) => ApplyMenuInteractionState();
 
     private async Task RefreshCardDavCreationAvailabilityAsync()
     {
@@ -560,6 +633,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     {
         base.OnNavigatedFrom(mode, parameters);
         _isPageActive = false;
+        Readiness.Deactivate();
         SetMenuInteractionEnabled(false);
         SelectedContacts.CollectionChanged -= SelectedContactsChanged;
         CancelPendingReload();
@@ -591,6 +665,9 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     {
         if (_isPageActive && Volatile.Read(ref _explicitRefreshDepth) == 0)
             DebounceReconcile();
+
+        if (_isPageActive)
+            _ = RefreshCreateDestinationAvailabilityAsync();
     }
 
     void IRecipient<ContactStateChanged>.Receive(ContactStateChanged message)
@@ -603,7 +680,12 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         => _ = ExecuteUIThread(() => ApplyContactListMembershipState(message));
 
     void IRecipient<ContactAddressBookStateChanged>.Receive(ContactAddressBookStateChanged message)
-        => _ = ExecuteUIThread(() => ApplyContactAddressBookState(message));
+    {
+        _ = ExecuteUIThread(() => ApplyContactAddressBookState(message));
+
+        if (_isPageActive)
+            _ = RefreshCreateDestinationAvailabilityAsync();
+    }
 
     private void ApplyContactState(ContactStateChanged message)
     {
@@ -863,7 +945,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         return contact;
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(HasCreateDestinations))]
     private Task AddContactAsync()
     {
         _navigationService.Navigate(WinoPage.ContactEditPage, new ContactEditNavigationParameter());
@@ -1046,7 +1128,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         });
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(HasCreateDestinations))]
     private async Task CreateListAsync()
     {
         var name = await _dialogService.ShowTextInputDialogAsync(
@@ -1321,7 +1403,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         if (string.IsNullOrWhiteSpace(address)) return;
 
         // Reuse the mailto activation path: the shell picks the account and creates the draft.
-        _launchProtocolService.MailToUri = new MailToUri($"mailto:{Uri.EscapeDataString(address)}");
+        _activationStateService.MailToUri = new MailToUri($"mailto:{Uri.EscapeDataString(address)}");
         Messenger.Send(new MailtoProtocolMessageRequested());
     }
 

@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Accounts;
@@ -17,7 +18,8 @@ public sealed class WinoPurchaseReconciliationService(
     IWinoAccountSessionService sessions,
     IWinoPendingCheckoutStore pendingCheckouts,
     IWinoLogger logger,
-    TimeProvider? timeProvider = null) : IWinoPurchaseReconciliationService
+    TimeProvider? timeProvider = null,
+    IWinoStorePurchaseRedeemService? storePurchaseRedeem = null) : IWinoPurchaseReconciliationService
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
     private readonly ConcurrentDictionary<(Guid, long, bool), Lazy<Task<WinoPurchaseRefreshResult>>> _refreshes = new();
@@ -43,6 +45,7 @@ public sealed class WinoPurchaseReconciliationService(
         var cancellationToken = linked.Token;
         var expectedProduct = pendingCheckouts.Get(session.AccountId);
         WinoPurchaseRefreshResult? latest = null;
+        WinoStorePurchaseRedeemOutcome? storeRedeem = null;
         var delaySeconds = 1;
 
         try
@@ -52,8 +55,21 @@ public sealed class WinoPurchaseReconciliationService(
                 var profile = await profileService.RefreshProfileAsync(cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!profile.IsSuccess || profile.Account is null)
-                    return new(profile.ErrorCode is ApiErrorCodes.RefreshTokenInvalid or "MissingAccessToken" or "AccountSessionChanged"
+                    return new(profile.ErrorCode is ApiErrorCodes.RefreshTokenInvalid or WinoAccountClientErrorCodes.SignInRequired or WinoAccountClientErrorCodes.AccountSessionChanged
                         ? WinoPurchaseRefreshOutcome.SignInRequired : WinoPurchaseRefreshOutcome.Failed);
+
+                // A Store purchase from before Wino Accounts is moved onto the account once per refresh,
+                // after the fresh profile says the account does not have the add-on yet.
+                if (storeRedeem is null && storePurchaseRedeem is not null && !profile.Account.IsUnlimitedAccountsEnabled)
+                {
+                    storeRedeem = await storePurchaseRedeem.RedeemUnlimitedAccountsAsync(cancellationToken).ConfigureAwait(false);
+                    if (storeRedeem == WinoStorePurchaseRedeemOutcome.Redeemed)
+                    {
+                        profile = await profileService.RefreshProfileAsync(cancellationToken).ConfigureAwait(false);
+                        if (!profile.IsSuccess || profile.Account is null)
+                            return new(WinoPurchaseRefreshOutcome.Failed, StoreRedeem: storeRedeem.Value);
+                    }
+                }
 
                 var refresh = await snapshots.RefreshPurchasesAsync(cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -71,7 +87,7 @@ public sealed class WinoPurchaseReconciliationService(
                     _ => true
                 };
                 latest = new(confirmed ? WinoPurchaseRefreshOutcome.Refreshed : WinoPurchaseRefreshOutcome.Pending,
-                    profile.Account, refresh.Snapshot);
+                    profile.Account, refresh.Snapshot, storeRedeem ?? WinoStorePurchaseRedeemOutcome.NotNeeded);
 
                 if (confirmed)
                 {

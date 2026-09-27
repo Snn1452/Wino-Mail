@@ -28,6 +28,7 @@ using Wino.Mail.Controls.HoverActions;
 using Wino.Mail.ViewModels.Data;
 using Wino.Mail.WinUI;
 using Wino.Mail.WinUI.Controls;
+using Wino.Services;
 
 namespace Wino.Helpers;
 
@@ -35,8 +36,8 @@ public static class XamlHelpers
 {
     private static CultureInfo AppDisplayCulture => CultureInfo.DefaultThreadCurrentUICulture ?? CultureInfo.CurrentUICulture;
     private static IPreferencesService? PreferencesService => WinoApplication.Current.Services.GetService<IPreferencesService>();
-    private static IContactPictureFileService? ContactPictureFileService => WinoApplication.Current.Services.GetService<IContactPictureFileService>();
-    private static IAccountProfilePictureFileService AccountProfilePictureFileService => WinoApplication.Current.Services.GetRequiredService<IAccountProfilePictureFileService>();
+    private static IPictureStorageService PictureStorageService => WinoApplication.Current.Services.GetRequiredService<IPictureStorageService>();
+    private static AccountSenderPictureDirectory AccountSenderPictureDirectory => WinoApplication.Current.Services.GetRequiredService<AccountSenderPictureDirectory>();
 
     #region Mail Filter Editor
 
@@ -165,10 +166,9 @@ public static class XamlHelpers
     public static string ConditionalString(bool condition, string trueValue, string falseValue) => condition ? trueValue : falseValue;
 
     // Contacts
-    public static WinoIconGlyph GetFavoriteGlyph(bool isFavorite) => isFavorite ? WinoIconGlyph.StarFilled : WinoIconGlyph.Star;
+    // The favorite star itself is drawn by the pages: a brush resolved here would come from the
+    // application dictionary and follow the system theme instead of the page theme.
     public static string GetFavoriteTooltip(bool isFavorite) => isFavorite ? Translator.ContactAction_Unfavorite : Translator.ContactAction_Favorite;
-    public static Brush GetFavoriteBrush(bool isFavorite)
-        => (Brush)Application.Current.Resources[isFavorite ? "SystemFillColorCautionBrush" : "TextFillColorSecondaryBrush"];
     public static bool HasText(string value) => !string.IsNullOrWhiteSpace(value);
     public static ContactPhoneKind[] GetPhoneKinds() => Enum.GetValues<ContactPhoneKind>();
     /// <summary>Each postal address slot is labelled with the glyph for its kind.</summary>
@@ -243,7 +243,7 @@ public static class XamlHelpers
     public static IAccountIconInfo? GetAccountIconInfo(MailAccount? account)
         => account is null
             ? null
-            : MailAccountIconInfoFactory.Create(account, AccountProfilePictureFileService);
+            : MailAccountIconInfoFactory.Create(account, PictureStorageService);
 
     public static IAccountIconInfo GetAccountIconInfo(
         MailAccount? account,
@@ -251,7 +251,7 @@ public static class XamlHelpers
         SpecialImapProvider specialImapProvider)
         => account is null
             ? MailAccountIconInfoFactory.CreateProviderFallback(providerType, specialImapProvider)
-            : MailAccountIconInfoFactory.Create(account, AccountProfilePictureFileService);
+            : MailAccountIconInfoFactory.Create(account, PictureStorageService);
 
     public static IconElement GetAccountOrGlyphIcon(MailAccount? account, string glyph)
         => account is null
@@ -273,9 +273,12 @@ public static class XamlHelpers
         var resolvedAddress = !string.IsNullOrWhiteSpace(contact?.Address)
             ? contact.Address
             : address ?? string.Empty;
-        var localImagePath = contact?.ContactPictureFileId is Guid fileId
-            ? ContactPictureFileService?.GetContactPicturePath(fileId)
-            : null;
+        // A sender that is one of the user's own accounts shows that account's picture
+        // before any Gravatar or initials fallback.
+        var localImagePath = (contact?.ContactPictureFileId is Guid fileId
+                ? PictureStorageService.GetPicturePath(PictureKind.Contact, fileId)
+                : null)
+            ?? AccountSenderPictureDirectory.GetProfilePicturePath(resolvedAddress);
 
         return new ContactPictureIdentity(resolvedName, resolvedAddress, localImagePath);
     }
@@ -544,6 +547,7 @@ public static class XamlHelpers
         Translator.HoverActionOption_MoveJunk);
 
     public static Visibility StringToVisibilityConverter(string value) => string.IsNullOrWhiteSpace(value) ? Visibility.Collapsed : Visibility.Visible;
+    public static object? ItemsWhen(bool condition, object items) => condition ? items : null;
     public static Visibility StringToVisibilityReversedConverter(string value) => string.IsNullOrWhiteSpace(value) ? Visibility.Visible : Visibility.Collapsed;
     public static bool IsAccountNicknameVisible(string accountNickname, AccountNicknamePosition position, AccountNicknamePosition targetPosition)
         => !string.IsNullOrWhiteSpace(accountNickname) && position == targetPosition;

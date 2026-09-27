@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Exceptions;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Ai;
@@ -38,7 +39,6 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     private readonly IAccountService _accountService;
     private readonly IMailIntelligenceCoordinator _semanticIndexCoordinator;
     private readonly IPreferencesService _preferencesService;
-    private readonly IAiActionOptionsService _aiActionOptionsService;
     private bool _isAiLanguageInitialized;
     private readonly IWinoAccountIntelligenceSnapshotService? _snapshotService;
     private readonly WinoAddOnItemViewModel _aiPackAddOn;
@@ -47,7 +47,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     private readonly IWinoPurchaseReconciliationService? _purchaseReconciliation;
     private readonly IWinoAccountSessionService? _sessions;
     private readonly IWinoLogger? _logger;
-    private readonly IWinoIntelligenceEntitlementService? _entitlementService;
+    private readonly IMicrosoftStoreService? _storeService;
     private string _intelligencePolicyVersion = string.Empty;
 
     public ObservableCollection<WinoAddOnItemViewModel> AddOns { get; } = [];
@@ -96,8 +96,18 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     [ObservableProperty]
     public partial string IntelligenceResetText { get; set; } = string.Empty;
 
+    /// <summary>
+    /// How many of the mail accounts on this device take part in the briefing. Intelligence
+    /// results are device-local, so this is the only mailbox fact the account page reports.
+    /// </summary>
     [ObservableProperty]
-    public partial string IntelligenceStorageSummary { get; set; } = string.Empty;
+    public partial string IntelligenceMailboxesSummary { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The monthly allowance of the headline bucket, as "1,500 messages". Empty without usage data.
+    /// </summary>
+    [ObservableProperty]
+    public partial string IntelligenceIncludedText { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial string IntelligenceConsentStatusText { get; set; } = string.Empty;
@@ -232,12 +242,11 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
                                                IAccountService accountService,
                                                IMailIntelligenceCoordinator semanticIndexCoordinator,
                                                IPreferencesService preferencesService,
-                                               IAiActionOptionsService aiActionOptionsService,
                                                IWinoAccountIntelligenceSnapshotService? snapshotService = null,
                                                IWinoPurchaseReconciliationService? purchaseReconciliation = null,
                                                IWinoAccountSessionService? sessions = null,
                                                IWinoLogger? logger = null,
-                                               IWinoIntelligenceEntitlementService? entitlementService = null)
+                                               IMicrosoftStoreService? storeService = null)
     {
         _profileService = profileService;
         _syncService = syncService;
@@ -247,12 +256,11 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         _accountService = accountService;
         _semanticIndexCoordinator = semanticIndexCoordinator;
         _preferencesService = preferencesService;
-        _aiActionOptionsService = aiActionOptionsService;
         _snapshotService = snapshotService;
         _purchaseReconciliation = purchaseReconciliation;
         _sessions = sessions;
         _logger = logger;
-        _entitlementService = entitlementService;
+        _storeService = storeService;
 
         _aiPackAddOn = CreateAddOnItem(WinoAddOnProductType.AI_PACK);
         _unlimitedAccountsAddOn = CreateAddOnItem(WinoAddOnProductType.UNLIMITED_ACCOUNTS);
@@ -280,6 +288,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             Translator.WinoAccount_Management_FreeBadge,
             isFreeBadge: true,
             Translator.WinoAccount_Management_Benefit_Transfer_Lede,
+            (string[])
             [
                 Translator.WinoAccount_Management_Benefit_Transfer_Point1,
                 Translator.WinoAccount_Management_Benefit_Transfer_Point2,
@@ -297,6 +306,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             Translator.WinoAccount_Management_FreeBadge,
             isFreeBadge: true,
             Translator.WinoAccount_Management_Benefit_Entitlements_Lede,
+            (string[])
             [
                 Translator.WinoAccount_Management_Benefit_Entitlements_Point1,
                 Translator.WinoAccount_Management_Benefit_Entitlements_Point2,
@@ -314,10 +324,13 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             Translator.WinoAccount_Management_AddOnBadge,
             isFreeBadge: false,
             Translator.WinoAccount_Management_Benefit_Intelligence_Lede,
+            // The briefing leads because it is the feature; the on-demand actions follow it.
+            (string[])
             [
+                Translator.WinoAccount_Management_Benefit_Intelligence_PointBriefing,
+                Translator.WinoAccount_Management_Benefit_Intelligence_Point3,
                 Translator.WinoAccount_Management_Benefit_Intelligence_Point1,
                 Translator.WinoAccount_Management_Benefit_Intelligence_Point2,
-                Translator.WinoAccount_Management_Benefit_Intelligence_Point3,
                 Translator.WinoAccount_Management_Benefit_Intelligence_Point4,
                 Translator.WinoAccount_Management_Benefit_Intelligence_Point5
             ],
@@ -332,11 +345,13 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             Translator.WinoAccount_Management_AddOnBadge,
             isFreeBadge: false,
             string.Format(Translator.WinoAccount_Management_Benefit_Unlimited_Lede, Constants.FreeAccountLimit),
+            (string[])
             [
                 Translator.WinoAccount_Management_Benefit_Unlimited_Point1,
                 Translator.WinoAccount_Management_Benefit_Unlimited_Point2,
                 Translator.WinoAccount_Management_Benefit_Unlimited_Point3,
-                Translator.WinoAccount_Management_Benefit_Unlimited_Point4
+                Translator.WinoAccount_Management_Benefit_Unlimited_Point4,
+            Translator.WinoAccount_Management_Benefit_Unlimited_Point5
             ],
             Translator.WinoAccount_Management_Benefit_Unlimited_Cta,
             WinoIconGlyph.BenefitUnlimitedAccounts)
@@ -358,7 +373,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
     private void InitializeAiLanguageOptions()
     {
-        var translateLanguageOptions = _aiActionOptionsService?.GetTranslateLanguageOptions();
+        var translateLanguageOptions = AiActionCatalog.GetTranslateLanguageOptions();
 
         if (translateLanguageOptions is not null)
         {
@@ -505,7 +520,40 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             return;
         }
 
-        if (await _profileService.GetAuthenticatedAccountAsync().ConfigureAwait(false) == null)
+        // Unlimited Accounts is still sold in the Microsoft Store, so the user picks the channel first.
+        if (addOn.ProductType == WinoAddOnProductType.UNLIMITED_ACCOUNTS && _storeService != null)
+        {
+            var channel = await _dialogService.ShowUnlimitedAccountsPurchaseChannelDialogAsync();
+
+            if (channel == UnlimitedAccountsPurchaseChannel.MicrosoftStore)
+            {
+                if (await UnlimitedAccountsStorePurchase.PurchaseAsync(_storeService, _dialogService, _logger).ConfigureAwait(false))
+                {
+                    // A forced refresh also moves the new Store purchase onto a signed-in Wino Account.
+                    await LoadAsync(forceProfileRefresh: true).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            if (channel != UnlimitedAccountsPurchaseChannel.WinoAccount)
+                return;
+        }
+
+        WinoAccount? authenticatedAccount;
+        try
+        {
+            authenticatedAccount = await _profileService.GetAuthenticatedAccountAsync().ConfigureAwait(false);
+        }
+        catch (WinoAccountApiException ex)
+        {
+            _dialogService.InfoBarMessage(Translator.GeneralTitle_Error,
+                                          WinoAccountApiErrorTranslator.Translate(ex.ErrorCode),
+                                          InfoBarMessageType.Error);
+            return;
+        }
+
+        if (authenticatedAccount == null)
         {
             _dialogService.InfoBarMessage(
                 Translator.GeneralTitle_Warning,
@@ -778,7 +826,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         {
             _dialogService.InfoBarMessage(
                 Translator.GeneralTitle_Error,
-                ex.Message,
+                WinoAccountApiErrorTranslator.Describe(ex),
                 InfoBarMessageType.Error);
         }
     }
@@ -790,7 +838,12 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
         try
         {
-            var result = await _syncService.ImportAsync(new WinoAccountSyncSelection());
+            var result = await _syncService.ImportAsync(new WinoAccountSyncSelection(), PromptSyncSecretAsync);
+
+            if (result.Appearance != null)
+            {
+                await ExecuteUIThread(() => _syncService.ApplyAppearance(result.Appearance));
+            }
 
             if (!result.HasAnyRemoteData)
             {
@@ -814,7 +867,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         {
             _dialogService.InfoBarMessage(
                 Translator.GeneralTitle_Error,
-                ex.Message,
+                WinoAccountApiErrorTranslator.Describe(ex),
                 InfoBarMessageType.Error);
         }
         finally
@@ -982,6 +1035,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
                     PurchaseStatusMessage = purchase.Outcome == WinoPurchaseRefreshOutcome.Pending ? Translator.WinoAccount_PurchasePending : string.Empty;
                     IntelligenceRefreshError = purchase.Outcome == WinoPurchaseRefreshOutcome.Failed ? Translator.WinoAccount_PurchaseRefreshFailed : string.Empty;
                 });
+                ReportStorePurchaseRedeem(purchase.StoreRedeem);
                 if (purchase.Outcome != WinoPurchaseRefreshOutcome.Refreshed) return;
             }
             else if (forceProfileRefresh)
@@ -1013,6 +1067,22 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         }
     }
 
+    private void ReportStorePurchaseRedeem(WinoStorePurchaseRedeemOutcome outcome)
+    {
+        if (outcome == WinoStorePurchaseRedeemOutcome.Redeemed)
+        {
+            _dialogService.InfoBarMessage(Translator.Info_PurchaseThankYouTitle,
+                                          Translator.WinoAccount_StorePurchaseLinked,
+                                          InfoBarMessageType.Success);
+        }
+        else if (outcome == WinoStorePurchaseRedeemOutcome.AlreadyLinked)
+        {
+            _dialogService.InfoBarMessage(Translator.GeneralTitle_Warning,
+                                          Translator.WinoAccount_StorePurchaseAlreadyLinked,
+                                          InfoBarMessageType.Warning);
+        }
+    }
+
     private async Task ApplyAccountIntelligenceSnapshotAsync(WinoAccountIntelligenceSnapshot snapshot, string? refreshError, WinoAccountSession? session = null)
     {
         var localAccounts = await _accountService.GetAccountsAsync().ConfigureAwait(false) ?? [];
@@ -1020,6 +1090,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         var usage = snapshot.Usage;
         var hasUnlimitedAccounts = snapshot.Billing?.IsUnlimitedAccountsEnabled == true ||
             await _billingService.HasUnlimitedAccountsAsync().ConfigureAwait(false);
+        var processedCounts = await LoadProcessedMessageCountsAsync(localAccounts).ConfigureAwait(false);
         await ApplySessionUIAsync(session, () =>
         {
             _unlimitedAccountsAddOn.IsPurchased = hasUnlimitedAccounts;
@@ -1033,7 +1104,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             HasIntelligenceAccess = entitlement.CanAccessSurfaces;
             ApplyAiPackBillingTexts(aiPack);
             if (snapshot.Consent is not null) ApplyIntelligenceConsent(snapshot.Consent);
-            var mailboxItems = localAccounts.Select(CreateLocalIntelligenceMailboxItem).ToArray();
+            var mailboxItems = localAccounts.Select(account => CreateLocalIntelligenceMailboxItem(account, processedCounts)).ToArray();
             IntelligenceMailboxes.Clear();
             foreach (var item in mailboxItems.OrderBy(item => item.Address, StringComparer.OrdinalIgnoreCase))
             {
@@ -1041,7 +1112,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             }
             ApplyIntelligenceUsage(usage);
             IntelligenceResetText = usage?.ResetsAtUtc is DateTimeOffset reset ? string.Format(Translator.WinoAccount_Management_IntelligenceResets, reset.LocalDateTime) : string.Empty;
-            IntelligenceStorageSummary = string.Format(Translator.WinoAccount_Management_IntelligenceStorageSummary, mailboxItems.Count(item => item.HasServerIntelligence), FormatStorageSize(mailboxItems.Sum(item => item.StorageSizeBytes)));
+            IntelligenceMailboxesSummary = DescribeBriefingMailboxes(mailboxItems);
             IntelligenceLastUpdatedText = snapshot.LastSuccessfulRefreshUtc is DateTimeOffset updated ? updated.LocalDateTime.ToString("g") : string.Empty;
             IntelligenceRefreshError = string.IsNullOrWhiteSpace(refreshError) ? string.Empty : string.Format(
                 Translator.WinoIntelligence_CachedRefreshFailed,
@@ -1140,7 +1211,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         // Price is deliberately absent everywhere in the app. Stripe Checkout is the only
         // place that can state it correctly for the customer's currency and locale.
         AiPackSubtitleText = _aiPackAddOn.IsPurchased
-            ? Translator.WinoAccount_Management_SubscriptionLabel
+            ? Translator.WinoAccount_Management_AiPackOwnedSubtitle
             : Translator.WinoAccount_Management_AiPackUnownedSubtitle;
 
         UnlimitedAccountsSubtitleText = _unlimitedAccountsAddOn.IsPurchased
@@ -1156,6 +1227,9 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         addOn.ErrorText = string.Empty;
         addOn.RenewalText = string.Empty;
     }
+
+    private Task<string?> PromptSyncSecretAsync(SyncSnapshotSecretRequest request)
+        => ExecuteUIThreadAsync(() => _dialogService.ShowWinoAccountSyncSecretDialogAsync(request));
 
     private static string BuildExportSuccessMessage(WinoAccountSyncExportResult result)
     {
@@ -1174,6 +1248,11 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         if (result.ExportedAccountDataCount > 0)
         {
             parts.Add(string.Format(Translator.WinoAccount_Management_ExportAccountDataSucceeded, result.ExportedAccountDataCount));
+        }
+
+        if (result.ExportedAppDataCount > 0)
+        {
+            parts.Add(string.Format(Translator.WinoAccount_Management_ExportAppDataSucceeded, result.ExportedAppDataCount));
         }
 
         if (parts.Count == 0)
@@ -1208,6 +1287,11 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         if (result.AppliedAccountDataCount > 0)
         {
             parts.Add(string.Format(Translator.WinoAccount_Management_ImportAccountDataSucceeded, result.AppliedAccountDataCount));
+        }
+
+        if (result.AppliedAppDataCount > 0)
+        {
+            parts.Add(string.Format(Translator.WinoAccount_Management_ImportAppDataSucceeded, result.AppliedAppDataCount));
         }
 
         if (parts.Count == 0)
@@ -1344,10 +1428,10 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         // Intelligence is device-local, so the list comes from the accounts on this device
         // rather than from a server mailbox registry.
         var mailboxError = string.Empty;
-        var mailboxItems = localAccounts.Select(CreateLocalIntelligenceMailboxItem).ToArray();
+        var processedCounts = await LoadProcessedMessageCountsAsync(localAccounts).ConfigureAwait(false);
+        var mailboxItems = localAccounts.Select(account => CreateLocalIntelligenceMailboxItem(account, processedCounts)).ToArray();
 
         var usage = usageResponse?.IsSuccess == true ? usageResponse.Result : null;
-        var totalStorageSize = mailboxItems.Sum(item => item.StorageSizeBytes);
         await ExecuteUIThread(() =>
         {
             IntelligenceMailboxes.Clear();
@@ -1360,12 +1444,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             IntelligenceResetText = usage?.ResetsAtUtc is DateTimeOffset resetsAtUtc
                 ? string.Format(Translator.WinoAccount_Management_IntelligenceResets, resetsAtUtc.LocalDateTime)
                 : string.Empty;
-            IntelligenceStorageSummary = string.IsNullOrEmpty(mailboxError)
-                ? string.Format(
-                    Translator.WinoAccount_Management_IntelligenceStorageSummary,
-                    mailboxItems.Count(item => item.HasServerIntelligence),
-                    FormatStorageSize(totalStorageSize))
-                : Translator.WinoAccount_Management_IntelligenceStorageUnavailable;
+            IntelligenceMailboxesSummary = DescribeBriefingMailboxes(mailboxItems);
             IntelligenceDataError = mailboxError;
             if (consent != null)
                 ApplyIntelligenceConsent(consent);
@@ -1378,7 +1457,40 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         });
     }
 
-    private IntelligenceMailboxData CreateLocalIntelligenceMailboxItem(Wino.Core.Domain.Entities.Shared.MailAccount account)
+    /// <summary>
+    /// Reads each account's processed-message count from the device's intelligence database,
+    /// the same number the per-mailbox management page shows. The item summaries bind OneTime,
+    /// so the counts must be known before the items are created.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, int>> LoadProcessedMessageCountsAsync(
+        IReadOnlyCollection<Wino.Core.Domain.Entities.Shared.MailAccount> accounts)
+    {
+        var counts = new Dictionary<Guid, int>();
+        foreach (var account in accounts)
+        {
+            try
+            {
+                var state = await _semanticIndexCoordinator.GetStateAsync(account.Id).ConfigureAwait(false);
+                counts[account.Id] = state?.ProcessedMessageCount ?? 0;
+            }
+            catch (Exception exception)
+            {
+                // One unreadable mailbox must not blank the whole list.
+                _logger?.CaptureException(exception, nameof(LoadProcessedMessageCountsAsync));
+            }
+        }
+
+        return counts;
+    }
+
+    private static string DescribeLocalIntelligence(int processedMessageCount)
+        => processedMessageCount > 0
+            ? string.Format(Translator.SemanticIndex_IndexedCount, processedMessageCount)
+            : Translator.WinoAccount_Management_NoIntelligenceData;
+
+    private IntelligenceMailboxData CreateLocalIntelligenceMailboxItem(
+        Wino.Core.Domain.Entities.Shared.MailAccount account,
+        IReadOnlyDictionary<Guid, int> processedCounts)
         => new()
         {
             MailboxId = account.Id,
@@ -1392,14 +1504,14 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             CanToggle = account.Preferences?.IsSemanticIndexingEnabled == true ||
                         HasIntelligenceAccess && IsConsentGranted,
             StorageSizeBytes = 0,
-            IntelligenceSummary = Translator.WinoAccount_Management_NoIntelligenceData,
+            IntelligenceSummary = DescribeLocalIntelligence(processedCounts.GetValueOrDefault(account.Id)),
             ManageCommand = ManageIntelligenceMailboxCommand,
             DeleteCommand = DeleteIntelligenceCommand,
             ToggleEnabledCommand = ToggleIntelligenceMailboxCommand,
         };
 
     /// <summary>
-    /// Renders one usage response as the share of the period's budget used and remaining.
+    /// Renders one usage response: every monthly bucket, with the intelligence bucket as the headline.
     /// </summary>
     private void ApplyIntelligenceUsage(AiUsageStatusDto? usage)
     {
@@ -1415,6 +1527,9 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
         var headline = IntelligenceUsage.Headline(usage);
         IntelligenceUsagePercentage = headline?.Percentage ?? 0;
+        IntelligenceIncludedText = headline is null
+            ? string.Empty
+            : string.Format(Translator.WinoAccount_Management_IncludedMessagesValue, headline.Limit);
         IntelligenceUsageSummary = headline is null
             ? Translator.WinoAccount_Management_IntelligenceUsageUnavailable
             : string.Format(
@@ -1427,7 +1542,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         ApplyIntelligenceUsage(null);
         IntelligenceUsageSummary = string.Empty;
         IntelligenceResetText = string.Empty;
-        IntelligenceStorageSummary = string.Empty;
+        IntelligenceMailboxesSummary = string.Empty;
         IntelligenceConsentStatusText = string.Empty;
         IsConsentGranted = false;
         IsConsentBusy = false;
@@ -1440,7 +1555,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
     private WinoIntelligenceEntitlementSnapshot ResolveEntitlement(WinoAccountIntelligenceSnapshot snapshot)
     {
-        var current = _entitlementService?.Current;
+        var current = _snapshotService?.CurrentEntitlement;
         if (current?.WinoAccountId == snapshot.WinoAccountId)
             return current;
 
@@ -1475,21 +1590,13 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         => consent.Status == ConsentStatuses.Active &&
            consent.AcceptedPolicyVersion == consent.CurrentPolicyVersion;
 
-    private static string FormatStorageSize(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB"];
-        var display = (double)Math.Max(0, bytes);
-        var unit = 0;
-        while (display >= 1024 && unit < units.Length - 1)
-        {
-            display /= 1024;
-            unit++;
-        }
+    private static string DescribeBriefingMailboxes(IReadOnlyCollection<IntelligenceMailboxData> mailboxes)
+        => string.Format(
+            Translator.WinoAccount_Management_BriefingMailboxesSummary,
+            mailboxes.Count(mailbox => mailbox.IsEnabled),
+            mailboxes.Count);
 
-        return $"{display:0.##} {units[unit]}";
-    }
-
-    private sealed class IntelligenceMailboxData : WinoIntelligenceMailboxItemViewModel
+    private sealed partial class IntelligenceMailboxData : WinoIntelligenceMailboxItemViewModel
     {
         public required long StorageSizeBytes { get; init; }
     }

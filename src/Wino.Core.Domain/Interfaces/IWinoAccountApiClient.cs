@@ -10,6 +10,7 @@ using Wino.Mail.Api.Contracts.Ai;
 using Wino.Mail.Api.Contracts.Auth;
 using Wino.Mail.Api.Contracts.Billing;
 using Wino.Mail.Api.Contracts.Common;
+using Wino.Mail.Api.Contracts.Store;
 using Wino.Mail.Api.Contracts.Users;
 using Wino.Mail.Contracts.Intelligence;
 using Wino.Mail.AI.Abstractions;
@@ -27,12 +28,18 @@ public interface IWinoAccountApiClient
     Task<ApiEnvelope<AuthUserDto>> GetCurrentUserAsync(CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiSummaryResultDto>> SummarizeAsync(IReadOnlyList<MailContentSegment> segments, string targetLanguage, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiTranslationResultDto>> TranslateAsync(IReadOnlyList<MailContentSegment> segments, string? sourceLanguage, string targetLanguage, CancellationToken cancellationToken = default);
-    Task<ApiEnvelope<AiTextResultDto>> RewriteAsync(string html, string mode, string language, CancellationToken cancellationToken = default);
+    /// <param name="context">A <see cref="RewriteContexts"/> value: reading a received message or composing a draft.</param>
+    Task<ApiEnvelope<AiTextResultDto>> RewriteAsync(string html, string mode, string language, string context, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<CheckoutSessionResultDto>> CreateCheckoutSessionAsync(string productCode, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<BillingStatusResultDto>> GetBillingStatusAsync(CancellationToken cancellationToken = default);
+    Task<ApiEnvelope<StoreCollectionsIdTicketResultDto>> CreateStoreCollectionsIdTicketAsync(CancellationToken cancellationToken = default);
+    /// <summary>Moves a Microsoft Store Unlimited Accounts purchase onto the signed-in Wino Account.</summary>
+    Task<ApiEnvelope<StorePurchaseRedeemResultDto>> RedeemStoreUnlimitedAccountsAsync(string storeIdKey, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiUsageStatusDto>> GetAiUsageAsync(CancellationToken cancellationToken = default);
-    Task<string?> GetSettingsAsync(CancellationToken cancellationToken = default);
-    Task SaveSettingsAsync(string settingsJson, CancellationToken cancellationToken = default);
+    /// <summary>The stored sync snapshot bytes and revision, or null when the account has none.</summary>
+    Task<WinoSyncSnapshotDownload?> GetSyncSnapshotAsync(CancellationToken cancellationToken = default);
+    /// <summary>Uploads the encrypted snapshot. A non-null expected revision makes the write conditional.</summary>
+    Task<UserSyncSnapshotStatusDto> PutSyncSnapshotAsync(byte[] payload, long? expectedRevision = null, CancellationToken cancellationToken = default);
     Task<UserMailboxSyncListDto> GetMailboxesAsync(CancellationToken cancellationToken = default);
     Task ReplaceMailboxesAsync(ReplaceUserMailboxesRequestDto request, CancellationToken cancellationToken = default);
     // Mail intelligence. Jobs are submitted per mailbox; results are collected as two
@@ -41,7 +48,11 @@ public interface IWinoAccountApiClient
         Guid mailboxId, Guid jobId, string checksum, byte[] upload, CancellationToken cancellationToken = default);
     Task<MailIntelligenceJobListDto> GetMailIntelligenceJobsAsync(string? resultKeyId = null, CancellationToken cancellationToken = default);
     Task<IntelligenceTransportKeyDto> GetIntelligenceTransportKeyAsync(CancellationToken cancellationToken = default);
-    Task<MailIntelligenceJobDto?> GetMailIntelligenceJobAsync(Guid mailboxId, Guid jobId, CancellationToken cancellationToken = default);
+    /// <param name="waitSeconds">
+    /// When above zero, the server holds the request until a stage can be downloaded or the job
+    /// ends (or the wait runs out), instead of answering at once.
+    /// </param>
+    Task<MailIntelligenceJobDto?> GetMailIntelligenceJobAsync(Guid mailboxId, Guid jobId, int waitSeconds = 0, CancellationToken cancellationToken = default);
     Task<byte[]> GetMailIntelligenceResultPageAsync(Guid mailboxId, Guid jobId, string stage, int page, CancellationToken cancellationToken = default);
     Task<MailIntelligenceStageAckResultDto> AcknowledgeMailIntelligenceStageAsync(
         Guid mailboxId, Guid jobId, string stage, string digest, CancellationToken cancellationToken = default);

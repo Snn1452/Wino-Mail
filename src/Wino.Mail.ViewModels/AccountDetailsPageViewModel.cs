@@ -39,16 +39,16 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
     private readonly ICalendarService _calendarService;
     private readonly IStatePersistanceService _statePersistanceService;
     private readonly INewThemeService _themeService;
-    private readonly IImapTestService _imapTestService;
+    private readonly IMailServerTestService _mailServerTestService;
     private readonly INotificationBuilder _notificationBuilder;
     private readonly IApplicationConfiguration _applicationConfiguration;
     private readonly IFileService _fileService;
     private readonly IPreferencesService _preferencesService;
-    private readonly IAccountProfilePictureFileService _accountProfilePictureFileService;
+    private readonly IPictureStorageService _accountProfilePictureFileService;
     private readonly IWinoLogger _winoLogger;
     private readonly IAccountCapabilityService _accountCapabilityService;
     private readonly ISynchronizationManager _synchronizationManager;
-    private readonly IWinoIntelligenceEntitlementService? _entitlementService;
+    private readonly IWinoAccountIntelligenceSnapshotService? _entitlementService;
     private bool isLoaded = false;
 
     [ObservableProperty]
@@ -229,16 +229,16 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
         ICalendarService calendarService,
         IStatePersistanceService statePersistanceService,
         INewThemeService themeService,
-        IImapTestService imapTestService,
+        IMailServerTestService mailServerTestService,
         INotificationBuilder notificationBuilder,
         IApplicationConfiguration applicationConfiguration,
         IFileService fileService,
-        IAccountProfilePictureFileService accountProfilePictureFileService,
+        IPictureStorageService accountProfilePictureFileService,
         IPreferencesService preferencesService,
         IWinoLogger winoLogger,
         IAccountCapabilityService accountCapabilityService,
         ISynchronizationManager synchronizationManager,
-        IWinoIntelligenceEntitlementService? entitlementService = null)
+        IWinoAccountIntelligenceSnapshotService? entitlementService = null)
     {
         _dialogService = dialogService;
         _accountService = accountService;
@@ -246,7 +246,7 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
         _calendarService = calendarService;
         _statePersistanceService = statePersistanceService;
         _themeService = themeService;
-        _imapTestService = imapTestService;
+        _mailServerTestService = mailServerTestService;
         _notificationBuilder = notificationBuilder;
         _applicationConfiguration = applicationConfiguration;
         _fileService = fileService;
@@ -256,7 +256,7 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
         _accountCapabilityService = accountCapabilityService;
         _synchronizationManager = synchronizationManager;
         _entitlementService = entitlementService;
-        CanAccessWinoIntelligence = entitlementService?.Current.CanAccessSurfaces == true;
+        CanAccessWinoIntelligence = entitlementService?.CurrentEntitlement.CanAccessSurfaces == true;
 
         var colorHexList = _themeService.GetAvailableAccountColors();
         AvailableColors = colorHexList.Select(a => new AppColorViewModel(a)).ToList();
@@ -325,7 +325,7 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
 
     private async Task RefreshEntitlementAsync()
     {
-        var entitlement = await _entitlementService!.GetAsync().ConfigureAwait(false);
+        var entitlement = await _entitlementService!.GetEntitlementAsync().ConfigureAwait(false);
         await ExecuteUIThread(() => CanAccessWinoIntelligence = entitlement.CanAccessSurfaces);
     }
 
@@ -342,26 +342,13 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
     [RelayCommand(CanExecute = nameof(CanApplyCapabilities))]
     private async Task ApplyCapabilitiesAsync()
     {
-        var contactsChanged = Account.IsContactAccessGranted != IsContactsCapabilitySelected;
-        var tasksChanged = Account.IsTaskAccessGranted != IsTasksCapabilitySelected;
-        if (contactsChanged || tasksChanged)
+        if (!await ConfirmCapabilityTransitionsAsync())
         {
-            var confirmed = await _dialogService.ShowConfirmationDialogAsync(
-                contactsChanged ? Translator.AccountDetailsPage_ContactsTransitionTitle : Translator.AccountDetailsPage_TasksTransitionTitle,
-                contactsChanged
-                    ? (IsContactsCapabilitySelected
-                        ? Translator.AccountDetailsPage_EnableContactsConfirmation
-                        : Translator.AccountDetailsPage_DisableContactsConfirmation)
-                    : (IsTasksCapabilitySelected
-                        ? Translator.AccountDetailsPage_EnableTasksConfirmation
-                        : Translator.AccountDetailsPage_DisableTasksConfirmation),
-                Translator.Buttons_Apply);
-            if (!confirmed)
-            {
-                IsContactsCapabilitySelected = Account.IsContactAccessGranted;
-                IsTasksCapabilitySelected = Account.IsTaskAccessGranted;
-                return;
-            }
+            IsMailCapabilitySelected = Account.IsMailAccessGranted;
+            IsCalendarCapabilitySelected = Account.IsCalendarAccessGranted;
+            IsContactsCapabilitySelected = Account.IsContactAccessGranted;
+            IsTasksCapabilitySelected = Account.IsTaskAccessGranted;
+            return;
         }
 
         var previousMail = Account.IsMailAccessGranted;
@@ -395,6 +382,55 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
         {
             IsApplyingCapabilities = false;
         }
+    }
+
+    /// <summary>
+    /// Asks once for every selected transition that removes data from this PC or changes where a
+    /// mode reads from. Turning mail or calendar off deletes their local data; turning contacts or
+    /// tasks off moves them to a local store. Enabling contacts or tasks replaces the local store.
+    /// </summary>
+    private async Task<bool> ConfirmCapabilityTransitionsAsync()
+    {
+        var titles = new List<string>();
+        var messages = new List<string>();
+
+        if (Account.IsMailAccessGranted && !IsMailCapabilitySelected)
+        {
+            titles.Add(Translator.AccountDetailsPage_MailTransitionTitle);
+            messages.Add(Translator.AccountDetailsPage_DisableMailConfirmation);
+        }
+
+        if (Account.IsCalendarAccessGranted && !IsCalendarCapabilitySelected)
+        {
+            titles.Add(Translator.AccountDetailsPage_CalendarTransitionTitle);
+            messages.Add(Translator.AccountDetailsPage_DisableCalendarConfirmation);
+        }
+
+        if (Account.IsContactAccessGranted != IsContactsCapabilitySelected)
+        {
+            titles.Add(Translator.AccountDetailsPage_ContactsTransitionTitle);
+            messages.Add(IsContactsCapabilitySelected
+                ? Translator.AccountDetailsPage_EnableContactsConfirmation
+                : Translator.AccountDetailsPage_DisableContactsConfirmation);
+        }
+
+        if (Account.IsTaskAccessGranted != IsTasksCapabilitySelected)
+        {
+            titles.Add(Translator.AccountDetailsPage_TasksTransitionTitle);
+            messages.Add(IsTasksCapabilitySelected
+                ? Translator.AccountDetailsPage_EnableTasksConfirmation
+                : Translator.AccountDetailsPage_DisableTasksConfirmation);
+        }
+
+        if (messages.Count == 0)
+            return true;
+
+        var title = titles.Count == 1 ? titles[0] : Translator.AccountDetailsPage_CapabilityTransitionTitle;
+
+        return await _dialogService.ShowConfirmationDialogAsync(
+            string.Join(Environment.NewLine + Environment.NewLine, messages),
+            title,
+            Translator.Buttons_Apply);
     }
 
     [RelayCommand]
@@ -544,6 +580,8 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
             return;
 
         var account = Account;
+
+        // Question and title is reverted on purpose. We messed up the language translations for this one.
         var confirmation = await _dialogService.ShowConfirmationDialogAsync(
             Translator.DialogMessage_DeleteAccountConfirmationTitle,
             string.Format(Translator.DialogMessage_DeleteAccountConfirmationMessage, account.Name),
@@ -627,7 +665,7 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
         try
         {
             var previousProfilePictureFileId = Account.ProfilePictureFileId;
-            var newProfilePictureFileId = await _accountProfilePictureFileService.SaveProfilePictureAsync(imageData);
+            var newProfilePictureFileId = await _accountProfilePictureFileService.SavePictureAsync(PictureKind.AccountProfile, imageData);
             Account.ProfilePictureFileId = newProfilePictureFileId;
             Account.Base64ProfilePictureData = string.Empty;
             Account.IsProfilePictureBackfillComplete = true;
@@ -638,13 +676,13 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
             }
             catch
             {
-                await _accountProfilePictureFileService.DeleteProfilePictureAsync(newProfilePictureFileId);
+                await _accountProfilePictureFileService.DeletePictureAsync(PictureKind.AccountProfile, newProfilePictureFileId);
                 Account.ProfilePictureFileId = previousProfilePictureFileId;
                 throw;
             }
 
             if (previousProfilePictureFileId is { } obsoleteProfilePictureFileId)
-                await _accountProfilePictureFileService.DeleteProfilePictureAsync(obsoleteProfilePictureFileId);
+                await _accountProfilePictureFileService.DeletePictureAsync(PictureKind.AccountProfile, obsoleteProfilePictureFileId);
 
             Account = await _accountService.GetAccountAsync(Account.Id);
             _dialogService.InfoBarMessage(
@@ -679,7 +717,7 @@ public partial class AccountDetailsPageViewModel : MailBaseViewModel, IRecipient
             await _accountService.UpdateAccountAsync(Account);
 
             if (previousProfilePictureFileId is { } obsoleteProfilePictureFileId)
-                await _accountProfilePictureFileService.DeleteProfilePictureAsync(obsoleteProfilePictureFileId);
+                await _accountProfilePictureFileService.DeletePictureAsync(PictureKind.AccountProfile, obsoleteProfilePictureFileId);
 
             Account = await _accountService.GetAccountAsync(Account.Id);
             _dialogService.InfoBarMessage(

@@ -56,7 +56,10 @@ public class ContactsPageViewModelTests
             Mock.Of<IWinoRequestDelegator>(),
             navigation.Object,
             Mock.Of<IMailDialogService>(),
-            Mock.Of<ILaunchProtocolService>());
+            Mock.Of<IActivationStateService>())
+        {
+            HasCreateDestinations = true
+        };
         var details = ContactShortcut(KeyboardShortcutAction.NewContact);
 
         await viewModel.KeyboardShortcutHook(details);
@@ -83,7 +86,7 @@ public class ContactsPageViewModelTests
             delegator.Object,
             Mock.Of<INavigationService>(),
             dialogs.Object,
-            Mock.Of<ILaunchProtocolService>())
+            Mock.Of<IActivationStateService>())
         {
             IsSelectionMode = true
         };
@@ -144,7 +147,7 @@ public class ContactsPageViewModelTests
             Mock.Of<IWinoRequestDelegator>(),
             navigation.Object,
             dialogs.Object,
-            Mock.Of<ILaunchProtocolService>())
+            Mock.Of<IActivationStateService>())
         {
             Dispatcher = new ImmediateDispatcher()
         };
@@ -184,7 +187,7 @@ public class ContactsPageViewModelTests
             Mock.Of<IWinoRequestDelegator>(),
             navigation.Object,
             dialogs.Object,
-            Mock.Of<ILaunchProtocolService>())
+            Mock.Of<IActivationStateService>())
         {
             Dispatcher = new ImmediateDispatcher()
         };
@@ -231,7 +234,7 @@ public class ContactsPageViewModelTests
         var dialogs = new Mock<IMailDialogService>();
         dialogs.Setup(service => service.ShowConfirmationDialogAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
         var delegator = new Mock<IWinoRequestDelegator>();
-        var viewModel = new ContactsPageViewModel(PageService().Object, Mock.Of<IAccountService>(), Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(), dialogs.Object, Mock.Of<ILaunchProtocolService>());
+        var viewModel = new ContactsPageViewModel(PageService().Object, Mock.Of<IAccountService>(), Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(), dialogs.Object, Mock.Of<IActivationStateService>());
         var accountId = Guid.NewGuid();
         var addressBookId = Guid.NewGuid();
         foreach (var name in new[] { "One", "Two", "Three" })
@@ -300,7 +303,7 @@ public class ContactsPageViewModelTests
             .ReturnsAsync(new PagedContactsResult([added, updated], 2, false, 0, 50));
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(),
-            Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>());
+            Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>());
 
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => contactService.Invocations.Count(invocation =>
@@ -338,7 +341,7 @@ public class ContactsPageViewModelTests
             .ReturnsAsync(new PagedContactsResult([updatedAlpha, gamma], 2, false, 0, 50));
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(),
-            Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>());
+            Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>());
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.Contacts.Count == 2 && !viewModel.IsLoading);
         var actions = new List<NotifyCollectionChangedAction>();
@@ -370,7 +373,7 @@ public class ContactsPageViewModelTests
             .ReturnsAsync(true);
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(),
-            Mock.Of<INavigationService>(), dialogs.Object, Mock.Of<ILaunchProtocolService>());
+            Mock.Of<INavigationService>(), dialogs.Object, Mock.Of<IActivationStateService>());
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.Contacts.Count == 1 && !viewModel.IsLoading);
 
@@ -406,7 +409,7 @@ public class ContactsPageViewModelTests
             });
         viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             synchronizationManager.Object, Mock.Of<IWinoRequestDelegator>(), Mock.Of<INavigationService>(),
-            Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>());
+            Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>());
 
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => contactService.Invocations.Count(invocation =>
@@ -496,7 +499,7 @@ public class ContactsPageViewModelTests
             .Returns(Task.CompletedTask);
         var viewModel = new ContactsPageViewModel(contactService.Object, Mock.Of<IAccountService>(),
             Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(),
-            dialogs.Object, Mock.Of<ILaunchProtocolService>());
+            dialogs.Object, Mock.Of<IActivationStateService>());
 
         await viewModel.AssignContactsToListAsync(list, [firstId, firstId, secondId, Guid.Empty]);
 
@@ -529,7 +532,7 @@ public class ContactsPageViewModelTests
             .Returns(Task.CompletedTask);
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(),
-            Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>());
+            Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>());
 
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.FilterGroups.SelectMany(group => group).Any(filter => filter.ListId == list.Id));
@@ -570,7 +573,7 @@ public class ContactsPageViewModelTests
             .Returns(Task.CompletedTask);
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(),
-            dialogs.Object, Mock.Of<ILaunchProtocolService>());
+            dialogs.Object, Mock.Of<IActivationStateService>());
 
         viewModel.OnNavigatedTo(NavigationMode.New, null!);
         await WaitUntilAsync(() => viewModel.FilterGroups.Count == 1 && !viewModel.IsLoading);
@@ -621,7 +624,7 @@ public class ContactsPageViewModelTests
             .Returns(Task.CompletedTask);
         var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
             Mock.Of<ISynchronizationManager>(), delegator.Object, Mock.Of<INavigationService>(),
-            Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>())
+            Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>())
         {
             Dispatcher = new ImmediateDispatcher()
         };
@@ -712,6 +715,65 @@ public class ContactsPageViewModelTests
         viewModel.SelectedFilter.Should().NotBe(favorites);
     }
 
+    [Fact]
+    public async Task WithoutAWritableDestination_NewContactAndNewListAreUnavailable()
+    {
+        var contactService = PageService();
+        contactService.Setup(service => service.GetCreateDestinationsAsync()).ReturnsAsync(
+        [
+            new ContactCreateDestination(Guid.NewGuid(), Guid.NewGuid(), ContactSourceKind.CardDav, "Account", "Shared", false, true)
+        ]);
+        var navigation = new Mock<INavigationService>();
+        var accountService = new Mock<IAccountService>();
+        accountService.Setup(service => service.GetAccountsAsync()).ReturnsAsync([]);
+        var viewModel = new ContactsPageViewModel(contactService.Object, accountService.Object,
+            Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(), navigation.Object,
+            Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>())
+        {
+            Dispatcher = new ImmediateDispatcher()
+        };
+
+        viewModel.OnNavigatedTo(NavigationMode.New, null);
+        await WaitUntilAsync(() => viewModel.ShellMenu?.Items.Count > 2);
+
+        viewModel.HasCreateDestinations.Should().BeFalse();
+        viewModel.AddContactCommand.CanExecute(null).Should().BeFalse();
+        viewModel.CreateListCommand.CanExecute(null).Should().BeFalse();
+        viewModel.ShellMenu.Items.OfType<NewContactMenuItem>().Single().IsEnabled.Should().BeFalse();
+        viewModel.ShellMenu.Items.OfType<NewAddressListMenuItem>().Single().IsEnabled.Should().BeFalse();
+
+        await viewModel.ShellMenuProvider.OnMenuItemInvokedAsync(viewModel.ShellMenu.Items.OfType<NewContactMenuItem>().Single());
+        var details = ContactShortcut(KeyboardShortcutAction.NewContact);
+        await viewModel.KeyboardShortcutHook(details);
+
+        details.Handled.Should().BeFalse();
+        navigation.Verify(service => service.Navigate(
+            WinoPage.ContactEditPage,
+            It.IsAny<object>(),
+            It.IsAny<NavigationReferenceFrame?>(),
+            It.IsAny<NavigationTransitionType>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnAddressBookAppearing_EnablesNewContactAndNewList()
+    {
+        var destinations = new List<ContactCreateDestination>();
+        var contactService = PageService();
+        contactService.Setup(service => service.GetCreateDestinationsAsync()).ReturnsAsync(() => destinations.ToList());
+        var viewModel = await NavigatedViewModelAsync(contactService);
+        viewModel.HasCreateDestinations.Should().BeFalse();
+
+        var addressBook = new ContactAddressBook { Id = Guid.NewGuid(), MailAccountId = Guid.NewGuid(), DisplayName = "People" };
+        destinations.Add(new ContactCreateDestination(addressBook.MailAccountId, addressBook.Id, ContactSourceKind.Local, "Account", "People", true));
+        ((IRecipient<ContactAddressBookStateChanged>)viewModel).Receive(
+            new ContactAddressBookStateChanged(addressBook, OptimisticEntityChange.Upsert, EntityUpdateSource.ClientUpdated));
+
+        await WaitUntilAsync(() => viewModel.HasCreateDestinations);
+        viewModel.AddContactCommand.CanExecute(null).Should().BeTrue();
+        viewModel.ShellMenu.Items.OfType<NewContactMenuItem>().Single().IsEnabled.Should().BeTrue();
+        viewModel.ShellMenu.Items.OfType<NewAddressListMenuItem>().Single().IsEnabled.Should().BeTrue();
+    }
+
     /// <summary>Every pane entry the user can actually invoke. Section captions are not one.</summary>
     private static IReadOnlyList<MenuItemBase> InteractivePaneEntries(ContactsPageViewModel viewModel)
         => viewModel.ShellMenu.Items.OfType<MenuItemBase>().Where(item => item is not ShellSectionHeaderMenuItem).ToList();
@@ -728,7 +790,7 @@ public class ContactsPageViewModelTests
             Mock.Of<IWinoRequestDelegator>(),
             Mock.Of<INavigationService>(),
             Mock.Of<IMailDialogService>(),
-            Mock.Of<ILaunchProtocolService>())
+            Mock.Of<IActivationStateService>())
         {
             Dispatcher = new ImmediateDispatcher()
         };
@@ -774,11 +836,15 @@ public class ContactsPageViewModelTests
         mock.Setup(service => service.GetContactListsAsync()).ReturnsAsync([]);
         mock.Setup(service => service.GetContactListCountsAsync()).ReturnsAsync([]);
         mock.Setup(service => service.GetFavoriteContactsCountAsync()).ReturnsAsync(0);
+        mock.Setup(service => service.GetCreateDestinationsAsync()).ReturnsAsync(
+        [
+            new ContactCreateDestination(Guid.NewGuid(), Guid.NewGuid(), ContactSourceKind.Local, "Account", "People", true)
+        ]);
         return mock;
     }
 
     private static ContactsPageViewModel CreateViewModel(IContactService contactService)
-        => new(contactService, Mock.Of<IAccountService>(), Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(), Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<ILaunchProtocolService>());
+        => new(contactService, Mock.Of<IAccountService>(), Mock.Of<ISynchronizationManager>(), Mock.Of<IWinoRequestDelegator>(), Mock.Of<INavigationService>(), Mock.Of<IMailDialogService>(), Mock.Of<IActivationStateService>());
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

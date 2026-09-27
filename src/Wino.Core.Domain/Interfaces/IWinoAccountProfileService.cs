@@ -23,14 +23,20 @@ public interface IWinoAccountProfileService
     Task<ApiEnvelope<EmailConfirmationResendResultDto>> ResendEmailConfirmationAsync(string endpoint, string ticket, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<JsonElement>> ForgotPasswordAsync(string email, CancellationToken cancellationToken = default);
     Task<WinoAccount?> GetActiveAccountAsync();
+    /// <summary>
+    /// Returns the signed-in account with a usable access token, refreshing it when it expired.
+    /// Returns null when no account is signed in or its credentials were rejected.
+    /// </summary>
+    /// <exception cref="Exceptions.WinoAccountApiException">The Wino service could not be reached to refresh the token.</exception>
     Task<WinoAccount?> GetAuthenticatedAccountAsync(CancellationToken cancellationToken = default);
     Task<bool> HasActiveAccountAsync();
     Task<ApiEnvelope<AuthUserDto>> GetCurrentUserAsync(CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiSummaryResultDto>> SummarizeAsync(IReadOnlyList<MailContentSegment> segments, string targetLanguage, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiTranslationResultDto>> TranslateAsync(IReadOnlyList<MailContentSegment> segments, string? sourceLanguage, string targetLanguage, CancellationToken cancellationToken = default);
-    Task<ApiEnvelope<AiTextResultDto>> RewriteAsync(string html, string mode, CancellationToken cancellationToken = default);
-    Task<string?> GetSettingsAsync(CancellationToken cancellationToken = default);
-    Task SaveSettingsAsync(string settingsJson, CancellationToken cancellationToken = default);
+    /// <param name="context">A <see cref="RewriteContexts"/> value: reading a received message or composing a draft.</param>
+    Task<ApiEnvelope<AiTextResultDto>> RewriteAsync(string html, string mode, string context, CancellationToken cancellationToken = default);
+    Task<WinoSyncSnapshotDownload?> GetSyncSnapshotAsync(CancellationToken cancellationToken = default);
+    Task<UserSyncSnapshotStatusDto> PutSyncSnapshotAsync(byte[] payload, long? expectedRevision = null, CancellationToken cancellationToken = default);
     Task<UserMailboxSyncListDto> GetMailboxesAsync(CancellationToken cancellationToken = default);
     Task ReplaceMailboxesAsync(ReplaceUserMailboxesRequestDto request, CancellationToken cancellationToken = default);
     Task SignOutAsync(CancellationToken cancellationToken = default);
