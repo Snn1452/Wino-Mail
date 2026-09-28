@@ -98,9 +98,9 @@
             </desktop:Extension>
             <com:Extension Category="windows.comServer">
               <com:ComServer>
-                <com:SurrogateServer DisplayName="Wino Mail notification activator">
+                <com:ExeServer Executable="Wino.Mail.WinUI.exe" Arguments="----AppNotificationActivated:" DisplayName="Wino Mail notification activator">
                   <com:Class Id="72c6d2d0-2538-44fe-a1b1-499f47bb1181" />
-                </com:SurrogateServer>
+                </com:ExeServer>
               </com:ComServer>
             </com:Extension>
 
