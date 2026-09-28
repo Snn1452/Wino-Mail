@@ -2,20 +2,27 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Windows.AppNotifications;
 using Wino.NotificationHost.Contracts;
-using Wino.Platform.Windows;
 
 namespace Wino.Mail.WinUI.Services;
 
 internal sealed class NotificationHostClient : INotificationHostClient
 {
-    public Task ShowAsync(NotificationHostApplication application, AppNotification notification, CancellationToken cancellationToken = default)
-        => NotificationHostDispatcher.ShowAsync(
-            application,
-            notification.Payload,
-            notification.Tag,
-            notification.Group,
-            cancellationToken);
+    public Task ShowAsync(
+        NotificationHostApplication application,
+        AppNotification notification,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        AppNotificationManager.Default.Show(notification);
+        return Task.CompletedTask;
+    }
 
-    public Task RemoveByTagAsync(NotificationHostApplication application, string tag, CancellationToken cancellationToken = default)
-        => NotificationHostDispatcher.RemoveByTagAsync(application, tag, cancellationToken);
+    public Task RemoveByTagAsync(
+        NotificationHostApplication application,
+        string tag,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+        return AppNotificationManager.Default.RemoveByTagAsync(tag).AsTask();
+    }
 }
