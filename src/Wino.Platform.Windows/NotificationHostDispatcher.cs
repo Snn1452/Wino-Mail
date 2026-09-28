@@ -66,15 +66,34 @@ public static class NotificationHostDispatcher
         return Task.CompletedTask;
     }
 
-    public static bool HasNotification(
+    public static async Task<bool> WaitForNotificationAsync(
         NotificationHostApplication application,
-        string tag)
+        string tag,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+        if (timeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout));
 
         var applicationId = NotificationHostApplicationIds.GetToastTargetApplicationId(application);
-        return ToastNotificationManager.History
-            .GetHistory(applicationId)
-            .Any(notification => string.Equals(notification.Tag, tag, StringComparison.Ordinal));
+        var deadline = DateTime.UtcNow + timeout;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (ToastNotificationManager.History
+                .GetHistory(applicationId)
+                .Any(notification => string.Equals(notification.Tag, tag, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        return false;
     }
 }
