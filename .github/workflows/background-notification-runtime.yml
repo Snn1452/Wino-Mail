@@ -60,6 +60,7 @@ jobs:
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $profile.Publisher -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
           if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the Beta test signing certificate.' }
           "BETA_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=WinoMail.Beta" >> $env:GITHUB_ENV
 
       - name: Build installable Beta MSIXBundle
         shell: pwsh
@@ -104,6 +105,65 @@ jobs:
           name: Installable-Beta-MSIXBundle
           path: ${{ env.BETA_RELEASE_DIR }}
           if-no-files-found: error
+
+      - name: Run background notification smoke while UI is open
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath)) { throw 'BackgroundSyncHost payload is missing.' }
+
+          $targetAumid = "$($package.PackageFamilyName)!App"
+          Write-Host "Launching packaged UI through $targetAumid"
+
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
+
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was open with exit code $smokeExitCode." }
+          Start-Sleep -Seconds 3
+          if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
+          Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Run background notification smoke with UI closed
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
       - name: Uninstall Beta package
         if: always()
