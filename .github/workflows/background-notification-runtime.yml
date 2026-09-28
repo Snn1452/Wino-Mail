@@ -109,11 +109,19 @@ jobs:
           $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
           if (-not (Test-Path -LiteralPath $backgroundHostPath)) { throw 'BackgroundSyncHost payload is missing.' }
 
-          $ui = Start-Process -FilePath $exe -ArgumentList '--wino-mail' -PassThru
-          Start-Sleep -Seconds 8
-
           $targetAumid = "$($package.PackageFamilyName)!App"
-          Write-Host "Testing toast target AUMID: $targetAumid"
+          Write-Host "Launching packaged UI through $targetAumid"
+
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
+
           & $backgroundHostPath '--notification-smoke-test'
           if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was open.' }
           Start-Sleep -Seconds 3
