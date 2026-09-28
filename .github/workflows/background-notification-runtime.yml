@@ -107,8 +107,8 @@ jobs:
         with:
           name: Installable-MSIXBundle
           path: |
-            ${{ env:BUNDLE_PATH }}
-            ${{ env:CERTIFICATE_PATH }}
+            ${{ env.BUNDLE_PATH }}
+            ${{ env.CERTIFICATE_PATH }}
           if-no-files-found: error
       - name: Run background notification smoke while UI is open
         shell: pwsh
