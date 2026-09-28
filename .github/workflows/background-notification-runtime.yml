@@ -131,8 +131,8 @@ jobs:
 
           if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
 
-          & $backgroundHostPath '--notification-smoke-test'
-          $smokeExitCode = $LASTEXITCODE
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
 
           foreach ($diagnosticPath in @(
             (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
