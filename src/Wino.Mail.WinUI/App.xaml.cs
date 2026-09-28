@@ -15,7 +15,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
-using Windows.ApplicationModel;
 using Serilog;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer;
@@ -2327,7 +2326,7 @@ public partial class App : WinoApplication,
 
     private static async Task LaunchBackgroundSyncHostAsync()
     {
-        var appUserModelId = $"{Package.Current.Id.FamilyName}!BackgroundSyncHost";
+        var appUserModelId = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!BackgroundSyncHost";
 
         var processId = await Task.Run(() => PackagedApplicationActivator.Activate(appUserModelId, string.Empty))
             .WaitAsync(TimeSpan.FromSeconds(15))
