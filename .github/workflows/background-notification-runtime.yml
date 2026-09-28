@@ -13,6 +13,8 @@ on:
       - 'src/Wino.SourceGenerators/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
+      - '.github/workflows/background-notification-runtime.yml'
+      - 'scripts/release-profiles/Beta.json'
   workflow_dispatch:
 
 concurrency:
@@ -25,7 +27,17 @@ permissions:
 
 jobs:
   notification-runtime:
-    name: Install package and test BackgroundSyncHost toast
+    name: Install Beta package and test BackgroundSyncHost toast
+    env:
+      WINO_BETA_RELEASE_SIGNING_ENDPOINT: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ENDPOINT }}
+      WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_ACCOUNT_NAME }}
+      WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.WINO_BETA_RELEASE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      WINO_BETA_RELEASE_PUBLISHER_SUBJECT: ${{ secrets.WINO_BETA_RELEASE_PUBLISHER_SUBJECT }}
+      WINO_BETA_RELEASE_AZURE_TENANT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_TENANT_ID }}
+      WINO_BETA_RELEASE_AZURE_CLIENT_ID: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_ID }}
+      WINO_BETA_RELEASE_AZURE_CLIENT_SECRET: ${{ secrets.WINO_BETA_RELEASE_AZURE_CLIENT_SECRET }}
+      WINO_BETA_RELEASE_APPINSTALLER_URI: ${{ vars.WINO_BETA_RELEASE_APPINSTALLER_URI }}
+      WINO_BETA_RELEASE_PACKAGE_BASE_URI: ${{ vars.WINO_BETA_RELEASE_PACKAGE_BASE_URI }}
     runs-on: windows-latest
     timeout-minutes: 60
 
@@ -50,65 +62,63 @@ jobs:
         with:
           dotnet-version: 10.0.301
 
-      - name: Read package publisher identity
+      - name: Read Beta package identity
         shell: pwsh
         run: |
-          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
-          $publisher = [string]$manifest.Package.Identity.Publisher
-          $packageName = [string]$manifest.Package.Identity.Name
-          if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'Manifest publisher is missing.' }
-          "PACKAGE_PUBLISHER=$publisher" >> $env:GITHUB_ENV
-          "PACKAGE_NAME=$packageName" >> $env:GITHUB_ENV
+          $profile = Get-Content -LiteralPath 'scripts/release-profiles/Beta.json' -Raw | ConvertFrom-Json
+          if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
+          "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
 
-      - name: Create Store test certificate
+      - name: Check beta artwork
         shell: pwsh
         run: |
-          Set-StrictMode -Version Latest
-          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $env:PACKAGE_PUBLISHER -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
-          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the test signing certificate.' }
-          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          if (-not (Test-Path 'release-assets/Beta/Assets/Wino_Icon.ico')) { throw 'Supply beta artwork before testing.' }
 
-      - name: Build installable Store MSIXBundle
+      - name: Install Artifact Signing client
         shell: pwsh
         run: |
-          pwsh -NoProfile -File .\scripts\build-releases.ps1 `
-            -NonInteractive `
-            -Store `
-            -Architectures x64 `
-            -StoreTestCertificateThumbprint $env:CERT_THUMBPRINT
-          if ($LASTEXITCODE -ne 0) { throw 'Store MSIXBundle build failed.' }
+          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -Source https://api.nuget.org/v3/index.json -OutputDirectory "$env:RUNNER_TEMP/signing" -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact Signing client installation failed.' }
+          $dlib = Get-ChildItem "$env:RUNNER_TEMP/signing" -Filter Azure.CodeSigning.Dlib.dll -Recurse |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } | Select-Object -First 1
+          if (-not $dlib) { throw 'The x64 Artifact Signing library was not found.' }
+          "WINO_BETA_RELEASE_SIGNING_DLIB_PATH=$($dlib.FullName)" >> $env:GITHUB_ENV
+
+      - name: Verify packaging logic
+        shell: pwsh
+        run: ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Build installable Beta MSIXBundle
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pwsh -NoProfile -File .\scripts\build-releases.ps1 -NonInteractive -Beta -Architectures x64
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
           [xml]$sourceManifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
           $version = [string]$sourceManifest.Package.Identity.Version
-          $releaseDir = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Store_$version"
-          $bundle = Join-Path $releaseDir "WinoMail_Store_$version.msixbundle"
-          $certificate = Join-Path $releaseDir 'WinoMail_Store_TestCertificate.cer'
-
-          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Store MSIXBundle was not produced: $bundle" }
-          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Store test certificate was not produced: $certificate" }
-
+          $releaseDir = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Beta_$version"
+          $bundle = Join-Path $releaseDir "WinoMail_Beta_$version.msixbundle"
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Beta MSIXBundle was not produced: $bundle" }
           "BUNDLE_PATH=$((Resolve-Path -LiteralPath $bundle).Path)" >> $env:GITHUB_ENV
-          "CERTIFICATE_PATH=$((Resolve-Path -LiteralPath $certificate).Path)" >> $env:GITHUB_ENV
-          "STORE_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
+          "BETA_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
 
-      - name: Install test certificate and Store bundle
+      - name: Install signed Beta bundle
         shell: pwsh
         run: |
-          Import-Certificate -FilePath $env:CERTIFICATE_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
           Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
-
-          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $package = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
           "PACKAGE_FAMILY=$($package.PackageFamilyName)" >> $env:GITHUB_ENV
           $manifest = Get-AppxPackageManifest $package
-          if ([string]$manifest.Package.Identity.Name -cne $env:PACKAGE_NAME) { throw 'Installed package identity mismatch.' }
+          if ([string]$manifest.Package.Identity.Name -cne 'WinoMail.Beta') { throw 'Installed package identity mismatch.' }
 
-      - name: Upload installable Store bundle and certificate
+      - name: Upload installable Beta bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Installable-MSIXBundle
-          path: |
-            ${{ env.BUNDLE_PATH }}
-            ${{ env.CERTIFICATE_PATH }}
+          name: Installable-Beta-MSIXBundle
+          path: ${{ env.BETA_RELEASE_DIR }}
           if-no-files-found: error
       - name: Run background notification smoke while UI is open
         shell: pwsh
@@ -169,14 +179,10 @@ jobs:
 
           if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
-      - name: Uninstall package and remove certificate
+      - name: Uninstall Beta package
         if: always()
         shell: pwsh
         run: |
-          Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction SilentlyContinue | ForEach-Object {
             Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue
-          }
-          if ($env:CERT_THUMBPRINT) {
-            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force }
-            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force }
           }
