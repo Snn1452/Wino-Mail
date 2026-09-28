@@ -31,7 +31,7 @@ internal sealed class BackgroundNativeAppService : INativeAppService
     public bool IsShiftKeyPressed() => false;
 
     public Task<StartupBehaviorResult> GetCurrentStartupBehaviorAsync()
-        => Task.FromResult(StartupBehaviorResult.Unknown);
+        => Task.FromResult(StartupBehaviorResult.Disabled);
 
     public Task<StartupBehaviorResult> ToggleStartupBehavior(bool isEnabled)
         => Task.FromResult(StartupBehaviorResult.Unknown);
