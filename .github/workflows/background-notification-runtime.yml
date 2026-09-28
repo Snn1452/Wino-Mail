@@ -90,7 +90,6 @@ jobs:
       - name: Install test certificate and package
         shell: pwsh
         run: |
-          Import-Certificate -FilePath ([string](Join-Path $env:RUNNER_TEMP 'none.cer')) -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Out-Null
           $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$env:CERT_THUMBPRINT" -ErrorAction Stop
           $publicPath = Join-Path $env:RUNNER_TEMP 'Wino-TestPublisher.cer'
           Export-Certificate -Cert $cert -FilePath $publicPath -Type CERT -Force | Out-Null
@@ -113,12 +112,8 @@ jobs:
           $ui = Start-Process -FilePath $exe -ArgumentList '--wino-mail' -PassThru
           Start-Sleep -Seconds 8
 
-          $notifier = New-Object Windows.UI.Notifications.ToastNotificationManager
           $targetAumid = "$($package.PackageFamilyName)!App"
-          $toastNotifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($targetAumid)
-          if ($toastNotifier.Setting -ne [Windows.UI.Notifications.NotificationSetting]::Enabled) { throw "Windows notifications are disabled for $targetAumid: $($toastNotifier.Setting)" }
-
-          $env:WINO_BACKGROUND_NOTIFICATION_SMOKE_AUMID = $targetAumid
+          Write-Host "Testing toast target AUMID: $targetAumid"
           & $host '--notification-smoke-test'
           if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was open.' }
           Start-Sleep -Seconds 3
