@@ -153,6 +153,7 @@ internal static class Program
         services.RegisterCoreServices();
 
         services.AddSingleton<INativeAppService, BackgroundNativeAppService>();
+        services.AddSingleton<IMicrosoftStoreService, BackgroundMicrosoftStoreService>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
         services.AddSingleton<IStoreManagementService, BackgroundStoreManagementService>();
         services.AddSingleton<IKeyPressService, BackgroundKeyPressService>();
