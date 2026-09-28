@@ -41,12 +41,12 @@ public static class NotificationHostDispatcher
                 $"Windows toast notifications are not enabled for '{appUserModelId}'. Current setting: {notifier.Setting}.");
         }
 
+        notifier.Show(toast);
         toast.Dismissed += (_, _) => { };
         toast.Failed += (_, args) =>
             System.Diagnostics.Debug.WriteLine(
                 $"Wino Mail background toast failed. ErrorCode={args.ErrorCode}; AUMID={appUserModelId}; Tag={tag}");
 
-        notifier.Show(toast);
         return Task.CompletedTask;
     }
 
