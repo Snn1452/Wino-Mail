@@ -90,8 +90,8 @@ public partial class App : WinoApplication,
     private readonly ConcurrentDictionary<Guid, int> _inboxSyncCounters = [];
     private readonly AppNotificationHandler _notificationHandler;
     private readonly AppActivationHandler _activationHandler;
-    private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);
+    private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly DateTimeOffset _sessionStartedAtUtc = DateTimeOffset.UtcNow;
     private MainTrayController? _companionIntegration;
     private Window? _backgroundLifetimeWindow;
@@ -2281,6 +2281,7 @@ public partial class App : WinoApplication,
         _ = RunCalendarAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), _calendarAutoSynchronizationLoopCts.Token);
         LogActivation($"Automatic calendar sync loop started. Interval: {intervalMinutes} minute(s).");
     }
+
 
     internal async Task<bool> StartBackgroundSyncHostIfNeededAsync()
     {
