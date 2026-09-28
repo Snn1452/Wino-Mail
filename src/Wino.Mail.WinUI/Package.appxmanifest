@@ -92,6 +92,18 @@
 				</uap:ShareTarget>
 			</uap:Extension>
 
+            <!-- AppNotificationManager / toast activation for the visible Wino Mail application -->
+            <desktop:Extension Category="windows.toastNotificationActivation">
+              <desktop:ToastNotificationActivation ToastActivatorCLSID="72c6d2d0-2538-44fe-a1b1-499f47bb1181" />
+            </desktop:Extension>
+            <com:Extension Category="windows.comServer">
+              <com:ComServer>
+                <com:SurrogateServer DisplayName="Wino Mail notification activator">
+                  <com:Class Id="72c6d2d0-2538-44fe-a1b1-499f47bb1181" />
+                </com:SurrogateServer>
+              </com:ComServer>
+            </com:Extension>
+
 			<!-- File Assosication: EML -->
 			<uap:Extension Category="windows.fileTypeAssociation">
 				<uap:FileTypeAssociation Name="eml">
