@@ -75,6 +75,11 @@ public static class NotificationHostRuntime
                 NotificationHostLogger.Write("execute-start", requestId);
                 ExecuteRequest(notificationManager, request);
                 NotificationHostLogger.Write(request.Operation.ToString(), requestId);
+                if (request.Operation == NotificationHostOperation.Show &&
+                    request.Tag?.StartsWith("wino-smoke-test-", StringComparison.Ordinal) == true)
+                {
+                    VerifySmokeNotification(notificationManager, request.Tag, requestId);
+                }
                 NotificationHostLogger.Write("execute-complete", requestId);
             }
             finally
@@ -93,6 +98,31 @@ public static class NotificationHostRuntime
         {
             NotificationHostFileStore.TryDeleteRequest(localCachePath, requestId);
         }
+    }
+
+    private static void VerifySmokeNotification(
+        AppNotificationManager manager,
+        string tag,
+        Guid requestId)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var notifications = manager.GetAllAsync().AsTask().GetAwaiter().GetResult();
+            if (notifications.Any(notification =>
+                    string.Equals(notification.Tag, tag, StringComparison.Ordinal)))
+            {
+                NotificationHostLogger.Write(
+                    "smoke-notification-present",
+                    requestId,
+                    message: $"Tag={tag}; Setting={manager.Setting}");
+                return;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        throw new InvalidOperationException(
+            $"AppNotificationManager.Show completed, but the smoke notification was not present in Notification Center. Tag={tag}; Setting={manager.Setting}");
     }
 
     private static void ExecuteRequest(AppNotificationManager manager, NotificationHostRequest request)
