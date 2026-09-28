@@ -1,0 +1,136 @@
+name: MSIXBundle validation
+
+on:
+  pull_request:
+    paths:
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Mail.NotificationHost/**'
+      - 'src/Wino.Calendar.NotificationHost/**'
+      - 'src/Wino.People.NotificationHost/**'
+      - 'src/Wino.Tasks.NotificationHost/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'scripts/**'
+      - 'tests/scripts/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'global.json'
+      - 'nuget.config'
+  workflow_dispatch:
+
+concurrency:
+  group: msixbundle-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  bundle:
+    name: Build x64 MSIXBundle
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release packaging logic
+        shell: pwsh
+        run: ./tests/scripts/Build-Releases.Tests.ps1
+
+      - name: Restore
+        shell: pwsh
+        run: |
+          $args = @(
+            'restore',
+            'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj',
+            '-r', 'win-x64',
+            '-p:Platform=x64',
+            '-p:Configuration=Release',
+            '--configfile', 'nuget.config'
+          )
+          & dotnet @args
+          if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
+
+      - name: Build unsigned x64 MSIXBundle
+        shell: pwsh
+        run: |
+          $args = @(
+            'build',
+            'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj',
+            '--configuration', 'Release',
+            '--no-restore',
+            '-r', 'win-x64',
+            '/m:1',
+            '/p:Platform=x64',
+            '/p:WinoIsReleaseBuild=true',
+            '/p:UseNativeAot=false',
+            '/p:PublishAot=false',
+            '/p:PublishTrimmed=false',
+            '/p:TrimMode=partial',
+            '/p:GenerateAppxPackageOnBuild=true',
+            '/p:AppxPackageSigningEnabled=false',
+            '/p:AppxBundle=Always',
+            '/p:AppxBundlePlatforms=x64',
+            '/p:UapAppxPackageBuildMode=SideloadOnly',
+            '/p:GenerateTemporaryStoreCertificate=false',
+            '/p:GenerateAppInstallerFile=false',
+            '/p:GenerateTestArtifacts=true'
+          )
+          & dotnet @args
+          if ($LASTEXITCODE -ne 0) { throw 'MSIXBundle build failed.' }
+
+      - name: Validate generated bundle
+        shell: pwsh
+        run: |
+          $bundles = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Filter '*.msixbundle' -File -Recurse | Sort-Object LastWriteTime -Descending)
+          if ($bundles.Count -ne 1) {
+            throw "Expected exactly one MSIXBundle, found $($bundles.Count)."
+          }
+
+          $bundle = $bundles[0]
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead($bundle.FullName)
+          try {
+            $entry = $zip.GetEntry('AppxMetadata/AppxBundleManifest.xml')
+            if ($null -eq $entry) { throw 'Bundle manifest is missing.' }
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try {
+              [xml]$manifestText = $reader.ReadToEnd()
+            }
+            finally {
+              $reader.Dispose()
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+
+          $apps = @($manifestText.Bundle.Packages.Package | Where-Object { $_.Type -eq 'application' })
+          if ($apps.Count -ne 1) { throw "Expected exactly one application package in x64 bundle, found $($apps.Count)." }
+          if ([string]$apps[0].Architecture -ine 'x64') { throw 'Bundle does not contain the x64 application package.' }
+
+          Write-Host "MSIXBundle: $($bundle.FullName)"
+          Write-Host "Bundle size: $([Math]::Round($bundle.Length / 1MB, 2)) MB"
+          "BUNDLE_PATH=$($bundle.FullName)" >> $env:GITHUB_ENV
+
+      - name: Upload MSIXBundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinoMail-x64-MSIXBundle
+          path: ${{ env.BUNDLE_PATH }}
+          if-no-files-found: error
