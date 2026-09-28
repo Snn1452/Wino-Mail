@@ -1,0 +1,146 @@
+name: Background notification runtime smoke
+
+on:
+  pull_request:
+    paths:
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+  workflow_dispatch:
+
+concurrency:
+  group: background-notification-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  notification-runtime:
+    name: Install package and test BackgroundSyncHost toast
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check installed .NET SDK
+        shell: pwsh
+        run: |
+          $present = @(dotnet --list-sdks | Where-Object {
+            if ($_ -match '^([0-9]+)\.([0-9]+)\.([0-9]+)\s') {
+              return ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -eq 0 -and [int]$Matches[3] -ge 301)
+            }
+            return $false
+          }).Count -gt 0
+          "DOTNET_SDK_PRESENT=$($present.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
+      - name: Setup .NET SDK
+        if: env.DOTNET_SDK_PRESENT != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.301
+
+      - name: Read package publisher identity
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $publisher = [string]$manifest.Package.Identity.Publisher
+          $packageName = [string]$manifest.Package.Identity.Name
+          if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'Manifest publisher is missing.' }
+          "PACKAGE_PUBLISHER=$publisher" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=$packageName" >> $env:GITHUB_ENV
+
+      - name: Build unsigned x64 MSIX
+        shell: pwsh
+        run: |
+          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -r win-x64 -p:Platform=x64 -p:Configuration=Release --configfile nuget.config
+          if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
+
+          dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configuration Release --no-restore -r win-x64 /m:1 /p:Platform=x64 /p:WinoIsReleaseBuild=true /p:UseNativeAot=false /p:PublishAot=false /p:PublishTrimmed=false /p:TrimMode=partial /p:GenerateAppxPackageOnBuild=true /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never /p:AppxBundlePlatforms=x64
+          if ($LASTEXITCODE -ne 0) { throw 'Unsigned x64 MSIX build failed.' }
+
+          $msix = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Filter '*.msix' -File -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+          if ($msix.Count -ne 1) { throw "Expected one x64 MSIX, found $($msix.Count)." }
+          "MSIX_PATH=$($msix.FullName)" >> $env:GITHUB_ENV
+
+      - name: Create test certificate and sign MSIX
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $env:PACKAGE_PUBLISHER -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the test signing certificate.' }
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+          $sdkTools = Get-ChildItem -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin') -Filter signtool.exe -Recurse -File | Sort-Object FullName -Descending
+          $signTool = $sdkTools | Select-Object -First 1
+          if ($null -eq $signTool) { throw 'signtool.exe was not found.' }
+          & $signTool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint $env:MSIX_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX signing failed.' }
+
+      - name: Install test certificate and package
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath ([string](Join-Path $env:RUNNER_TEMP 'none.cer')) -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Out-Null
+          $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$env:CERT_THUMBPRINT" -ErrorAction Stop
+          $publicPath = Join-Path $env:RUNNER_TEMP 'Wino-TestPublisher.cer'
+          Export-Certificate -Cert $cert -FilePath $publicPath -Type CERT -Force | Out-Null
+          Import-Certificate -FilePath $publicPath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+          Add-AppxPackage -Path $env:MSIX_PATH -ForceApplicationShutdown -ErrorAction Stop
+
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          "PACKAGE_FAMILY=$($package.PackageFamilyName)" >> $env:GITHUB_ENV
+          $manifest = Get-AppxPackageManifest $package
+          if ([string]$manifest.Package.Identity.Name -cne $env:PACKAGE_NAME) { throw 'Installed package identity mismatch.' }
+
+      - name: Run background notification smoke while UI is open
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
+          $host = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $host)) { throw 'BackgroundSyncHost payload is missing.' }
+
+          $ui = Start-Process -FilePath $exe -ArgumentList '--wino-mail' -PassThru
+          Start-Sleep -Seconds 8
+
+          $notifier = New-Object Windows.UI.Notifications.ToastNotificationManager
+          $targetAumid = "$($package.PackageFamilyName)!App"
+          $toastNotifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($targetAumid)
+          if ($toastNotifier.Setting -ne [Windows.UI.Notifications.NotificationSetting]::Enabled) { throw "Windows notifications are disabled for $targetAumid: $($toastNotifier.Setting)" }
+
+          $env:WINO_BACKGROUND_NOTIFICATION_SMOKE_AUMID = $targetAumid
+          & $host '--notification-smoke-test'
+          if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was open.' }
+          Start-Sleep -Seconds 3
+          if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
+          Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Run background notification smoke with UI closed
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $host = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          & $host '--notification-smoke-test'
+          if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was closed.' }
+
+      - name: Uninstall package and remove certificate
+        if: always()
+        shell: pwsh
+        run: |
+          Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue
+          }
+          if ($env:CERT_THUMBPRINT) {
+            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force }
+            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force }
+          }
