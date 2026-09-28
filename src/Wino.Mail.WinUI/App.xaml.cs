@@ -81,6 +81,7 @@ public partial class App : WinoApplication,
     private bool _activationInfrastructureInitialized;
     private bool _appHostInfrastructureInitialized;
     private int _initialNotificationActivationHandled;
+    private bool _appNotificationsRegistered;
     private int _initialShareActivationHandled;
     private readonly SemaphoreSlim _activationInfrastructureSemaphore = new(1, 1);
     private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);
@@ -142,6 +143,7 @@ public partial class App : WinoApplication,
         InitializeComponent();
 
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        EnsureAppNotificationRegistration();
         RegisterRecipients();
     }
 
@@ -931,6 +933,38 @@ public partial class App : WinoApplication,
     /// <summary>
     /// Handles toast notification activation scenarios.
     /// </summary>
+    private void AppNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args)
+    {
+        if (_applicationDispatcherQueue.HasThreadAccess)
+        {
+            _ = HandleToastActivationAsync(args.Argument, args.UserInput);
+            return;
+        }
+
+        _applicationDispatcherQueue.TryEnqueue(() => _ = HandleToastActivationAsync(args.Argument, args.UserInput));
+    }
+
+    private void EnsureAppNotificationRegistration()
+    {
+        if (_appNotificationsRegistered)
+            return;
+
+        var notificationManager = AppNotificationManager.Default;
+        notificationManager.NotificationInvoked -= AppNotificationInvoked;
+        notificationManager.NotificationInvoked += AppNotificationInvoked;
+
+        try
+        {
+            notificationManager.Register();
+            _appNotificationsRegistered = true;
+            LogActivation("App notifications registered in the WinUI process.");
+        }
+        catch (Exception ex)
+        {
+            LogActivation($"App notification registration failed: {ex.GetType().Name} - {ex.Message}");
+        }
+    }
+
     private Task HandleToastActivationAsync(NotificationArguments toastArguments, IDictionary<string, string>? userInput = null)
         => _notificationHandler.HandleActivationAsync(toastArguments, userInput);
 
