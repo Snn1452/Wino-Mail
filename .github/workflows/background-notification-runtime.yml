@@ -102,6 +102,14 @@ jobs:
           $manifest = Get-AppxPackageManifest $package
           if ([string]$manifest.Package.Identity.Name -cne $env:PACKAGE_NAME) { throw 'Installed package identity mismatch.' }
 
+      - name: Upload installable Store bundle and certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Installable-MSIXBundle
+          path: |
+            ${{ env:BUNDLE_PATH }}
+            ${{ env:CERTIFICATE_PATH }}
+          if-no-files-found: error
       - name: Run background notification smoke while UI is open
         shell: pwsh
         run: |
@@ -129,14 +137,6 @@ jobs:
           if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
           Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
 
-      - name: Upload installable Store bundle and certificate
-        uses: actions/upload-artifact@v4
-        with:
-          name: Installable-MSIXBundle
-          path: |
-            ${{ env:BUNDLE_PATH }}
-            ${{ env:CERTIFICATE_PATH }}
-          if-no-files-found: error
       - name: Run background notification smoke with UI closed
         shell: pwsh
         run: |
