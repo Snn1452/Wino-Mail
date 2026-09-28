@@ -154,8 +154,8 @@ jobs:
         run: |
           $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
           $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
-          & $backgroundHostPath '--notification-smoke-test'
-          $smokeExitCode = $LASTEXITCODE
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
 
           foreach ($diagnosticPath in @(
             (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
