@@ -45,4 +45,10 @@ internal sealed class BackgroundStoreManagementService : IStoreManagementService
 
     public Task<WinoStorePurchaseResult> PurchaseAsync(WinoAddOnProductType productType)
         => Task.FromResult(WinoStorePurchaseResult.NotPurchased);
+
+    public Task<string?> GetCustomerCollectionsIdAsync(string serviceTicket, string publisherUserId)
+        => Task.FromResult<string?>(null);
+
+    public Task<string?> GetCustomerPurchaseIdAsync(string serviceTicket, string publisherUserId)
+        => Task.FromResult<string?>(null);
 }
