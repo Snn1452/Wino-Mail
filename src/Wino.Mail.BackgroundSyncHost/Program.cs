@@ -159,6 +159,7 @@ internal static class Program
         services.AddSingleton<IKeyPressService, BackgroundKeyPressService>();
         services.AddSingleton<IConfigurationService>(_ => new ConfigurationService(useCache: false));
         services.AddSingleton<IPreferencesService, PreferencesService>();
+        services.AddSingleton<IMailDialogService>(_ => DispatchProxy.Create<IMailDialogService, HeadlessMailDialogServiceProxy>());
         services.AddSingleton<IUserPresenceStateProvider, ShellUserPresenceStateProvider>();
         services.AddSingleton<IAppMetadataService, BackgroundAppMetadataService>();
         services.AddSingleton<IStatePersistanceService, BackgroundStatePersistenceService>();
