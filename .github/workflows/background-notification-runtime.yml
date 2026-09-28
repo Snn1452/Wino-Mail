@@ -106,15 +106,15 @@ jobs:
         run: |
           $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
           $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
-          $host = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
-          if (-not (Test-Path -LiteralPath $host)) { throw 'BackgroundSyncHost payload is missing.' }
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath)) { throw 'BackgroundSyncHost payload is missing.' }
 
           $ui = Start-Process -FilePath $exe -ArgumentList '--wino-mail' -PassThru
           Start-Sleep -Seconds 8
 
           $targetAumid = "$($package.PackageFamilyName)!App"
           Write-Host "Testing toast target AUMID: $targetAumid"
-          & $host '--notification-smoke-test'
+          & $backgroundHostPath '--notification-smoke-test'
           if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was open.' }
           Start-Sleep -Seconds 3
           if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
@@ -124,8 +124,8 @@ jobs:
         shell: pwsh
         run: |
           $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
-          $host = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
-          & $host '--notification-smoke-test'
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          & $backgroundHostPath '--notification-smoke-test'
           if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was closed.' }
 
       - name: Uninstall package and remove certificate
