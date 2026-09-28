@@ -19,7 +19,7 @@ using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
-// Keep the existing runtime smoke workflow attached to this source tree; build output is validated before smoke.
+// Keep the existing runtime smoke workflow attached to this source tree; build output and host diagnostics are validated before smoke.
 
 internal static class Program
 {
