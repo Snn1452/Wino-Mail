@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -14,6 +15,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
+using Windows.ApplicationModel;
 using Serilog;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer;
