@@ -133,10 +133,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Installable-MSIXBundle
-          path:
           path: |
             ${{ env:BUNDLE_PATH }}
-            __GH__ env:CERTIFICATE_PATH }}
+            ${{ env:CERTIFICATE_PATH }}
           if-no-files-found: error
       - name: Run background notification smoke with UI closed
         shell: pwsh
