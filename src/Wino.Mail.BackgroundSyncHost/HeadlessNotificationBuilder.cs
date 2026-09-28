@@ -50,26 +50,8 @@ internal sealed class HeadlessNotificationBuilder(
                         preferencesService,
                         account?.Preferences);
 
-                    if (!settings.IsEnabled)
-                    {
-                        Log.Information(
-                            "Background mail notification suppressed for {MailUniqueId}: notifications disabled. AccountId={AccountId}.",
-                            mail.UniqueId,
-                            account?.Id);
-                        continue;
-                    }
-
-                    if (!IsWithinNotificationScope(mail, settings.Scope))
-                    {
-                        Log.Information(
-                            "Background mail notification suppressed for {MailUniqueId}: folder scope {Scope} excluded the destination folder. AccountId={AccountId}.",
-                            mail.UniqueId,
-                            settings.Scope,
-                            account?.Id);
-                        continue;
-                    }
-
-                    notifications.Add((mail, account?.Preferences));
+                    if (settings.IsEnabled && IsWithinNotificationScope(mail, settings.Scope))
+                        notifications.Add((mail, account?.Preferences));
                 }
                 catch (Exception ex)
                 {
