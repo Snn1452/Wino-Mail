@@ -127,7 +127,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Installable-Beta-MSIXBundle
-          path: ${{ env:BETA_RELEASE_DIR }}
+          path: ${{ env.BETA_RELEASE_DIR }}
           if-no-files-found: error
 
       - name: Uninstall Beta package
