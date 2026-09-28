@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Windows.AppNotifications;
@@ -12,6 +13,7 @@ internal sealed class NotificationHostClient : INotificationHostClient
         AppNotification notification,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(notification);
         AppNotificationManager.Default.Show(notification);
         return Task.CompletedTask;
@@ -22,6 +24,7 @@ internal sealed class NotificationHostClient : INotificationHostClient
         string tag,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(tag);
         return AppNotificationManager.Default.RemoveByTagAsync(tag).AsTask();
     }
