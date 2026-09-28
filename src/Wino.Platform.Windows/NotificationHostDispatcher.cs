@@ -3,7 +3,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Windows.Storage;
-using Microsoft.Windows.AppNotifications;
 using Wino.NotificationHost.Contracts;
 
 namespace Wino.Platform.Windows;
@@ -15,18 +14,20 @@ public static class NotificationHostDispatcher
 
     public static async Task ShowAsync(
         NotificationHostApplication application,
-        AppNotification notification,
+        string payload,
+        string? tag = null,
+        string? group = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(notification);
+        ArgumentException.ThrowIfNullOrWhiteSpace(payload);
         await DispatchAsync(
             new NotificationHostRequest(
                 DateTimeOffset.UtcNow,
                 NotificationHostOperation.Show,
                 application,
-                notification.Payload,
-                notification.Tag,
-                notification.Group),
+                payload,
+                tag,
+                group),
             cancellationToken).ConfigureAwait(false);
     }
 
