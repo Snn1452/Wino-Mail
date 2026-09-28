@@ -14,6 +14,7 @@ using Wino.Core.Services;
 using Wino.NotificationHost.Contracts;
 using Wino.Mail.WinUI.Services;
 using Wino.Services;
+using Wino.Platform.Windows;
 using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Wino.Mail.BackgroundSyncHost;
@@ -233,7 +234,19 @@ internal static class Program
                 .ShowAsync(NotificationHostApplication.Mail, notification)
                 .ConfigureAwait(false);
 
-            WriteStartupDiagnostic("NOTIFICATION", $"Background notification request dispatched successfully. Tag={smokeTag}");
+            var delivered = await NotificationHostDispatcher.WaitForNotificationAsync(
+                NotificationHostApplication.Mail,
+                smokeTag,
+                TimeSpan.FromSeconds(5),
+                CancellationToken.None).ConfigureAwait(false);
+
+            if (!delivered)
+            {
+                WriteStartupDiagnostic("NOTIFICATION", $"Background notification was not present in Windows notification history. Tag={smokeTag}");
+                return 2;
+            }
+
+            WriteStartupDiagnostic("NOTIFICATION", $"Background notification delivered. Tag={smokeTag}");
             return 0;
         }
 
