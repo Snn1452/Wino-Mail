@@ -8,6 +8,21 @@ public static class NotificationHostApplicationIds
     public const string People = "PeopleNotificationHost";
     public const string Tasks = "ToDoNotificationHost";
 
+    /// <summary>
+    /// Returns the AUMID of the user-facing application that owns the toast.
+    /// NotificationHost applications have separate AUMIDs for activation plumbing and are not
+    /// the identity under which background mail/calendar toasts should be presented.
+    /// </summary>
+    public static string GetToastTargetApplicationId(NotificationHostApplication application)
+        => application switch
+        {
+            NotificationHostApplication.Mail => "App",
+            NotificationHostApplication.Calendar => "CalendarApp",
+            NotificationHostApplication.People => "ContactsApp",
+            NotificationHostApplication.Tasks => "ToDoApp",
+            _ => throw new ArgumentOutOfRangeException(nameof(application), application, "Unknown notification target.")
+        };
+
     public static string GetApplicationId(NotificationHostApplication application)
         => application switch
         {
