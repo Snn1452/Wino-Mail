@@ -98,7 +98,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         ApplyShellSynchronizationProvider();
         _ = RefreshDailyBriefingStateAsync();
         _ = RefreshWhatsNewButtonAsync();
-        _ = EntitlementService.RefreshAsync();
+        _ = EntitlementService.RefreshEntitlementAsync();
 
         // Handle window closing event for terminate vs background/tray behavior.
         Closed += OnWindowClosed;
@@ -375,7 +375,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     {
         try
         {
-            var entitlement = await EntitlementService.GetAsync().ConfigureAwait(false);
+            var entitlement = await EntitlementService.GetEntitlementAsync().ConfigureAwait(false);
             var hasAccess = entitlement.CanAccessSurfaces;
             var eligible = hasAccess
                 ? await LocalIntelligenceService.GetEligibleAccountsAsync().ConfigureAwait(false)
@@ -604,6 +604,8 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         if (_allowClose || app?.IsExiting == true)
             return;
 
+        // Snapshot the preference once so a single close request cannot take different branches
+        // before and after asynchronous draft/compose confirmation.
         var closeBehavior = PreferencesService.AppCloseBehavior;
 
         if (app?.TryExitApplicationOnShellWindowClose(closeBehavior) == true)
@@ -621,16 +623,16 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
-            if (closeBehavior is AppCloseBehavior.RunInBackgroundWithTrayIcon
-                or AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
-            {
-                if (app is null || !await app.StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true))
-                    return;
-            }
+            if (app != null && !await app.StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true))
+                return;
+
+            if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
+                return;
 
             PrepareForClose();
-            // No WinUI lifetime window is retained in background mode. BackgroundSyncHost owns
-            // synchronization after the interactive process exits.
+
+            // PrepareForClose removes this handler and permits the real close. The managed
+            // app and tray keep running, but this HWND and its complete XAML tree do not.
             Close();
         }
         finally
