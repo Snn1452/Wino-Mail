@@ -424,6 +424,14 @@ function Set-ReleaseLayoutProfile {
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
         MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
+        if ([string]$app.Id -eq 'BackgroundSyncHost') {
+            $name = "$($Profile.DisplayNames.Mail) Background Service"
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            $visual.SetAttribute('DisplayName', $name)
+            foreach ($startup in $app.SelectNodes(".//*[local-name()='StartupTask']")) { $startup.SetAttribute('DisplayName', "$name Startup Service") }
+            continue
+        }
+
         $mode = $entries[[string]$app.Id]
         if (-not $mode) { throw "Unknown packaged application: $($app.Id)" }
         $name = $Profile.DisplayNames.$mode
@@ -576,6 +584,13 @@ function Assert-PackagedReleaseProfile {
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
         MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
+        if ([string]$app.Id -eq 'BackgroundSyncHost') {
+            $expectedBackgroundName = "$($expected.DisplayNames.Mail) Background Service"
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            if ($visual.GetAttribute('DisplayName') -cne $expectedBackgroundName) { throw 'Background service display name differs from release branding.' }
+            continue
+        }
+
         $mode = $entries[[string]$app.Id]
         if (-not $mode) { throw 'Unknown application in release manifest.' }
         if ($profile.DisplayNames.$mode -cne $expected.DisplayNames.$mode -or
