@@ -16,6 +16,10 @@ namespace Wino.Mail.WinUI;
 
 public class Program
 {
+    private const string AppNotificationActivatedCommandLinePrefix = "----AppNotificationActivated:";
+    private static bool _hasDeferredAppNotificationStartup;
+    private static bool _shouldRegisterAppNotifications;
+
     private static string SingleInstanceKey => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.SingleInstanceKey;
     private static string ForceAlternateModeSignalEventName => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.AlternateModeEventName;
     private static string MailHostRunningMutexName => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.MailHostMutexName;
@@ -72,8 +76,17 @@ public class Program
         Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER",
             System.IO.Path.Combine(Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path, "WebView2"));
 
+        if (TryCaptureCommandLineToastActivation(args))
+        {
+            _shouldRegisterAppNotifications = true;
+            EnsureMailHostRunningMutex();
+            StartApplication();
+            return 0;
+        }
+
         var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
         var shouldBootstrapSecondaryEntry = SecondaryEntryBootstrapActivation.ShouldBootstrapToMailHost(activationArgs);
+        _shouldRegisterAppNotifications = !shouldBootstrapSecondaryEntry;
 
         if (shouldBootstrapSecondaryEntry && !IsMailHostRunning())
         {
@@ -102,6 +115,31 @@ public class Program
         }
 
         return 0;
+    }
+
+    public static bool ShouldRegisterAppNotifications()
+        => _shouldRegisterAppNotifications;
+
+    internal static bool TryConsumeDeferredAppNotificationStartup()
+    {
+        if (!_hasDeferredAppNotificationStartup)
+            return false;
+
+        _hasDeferredAppNotificationStartup = false;
+        return true;
+    }
+
+    private static bool TryCaptureCommandLineToastActivation(string[] args)
+    {
+        if (!Environment.CommandLine.Contains(
+                AppNotificationActivatedCommandLinePrefix,
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Do not query AppInstance.GetActivatedEventArgs before AppNotificationManager.Register().
+        // WinAppSDK notification COM activation expects registration to happen first.
+        _hasDeferredAppNotificationStartup = true;
+        return true;
     }
 
     internal static bool TryConsumePendingBootstrapActivation(out PendingBootstrapActivation activation)
