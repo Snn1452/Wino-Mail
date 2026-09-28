@@ -19,6 +19,8 @@ using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
+// Keep the existing runtime smoke workflow attached to this source tree.
+
 internal static class Program
 {
     private static readonly string LockPath = Path.Combine(
