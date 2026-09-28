@@ -220,10 +220,12 @@ internal static class Program
 
         if (isNotificationSmokeTest)
         {
+            var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
             var notification = new AppNotificationBuilder()
                 .AddText(ReleaseIdentity.Current.DisplayNames["Mail"])
                 .AddText("Background notification smoke test")
-                .AddArgument("wino-smoke-test", Guid.NewGuid().ToString("N"))
+                .AddArgument("wino-smoke-test", smokeTag)
+                .SetTag(smokeTag)
                 .BuildNotification();
 
             await provider
@@ -231,7 +233,7 @@ internal static class Program
                 .ShowAsync(NotificationHostApplication.Mail, notification)
                 .ConfigureAwait(false);
 
-            WriteStartupDiagnostic("NOTIFICATION", "Background notification request dispatched successfully.");
+            WriteStartupDiagnostic("NOTIFICATION", $"Background notification request dispatched successfully. Tag={smokeTag}");
             return 0;
         }
 
