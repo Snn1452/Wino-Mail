@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
@@ -41,6 +42,11 @@ public static class NotificationHostDispatcher
         }
 
         notifier.Show(toast);
+        toast.Dismissed += (_, _) => { };
+        toast.Failed += (_, args) =>
+            System.Diagnostics.Debug.WriteLine(
+                $"Wino Mail background toast failed. ErrorCode={args.ErrorCode}; AUMID={appUserModelId}; Tag={tag}");
+
         return Task.CompletedTask;
     }
 
@@ -58,5 +64,17 @@ public static class NotificationHostDispatcher
 
         ToastNotificationManager.History.Remove(tag, string.Empty, appUserModelId);
         return Task.CompletedTask;
+    }
+
+    public static bool HasNotification(
+        NotificationHostApplication application,
+        string tag)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+
+        var applicationId = NotificationHostApplicationIds.GetToastTargetApplicationId(application);
+        return ToastNotificationManager.History
+            .GetHistory(applicationId)
+            .Any(notification => string.Equals(notification.Tag, tag, StringComparison.Ordinal));
     }
 }
