@@ -132,7 +132,19 @@ jobs:
           if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
 
           & $backgroundHostPath '--notification-smoke-test'
-          if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was open.' }
+          $smokeExitCode = $LASTEXITCODE
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was open with exit code $smokeExitCode." }
           Start-Sleep -Seconds 3
           if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
           Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
@@ -143,7 +155,19 @@ jobs:
           $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
           $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
           & $backgroundHostPath '--notification-smoke-test'
-          if ($LASTEXITCODE -ne 0) { throw 'Background notification smoke failed while UI was closed.' }
+          $smokeExitCode = $LASTEXITCODE
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
       - name: Uninstall package and remove certificate
         if: always()
