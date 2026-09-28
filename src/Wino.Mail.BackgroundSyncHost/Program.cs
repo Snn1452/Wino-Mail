@@ -16,7 +16,6 @@ using Wino.NotificationHost.Contracts;
 using Wino.Mail.WinUI.Services;
 using Wino.Services;
 using Wino.Platform.Windows;
-using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
@@ -227,12 +226,19 @@ internal static class Program
         if (isNotificationSmokeTest)
         {
             var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
-            var notification = new AppNotificationBuilder()
-                .AddText(ReleaseIdentity.Current.DisplayNames["Mail"])
-                .AddText("Background notification smoke test")
-                .AddArgument("wino-smoke-test", smokeTag)
-                .SetTag(smokeTag)
-                .BuildNotification();
+            var notification = new AppNotification($"""
+<toast>
+  <visual>
+    <binding template="ToastGeneric">
+      <text>{System.Security.SecurityElement.Escape(ReleaseIdentity.Current.DisplayNames["Mail"])}</text>
+      <text>Background notification smoke test</text>
+    </binding>
+  </visual>
+</toast>
+""")
+            {
+                Tag = smokeTag
+            };
 
             await provider
                 .GetRequiredService<BackgroundNotificationHostClient>()
