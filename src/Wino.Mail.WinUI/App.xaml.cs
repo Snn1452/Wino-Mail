@@ -928,7 +928,16 @@ public partial class App : WinoApplication,
     }
 
     private AppActivationArguments ResolveStartupActivation()
-        => AppInstance.GetCurrent().GetActivatedEventArgs();
+    {
+        var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+
+        if (Program.TryConsumeDeferredAppNotificationStartup())
+        {
+            LogActivation("Resolved deferred AppNotification COM activation after registration.");
+        }
+
+        return activationArgs;
+    }
 
     /// <summary>
     /// Handles toast notification activation scenarios.
@@ -946,6 +955,12 @@ public partial class App : WinoApplication,
 
     private void EnsureAppNotificationRegistration()
     {
+        if (!Program.ShouldRegisterAppNotifications())
+        {
+            LogActivation("Skipping AppNotificationManager registration for this activation kind.");
+            return;
+        }
+
         if (_appNotificationsRegistered)
             return;
 
