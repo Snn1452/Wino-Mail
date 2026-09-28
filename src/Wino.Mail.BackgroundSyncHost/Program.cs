@@ -5,7 +5,6 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Windows.AppNotifications;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
@@ -227,7 +226,7 @@ internal static class Program
         if (isNotificationSmokeTest)
         {
             var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
-            var notification = new AppNotification($"""
+            var payload = $"""
 <toast>
   <visual>
     <binding template="ToastGeneric">
@@ -236,15 +235,13 @@ internal static class Program
     </binding>
   </visual>
 </toast>
-""")
-            {
-                Tag = smokeTag
-            };
+""";
 
-            await provider
-                .GetRequiredService<BackgroundNotificationHostClient>()
-                .ShowAsync(NotificationHostApplication.Mail, notification)
-                .ConfigureAwait(false);
+            await NotificationHostDispatcher.ShowAsync(
+                NotificationHostApplication.Mail,
+                payload,
+                smokeTag,
+                cancellationToken: CancellationToken.None).ConfigureAwait(false);
 
             var delivered = await NotificationHostDispatcher.WaitForNotificationAsync(
                 NotificationHostApplication.Mail,
