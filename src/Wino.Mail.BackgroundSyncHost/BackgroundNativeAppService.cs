@@ -34,7 +34,7 @@ internal sealed class BackgroundNativeAppService : INativeAppService
         => Task.FromResult(StartupBehaviorResult.Disabled);
 
     public Task<StartupBehaviorResult> ToggleStartupBehavior(bool isEnabled)
-        => Task.FromResult(StartupBehaviorResult.Unknown);
+        => Task.FromResult(StartupBehaviorResult.Disabled);
 
     public Task<bool> IsWebView2RuntimeAvailableAsync()
         => Task.FromResult(false);
