@@ -60,20 +60,7 @@ jobs:
           "PACKAGE_PUBLISHER=$publisher" >> $env:GITHUB_ENV
           "PACKAGE_NAME=$packageName" >> $env:GITHUB_ENV
 
-      - name: Build unsigned x64 MSIX
-        shell: pwsh
-        run: |
-          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -r win-x64 -p:Platform=x64 -p:Configuration=Release --configfile nuget.config
-          if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
-
-          dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configuration Release --no-restore -r win-x64 /m:1 /p:Platform=x64 /p:WinoIsReleaseBuild=true /p:UseNativeAot=false /p:PublishAot=false /p:PublishTrimmed=false /p:TrimMode=partial /p:GenerateAppxPackageOnBuild=true /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never /p:AppxBundlePlatforms=x64
-          if ($LASTEXITCODE -ne 0) { throw 'Unsigned x64 MSIX build failed.' }
-
-          $msix = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Filter '*.msix' -File -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
-          if ($msix.Count -ne 1) { throw "Expected one x64 MSIX, found $($msix.Count)." }
-          "MSIX_PATH=$($msix.FullName)" >> $env:GITHUB_ENV
-
-      - name: Create test certificate and sign MSIX
+      - name: Create Store test certificate
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
@@ -81,20 +68,34 @@ jobs:
           if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the test signing certificate.' }
           "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
-          $sdkTools = Get-ChildItem -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin') -Filter signtool.exe -Recurse -File | Sort-Object FullName -Descending
-          $signTool = $sdkTools | Select-Object -First 1
-          if ($null -eq $signTool) { throw 'signtool.exe was not found.' }
-          & $signTool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint $env:MSIX_PATH
-          if ($LASTEXITCODE -ne 0) { throw 'MSIX signing failed.' }
-
-      - name: Install test certificate and package
+      - name: Build installable Store MSIXBundle
         shell: pwsh
         run: |
-          $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$env:CERT_THUMBPRINT" -ErrorAction Stop
-          $publicPath = Join-Path $env:RUNNER_TEMP 'Wino-TestPublisher.cer'
-          Export-Certificate -Cert $cert -FilePath $publicPath -Type CERT -Force | Out-Null
-          Import-Certificate -FilePath $publicPath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
-          Add-AppxPackage -Path $env:MSIX_PATH -ForceApplicationShutdown -ErrorAction Stop
+          pwsh -NoProfile -File .\scripts\build-releases.ps1 `
+            -NonInteractive `
+            -Store `
+            -Architectures x64 `
+            -StoreTestCertificateThumbprint $env:CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { throw 'Store MSIXBundle build failed.' }
+
+          [xml]$sourceManifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
+          $version = [string]$sourceManifest.Package.Identity.Version
+          $releaseDir = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Store_$version"
+          $bundle = Join-Path $releaseDir "WinoMail_Store_$version.msixbundle"
+          $certificate = Join-Path $releaseDir 'WinoMail_Store_TestCertificate.cer'
+
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Store MSIXBundle was not produced: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Store test certificate was not produced: $certificate" }
+
+          "BUNDLE_PATH=$((Resolve-Path -LiteralPath $bundle).Path)" >> $env:GITHUB_ENV
+          "CERTIFICATE_PATH=$((Resolve-Path -LiteralPath $certificate).Path)" >> $env:GITHUB_ENV
+          "STORE_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
+
+      - name: Install test certificate and Store bundle
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath $env:CERTIFICATE_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+          Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
 
           $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
           "PACKAGE_FAMILY=$($package.PackageFamilyName)" >> $env:GITHUB_ENV
@@ -128,6 +129,15 @@ jobs:
           if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
           Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
 
+      - name: Upload installable Store bundle and certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Installable-MSIXBundle
+          path:
+          path: |
+            ${{ env:BUNDLE_PATH }}
+            __GH__ env:CERTIFICATE_PATH }}
+          if-no-files-found: error
       - name: Run background notification smoke with UI closed
         shell: pwsh
         run: |
