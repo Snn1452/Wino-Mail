@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
+    <ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />
     <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
     <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj"
                       OutputItemType="Analyzer"
