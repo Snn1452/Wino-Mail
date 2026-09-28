@@ -1076,8 +1076,23 @@ function Invoke-InteractiveRelease {
     $plan.Destinations | ForEach-Object { Write-Host "Output: $_" }
     $tools = Get-ReleaseTools $selection
     $storeCertificate = if ($selection.Store) { Get-StoreSigningCertificate $plan $StoreTestCertificateThumbprint } else { $null }
-    $signing = if ($selection.Beta -or $selection.Sideload) { Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload } else { $null }
     $betaTestCertificate = if ($selection.Beta) { Get-SideloadTestSigningCertificate $BetaTestCertificateThumbprint } else { $null }
+
+    $signing = $null
+    if ($selection.Beta -or $selection.Sideload) {
+        $useAzureSigning = $selection.Sideload -or $null -eq $betaTestCertificate
+        if ($useAzureSigning) {
+            $signing = Get-ReleaseSigningConfiguration -IncludeBeta:$selection.Beta -IncludeSideload:$selection.Sideload
+        }
+        elseif ($selection.Beta) {
+            $signing = [pscustomobject]@{
+                Distributions = @{
+                    Beta = Get-ReleaseDistributionConfiguration @{}
+                }
+            }
+        }
+    }
+
     $symbolsPath = Invoke-ReleaseBuild $plan $tools $signing $storeCertificate $betaTestCertificate
     if (-not $NonInteractive -and -not [string]::IsNullOrWhiteSpace([string]$symbolsPath)) {
         $upload = Read-ReleaseChoice "Upload symbols for $($plan.Version) now? (yes/no)" @{ yes = $true; y = $true; no = $false; n = $false }
