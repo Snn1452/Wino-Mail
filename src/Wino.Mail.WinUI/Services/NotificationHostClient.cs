@@ -14,7 +14,7 @@ internal sealed class NotificationHostClient : INotificationHostClient
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ToastNotificationDispatcher.Show($"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetApplicationId(application)}", notification.Payload, notification.Tag, notification.Group);
+        ToastNotificationDispatcher.Show($"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetToastTargetApplicationId(application)}", notification.Payload, notification.Tag, notification.Group);
         return Task.CompletedTask;
     }
 
@@ -24,7 +24,7 @@ internal sealed class NotificationHostClient : INotificationHostClient
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ToastNotificationDispatcher.RemoveByTag($"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetApplicationId(application)}", tag);
+        ToastNotificationDispatcher.RemoveByTag($"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetToastTargetApplicationId(application)}", tag);
         return Task.CompletedTask;
     }
 }
