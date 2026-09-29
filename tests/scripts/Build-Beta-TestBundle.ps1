@@ -93,6 +93,13 @@ if (-not (Test-Path -LiteralPath $bundlePath -PathType Leaf)) {
     throw "Beta MSIXBundle was not produced: $bundlePath"
 }
 
+$bundleSignature = Get-AuthenticodeSignature -LiteralPath $bundlePath
+if ($null -eq $bundleSignature.SignerCertificate -or
+    $bundleSignature.SignerCertificate.Thumbprint -cne $certificate.Thumbprint) {
+    throw "The final Beta bundle is not signed with the expected test certificate: $bundlePath"
+}
+
+Export-Certificate -Cert $certificate -FilePath $certificatePath -Type CERT -Force | Out-Null
 if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
     throw "Beta test certificate was not produced: $certificatePath"
 }
