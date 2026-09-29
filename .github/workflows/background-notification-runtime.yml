@@ -176,6 +176,60 @@ jobs:
 
           if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
+      - name: Verify BackgroundSyncHost packaged activation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath -PathType Leaf)) { throw 'BackgroundSyncHost payload is missing.' }
+
+          $targetAumid = "$($package.PackageFamilyName)!BackgroundSyncHost"
+          Write-Host "Launching BackgroundSyncHost through packaged AUMID $targetAumid"
+
+          $before = @(Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $host = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $host; $attempt++) {
+            Start-Sleep -Seconds 1
+            $host = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue |
+              Where-Object { $before -notcontains $_.Id } |
+              Select-Object -First 1
+          }
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 120
+            }
+          }
+
+          if ($null -eq $host) {
+            throw "BackgroundSyncHost did not remain running after packaged activation through $targetAumid."
+          }
+
+          Write-Host "BackgroundSyncHost packaged activation produced PID $($host.Id)."
+          Start-Sleep -Seconds 5
+
+          $hostAfterDelay = Get-Process -Id $host.Id -ErrorAction SilentlyContinue
+          if ($null -eq $hostAfterDelay) {
+            foreach ($diagnosticPath in @(
+              (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+              (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+            )) {
+              if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+                Get-Content -LiteralPath $diagnosticPath -Tail 160
+              }
+            }
+            throw 'BackgroundSyncHost exited unexpectedly after packaged activation.'
+          }
+
+          Stop-Process -Id $host.Id -Force -ErrorAction SilentlyContinue
+
       - name: Verify RunInBackgroundWithoutTrayIcon exits WinUI process
         shell: pwsh
         run: |
