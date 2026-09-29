@@ -176,6 +176,70 @@ jobs:
 
           if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
+      - name: Verify RunInBackgroundWithoutTrayIcon exits WinUI process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
+
+          Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          $env:WINO_CLOSE_BEHAVIOR_SMOKE_TEST = 'RunInBackgroundWithoutTrayIcon'
+          try {
+            Write-Host 'Launching packaged WinUI process with the CI-only no-tray preference seed.'
+            Start-Process -FilePath $exe -WorkingDirectory $package.InstallLocation | Out-Null
+          }
+          finally {
+            Remove-Item Env:\WINO_CLOSE_BEHAVIOR_SMOKE_TEST -ErrorAction SilentlyContinue
+          }
+
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue |
+              Where-Object { $_.MainWindowHandle -ne 0 } |
+              Select-Object -First 1
+          }
+
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI window did not become visible for the close-behavior smoke test.' }
+          $firstPid = $ui.Id
+          Write-Host "Closing WinUI PID $firstPid via its real main window." 
+
+          if (-not $ui.CloseMainWindow()) {
+            throw "CloseMainWindow returned false for WinUI PID $firstPid."
+          }
+
+          if (-not $ui.WaitForExit(15000)) {
+            $diagnosticPath = Join-Path $env:TEMP 'Wino Mail/winui-launch-smoke.log'
+            if (Test-Path -LiteralPath $diagnosticPath) { Get-Content -LiteralPath $diagnosticPath -Tail 120 }
+            Get-Process -Id $firstPid -ErrorAction SilentlyContinue | Format-List Id,ProcessName,MainWindowHandle,StartTime,Path
+            throw "WinUI PID $firstPid remained alive after RunInBackgroundWithoutTrayIcon close."
+          }
+
+          Start-Sleep -Seconds 2
+          if (Get-Process -Id $firstPid -ErrorAction SilentlyContinue) {
+            throw "WinUI PID $firstPid was still present after WaitForExit returned."
+          }
+
+          Write-Host "WinUI PID $firstPid exited as expected. Relaunching to prove the old invisible process no longer captures activation."
+          Start-Process -FilePath $exe -WorkingDirectory $package.InstallLocation | Out-Null
+
+          $secondUi = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $secondUi; $attempt++) {
+            Start-Sleep -Seconds 1
+            $secondUi = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue |
+              Where-Object { $_.MainWindowHandle -ne 0 } |
+              Select-Object -First 1
+          }
+
+          if ($null -eq $secondUi) { throw 'Wino Mail could not present a visible window after the no-tray process exited.' }
+          if ($secondUi.Id -eq $firstPid) { throw 'The relaunch unexpectedly reused the closed WinUI process PID.' }
+          Write-Host "Second launch produced visible WinUI PID $($secondUi.Id)."
+
+          Stop-Process -Id $secondUi.Id -Force -ErrorAction SilentlyContinue
+
       - name: Uninstall Beta package and remove certificate
         if: always()
         shell: pwsh
