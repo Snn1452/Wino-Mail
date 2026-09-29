@@ -65,7 +65,6 @@ public static class NotificationHostRuntime
                 throw new InvalidDataException("The notification request does not match the current application identity.");
             }
 
-            var currentAppUserModelId = CurrentAppIdentity.GetAppUserModelId();
             NotificationHostLogger.Write("execute-start", requestId, message: $"AUMID={currentAppUserModelId}");
             ExecuteRequest(currentAppUserModelId, request);
             NotificationHostLogger.Write(request.Operation.ToString(), requestId);
