@@ -13,6 +13,7 @@ on:
       - 'src/Wino.SourceGenerators/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
+      - 'tests/scripts/Build-Beta-TestBundle.ps1'
   workflow_dispatch:
 
 concurrency:
@@ -50,62 +51,57 @@ jobs:
         with:
           dotnet-version: 10.0.301
 
-      - name: Read package publisher identity
+      - name: Read Beta package identity
         shell: pwsh
         run: |
-          [xml]$manifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
-          $publisher = [string]$manifest.Package.Identity.Publisher
-          $packageName = [string]$manifest.Package.Identity.Name
-          if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'Manifest publisher is missing.' }
-          "PACKAGE_PUBLISHER=$publisher" >> $env:GITHUB_ENV
-          "PACKAGE_NAME=$packageName" >> $env:GITHUB_ENV
+          $profile = Get-Content -LiteralPath 'scripts/release-profiles/Beta.json' -Raw | ConvertFrom-Json
+          if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
+          "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
 
-      - name: Create Store test certificate
+      - name: Create Beta test certificate
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $env:PACKAGE_PUBLISHER -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
-          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the test signing certificate.' }
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the Beta test signing certificate.' }
           "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
-      - name: Build installable Store MSIXBundle
+      - name: Build installable Beta MSIXBundle
         shell: pwsh
         run: |
-          pwsh -NoProfile -File .\scripts\build-releases.ps1 `
-            -NonInteractive `
-            -Store `
-            -Architectures x64 `
-            -StoreTestCertificateThumbprint $env:CERT_THUMBPRINT
-          if ($LASTEXITCODE -ne 0) { throw 'Store MSIXBundle build failed.' }
+          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
-          [xml]$sourceManifest = Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw
-          $version = [string]$sourceManifest.Package.Identity.Version
-          $releaseDir = Join-Path 'src/Wino.Mail.WinUI/AppPackages' "WinoMail_Store_$version"
-          $bundle = Join-Path $releaseDir "WinoMail_Store_$version.msixbundle"
-          $certificate = Join-Path $releaseDir 'WinoMail_Store_TestCertificate.cer'
+          $version = (Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw | ConvertFrom-Json 2>$null)
+          $releaseDirs = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Directory -Filter 'WinoMail_Beta_*' | Sort-Object LastWriteTime -Descending)
+          if ($releaseDirs.Count -ne 1) { throw "Expected exactly one Beta release directory, found $($releaseDirs.Count)." }
+          $releaseDir = $releaseDirs[0].FullName
+          $bundle = Join-Path $releaseDir ($releaseDirs[0].Name + '.msixbundle')
+          $certificate = Join-Path $releaseDir 'WinoMail_Beta_TestCertificate.cer'
 
-          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Store MSIXBundle was not produced: $bundle" }
-          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Store test certificate was not produced: $certificate" }
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Beta MSIXBundle was not produced: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Beta test certificate was not produced: $certificate" }
 
           "BUNDLE_PATH=$((Resolve-Path -LiteralPath $bundle).Path)" >> $env:GITHUB_ENV
           "CERTIFICATE_PATH=$((Resolve-Path -LiteralPath $certificate).Path)" >> $env:GITHUB_ENV
-          "STORE_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
+          "BETA_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
 
-      - name: Install test certificate and Store bundle
+      - name: Install Beta test certificate and bundle
         shell: pwsh
         run: |
           Import-Certificate -FilePath $env:CERTIFICATE_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
           Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
 
-          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $package = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
           "PACKAGE_FAMILY=$($package.PackageFamilyName)" >> $env:GITHUB_ENV
           $manifest = Get-AppxPackageManifest $package
-          if ([string]$manifest.Package.Identity.Name -cne $env:PACKAGE_NAME) { throw 'Installed package identity mismatch.' }
+          if ([string]$manifest.Package.Identity.Name -cne 'WinoMail.Beta') { throw 'Installed package identity mismatch.' }
 
-      - name: Upload installable Store bundle and certificate
+      - name: Upload installable Beta bundle and certificate
         uses: actions/upload-artifact@v4
         with:
-          name: Installable-MSIXBundle
+          name: Installable-Beta-MSIXBundle
           path: |
             ${{ env.BUNDLE_PATH }}
             ${{ env.CERTIFICATE_PATH }}
@@ -169,14 +165,14 @@ jobs:
 
           if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
 
-      - name: Uninstall package and remove certificate
+      - name: Uninstall Beta package and remove certificate
         if: always()
         shell: pwsh
         run: |
-          Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction SilentlyContinue | ForEach-Object {
             Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue
           }
           if ($env:CERT_THUMBPRINT) {
-            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force }
-            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force }
+            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
           }
