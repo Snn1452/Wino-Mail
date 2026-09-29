@@ -73,7 +73,6 @@ jobs:
           pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
           if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
-          $version = (Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw | ConvertFrom-Json 2>$null)
           $releaseDirs = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Directory -Filter 'WinoMail_Beta_*' | Sort-Object LastWriteTime -Descending)
           if ($releaseDirs.Count -ne 1) { throw "Expected exactly one Beta release directory, found $($releaseDirs.Count)." }
           $releaseDir = $releaseDirs[0].FullName
@@ -176,3 +175,4 @@ jobs:
             Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
             Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
           }
+
