@@ -139,6 +139,17 @@ jobs:
             }
           }
 
+          foreach ($notificationLog in @(
+            (Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalCache\NotificationHost\Logs\NotificationHost.log"),
+            (Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalCache\NotificationHost.log"),
+            (Join-Path $env:TEMP 'Wino Mail/NotificationHost.log')
+          ) | Select-Object -Unique) {
+            if (Test-Path -LiteralPath $notificationLog -PathType Leaf) {
+              Write-Host "NotificationHost diagnostic: $notificationLog"
+              Get-Content -LiteralPath $notificationLog -Tail 120
+            }
+          }
+
           if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was open with exit code $smokeExitCode." }
           Start-Sleep -Seconds 3
           if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
