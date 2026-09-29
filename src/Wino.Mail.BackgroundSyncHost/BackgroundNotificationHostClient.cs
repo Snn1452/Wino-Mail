@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
@@ -26,10 +27,7 @@ internal sealed class BackgroundNotificationHostClient
         string? tag = null,
         string? group = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(payload);
-
-        return DispatchAsync(
+        => DispatchAsync(
             new NotificationHostRequest(
                 DateTimeOffset.UtcNow,
                 NotificationHostOperation.Show,
@@ -38,16 +36,12 @@ internal sealed class BackgroundNotificationHostClient
                 tag,
                 group),
             cancellationToken);
-    }
 
     public Task RemoveByTagAsync(
         NotificationHostApplication application,
         string tag,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
-
-        return DispatchAsync(
+        => DispatchAsync(
             new NotificationHostRequest(
                 DateTimeOffset.UtcNow,
                 NotificationHostOperation.RemoveByTag,
@@ -56,10 +50,41 @@ internal sealed class BackgroundNotificationHostClient
                 tag,
                 null),
             cancellationToken);
+
+    public async Task ShowAndWaitForSmokeAsync(
+        NotificationHostApplication application,
+        string payload,
+        string tag,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new NotificationHostRequest(
+            DateTimeOffset.UtcNow,
+            NotificationHostOperation.Show,
+            application,
+            payload,
+            tag,
+            null);
+
+        var processId = await DispatchAsync(request, cancellationToken).ConfigureAwait(false);
+        if (processId == 0)
+            throw new InvalidOperationException("The packaged notification host activation returned process id 0.");
+
+        using var process = Process.GetProcessById(checked((int)processId));
+
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"The packaged notification host exited with code {process.ExitCode} while handling smoke tag '{tag}'.");
     }
 
-    private async Task DispatchAsync(NotificationHostRequest request, CancellationToken cancellationToken)
+    private async Task<uint> DispatchAsync(
+        NotificationHostRequest request,
+        CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Payload, nameof(request.Payload));
+        cancellationToken.ThrowIfCancellationRequested();
+
         var requestId = Guid.NewGuid();
 
         await NotificationHostFileStore
@@ -72,7 +97,7 @@ internal sealed class BackgroundNotificationHostClient
 
             var applicationId = NotificationHostApplicationIds.GetApplicationId(request.Application);
             var appUserModelId = $"{Package.Current.Id.FamilyName}!{applicationId}";
-            _ = ActivateApplication(appUserModelId, NotificationHostLaunchArguments.CreateRequest(requestId));
+            return ActivateApplication(appUserModelId, NotificationHostLaunchArguments.CreateRequest(requestId));
         }
         catch
         {
@@ -105,6 +130,7 @@ internal sealed class BackgroundNotificationHostClient
             fixed (char* argumentsPointer = arguments)
             {
                 uint processId = 0;
+
                 result = activateApplication(
                     instance,
                     appUserModelIdPointer,
