@@ -53,9 +53,16 @@ public class Program
 
 
 
+    /// <summary>
+    /// Process entry time. Launch log lines report their offset from it.
+    /// </summary>
+    internal static long StartupTimestamp { get; private set; }
+
     [STAThread]
     static int Main(string[] args)
     {
+        StartupTimestamp = Stopwatch.GetTimestamp();
+
         WriteLaunchDiagnostic(
             "MAIN",
             $"Program.Main entered. Args=[{string.Join(", ", args.Select(argument => $"'{argument}'"))}]; CommandLine={Environment.CommandLine}");
