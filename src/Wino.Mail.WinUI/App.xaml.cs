@@ -124,6 +124,16 @@ public partial class App : WinoApplication,
         if (_isExiting || !isBackgroundBehavior)
             return false;
 
+        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            // There must be no lifetime window in this mode. Once ShellWindow closes, the WinUI
+            // process is allowed to terminate; BackgroundSyncHost is already running separately.
+            DisposeTrayIcon();
+            ReleaseBackgroundLifetimeWindow();
+            LogActivation("Background shell close prepared without a system tray icon; WinUI process may terminate.");
+            return true;
+        }
+
         var createdLifetimeWindow = false;
 
         if (_backgroundLifetimeWindow == null)
@@ -131,8 +141,8 @@ public partial class App : WinoApplication,
             try
             {
                 // Closing the last WinUI Window ends the XAML application loop. Keep a contentless,
-                // never-activated window alive so background services can continue without retaining
-                // ShellWindow or any part of its XAML tree.
+                // never-activated window alive only for tray mode so the app remains available from
+                // the tray while BackgroundSyncHost continues synchronization independently.
                 var lifetimeWindow = new Window();
                 lifetimeWindow.AppWindow.IsShownInSwitchers = false;
                 lifetimeWindow.Closed += BackgroundLifetimeWindowClosed;
@@ -145,13 +155,6 @@ public partial class App : WinoApplication,
                     "Failed to create the background lifetime window. Shell close was canceled to preserve the running application.");
                 return false;
             }
-        }
-
-        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
-        {
-            DisposeTrayIcon();
-            LogActivation("Background shell close prepared without a system tray icon.");
-            return true;
         }
 
         EnsureTrayIconCreated();
