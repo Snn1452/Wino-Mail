@@ -72,6 +72,17 @@ public class Program
 
         WriteLaunchDiagnostic("IDENTITY", $"Distribution={Wino.NotificationHost.Contracts.ReleaseIdentity.Current.Distribution}; Package={package.Id.Name}");
 
+        // CI-only hook: seed the packaged LocalSettings value used by the real shell close path.
+        // Production launches are unaffected unless this exact environment variable is supplied.
+        var closeBehaviorSmoke = Environment.GetEnvironmentVariable("WINO_CLOSE_BEHAVIOR_SMOKE_TEST");
+        if (string.Equals(closeBehaviorSmoke, "RunInBackgroundWithoutTrayIcon", StringComparison.Ordinal))
+        {
+            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+            localSettings["AppCloseBehavior"] = closeBehaviorSmoke;
+            localSettings["IsSystemTrayIconEnabled"] = "False";
+            WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Seeded AppCloseBehavior={closeBehaviorSmoke}.");
+        }
+
         // Set before any editor/renderer creates an environment, including inherited overrides.
         Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER",
             System.IO.Path.Combine(Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path, "WebView2"));
