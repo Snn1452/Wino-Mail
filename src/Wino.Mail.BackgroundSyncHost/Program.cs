@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Windows.AppNotifications;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
