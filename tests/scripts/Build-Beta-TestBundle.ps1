@@ -68,7 +68,8 @@ function Sign-SideloadRelease {
     }
 
     $certificatePath = Join-Path $readyFolder 'WinoMail_Beta_TestCertificate.cer'
-    Export-Certificate -Cert $certificate -FilePath $certificatePath -Type CERT -Force | Out-Null
+    # The release pipeline finalizes the bundle before cleanup; export the exact test cert alongside that finalized bundle.
+Export-Certificate -Cert $certificate -FilePath $certificatePath -Type CERT -Force | Out-Null
     if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
         throw "The Beta test certificate was not exported: $certificatePath"
     }
