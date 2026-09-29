@@ -227,6 +227,8 @@ internal static class Program
 
         if (isNotificationSmokeTest)
         {
+            EnsureAppNotificationRegistration();
+
             var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
             var smokeTitle = SecurityElement.Escape(ReleaseIdentity.Current.DisplayNames["Mail"]);
             var smokePayload = $"<toast><visual><binding template='ToastGeneric'><text>{smokeTitle}</text><text>Background notification smoke test</text></binding></visual></toast>";
@@ -264,6 +266,11 @@ internal static class Program
 
         WriteStartupDiagnostic("EXIT", "Background synchronization host loops completed.");
         return 0;
+    }
+
+    private static void EnsureAppNotificationRegistration()
+    {
+        Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Register();
     }
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
