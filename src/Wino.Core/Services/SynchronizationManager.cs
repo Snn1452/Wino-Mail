@@ -876,6 +876,10 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         // Same gate as mail and calendar: a sign-in the user has not redone yet can only fail.
         if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
         {
+            _logger.Information("Skipping contact synchronization for account {AccountId} because it requires credential attention.", options.AccountId);
+            return ContactSynchronizationResult.Canceled;
+        }
+
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
