@@ -38,7 +38,12 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private static readonly Lazy<SynchronizationManager> _instance = new(() => new SynchronizationManager());
     public static SynchronizationManager Instance => _instance.Value;
 
-[object Object]
+    private IReadOnlyDictionary<Guid, IWinoSynchronizerBase> _synchronizerCache => _concreteSynchronizerFactory.CachedSynchronizers;
+
+    private static readonly string SynchronizationLockRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "SynchronizationLocks");
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _accountSynchronizationCancellationSources = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _calendarSynchronizationLocks = new();
     private readonly ConcurrentDictionary<Guid, AccountSynchronizationProgress> _mailSynchronizationProgress = new();
@@ -866,7 +871,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-[object Object]
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
+
+        // Same gate as mail and calendar: a sign-in the user has not redone yet can only fail.
+        if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
+        {
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
