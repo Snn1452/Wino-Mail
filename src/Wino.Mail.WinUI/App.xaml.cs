@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -90,7 +89,6 @@ public partial class App : WinoApplication,
     private readonly ConcurrentDictionary<Guid, int> _inboxSyncCounters = [];
     private readonly AppNotificationHandler _notificationHandler;
     private readonly AppActivationHandler _activationHandler;
-    private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);
     private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly DateTimeOffset _sessionStartedAtUtc = DateTimeOffset.UtcNow;
 
@@ -168,16 +166,6 @@ public partial class App : WinoApplication,
         if (_isExiting || !isBackgroundBehavior)
             return false;
 
-        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
-        {
-            // There must be no lifetime window in this mode. Once ShellWindow closes, the WinUI
-            // process is allowed to terminate; BackgroundSyncHost is already running separately.
-            DisposeTrayIcon();
-            ReleaseBackgroundLifetimeWindow();
-            LogActivation("Background shell close prepared without a system tray icon; WinUI process may terminate.");
-            return true;
-        }
-
         var createdLifetimeWindow = false;
 
         if (_backgroundLifetimeWindow == null)
@@ -185,8 +173,8 @@ public partial class App : WinoApplication,
             try
             {
                 // Closing the last WinUI Window ends the XAML application loop. Keep a contentless,
-                // never-activated window alive only for tray mode so the app remains available from
-                // the tray while BackgroundSyncHost continues synchronization independently.
+                // never-activated window alive so background services can continue without retaining
+                // ShellWindow or any part of its XAML tree.
                 var lifetimeWindow = new Window();
                 lifetimeWindow.AppWindow.IsShownInSwitchers = false;
                 lifetimeWindow.Closed += BackgroundLifetimeWindowClosed;
@@ -199,6 +187,13 @@ public partial class App : WinoApplication,
                     "Failed to create the background lifetime window. Shell close was canceled to preserve the running application.");
                 return false;
             }
+        }
+
+        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            DisposeTrayIcon();
+            LogActivation("Background shell close prepared without a system tray icon.");
+            return true;
         }
 
         EnsureTrayIconCreated();
@@ -844,11 +839,6 @@ public partial class App : WinoApplication,
             await Services.GetRequiredService<IntelligenceResultKeyLifecycle>().InitializeAsync();
 
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
-
-            if (_hasConfiguredAccounts)
-            {
-                _ = StartBackgroundSyncHostIfNeededAsync();
-            }
 
             if (_companionIntegration != null)
             {
@@ -2415,61 +2405,6 @@ public partial class App : WinoApplication,
         var cancellationToken = _calendarAutoSynchronizationLoopCts.Token;
         _ = Task.Run(() => RunCalendarAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), cancellationToken));
         LogActivation($"Automatic calendar sync loop started. Interval: {intervalMinutes} minute(s).");
-    }
-
-
-    internal async Task<bool> StartBackgroundSyncHostIfNeededAsync()
-    {
-        var preferences = _preferencesService ?? Services.GetService<IPreferencesService>();
-        if (preferences?.AppCloseBehavior == AppCloseBehavior.Terminate)
-            return true;
-
-        if (IsBackgroundSyncHostRunning())
-            return true;
-
-        await _backgroundSyncHostLaunchSemaphore.WaitAsync().ConfigureAwait(true);
-
-        try
-        {
-            if (IsBackgroundSyncHostRunning())
-                return true;
-
-            await LaunchBackgroundSyncHostAsync().ConfigureAwait(true);
-            return true;
-        }
-        catch (Exception exception)
-        {
-            Log.Error(exception, "Failed to start the BackgroundSyncHost.");
-            return false;
-        }
-        finally
-        {
-            _backgroundSyncHostLaunchSemaphore.Release();
-        }
-    }
-
-    private static bool IsBackgroundSyncHostRunning()
-    {
-        try
-        {
-            return Process.GetProcessesByName("Wino.Mail.BackgroundSyncHost").Length > 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static async Task LaunchBackgroundSyncHostAsync()
-    {
-        var appUserModelId = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!BackgroundSyncHost";
-
-        var processId = await Task.Run(() => PackagedApplicationActivator.Activate(appUserModelId, string.Empty))
-            .WaitAsync(TimeSpan.FromSeconds(15))
-            .ConfigureAwait(true);
-
-        if (processId == 0)
-            throw new InvalidOperationException("BackgroundSyncHost activation returned process id 0.");
     }
 
     private void RestartAutoSynchronizationLoops()

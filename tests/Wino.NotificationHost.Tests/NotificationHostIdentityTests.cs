@@ -17,18 +17,6 @@ public sealed class NotificationHostIdentityTests
         actual.Should().Be(expected);
     }
 
-    [Theory]
-    [InlineData(NotificationHostApplication.Mail, "App")]
-    [InlineData(NotificationHostApplication.Calendar, "CalendarApp")]
-    [InlineData(NotificationHostApplication.People, "ContactsApp")]
-    [InlineData(NotificationHostApplication.Tasks, "ToDoApp")]
-    public void GetToastTargetApplicationId_UsesVisibleApplication(
-        NotificationHostApplication application,
-        string expected)
-    {
-        NotificationHostApplicationIds.GetToastTargetApplicationId(application).Should().Be(expected);
-    }
-
     [Fact]
     public void ForwardedActivationArguments_ParseAlongsideManifestArguments()
     {

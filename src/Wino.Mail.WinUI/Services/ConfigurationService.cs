@@ -10,13 +10,6 @@ namespace Wino.Mail.WinUI.Services;
 
 public class ConfigurationService : IConfigurationService
 {
-    private readonly bool _useCache;
-
-    public ConfigurationService(bool useCache = true)
-    {
-        _useCache = useCache;
-    }
-
     /// <summary>
     /// Converted setting values, keyed by setting name and requested type.
     /// </summary>
@@ -60,15 +53,8 @@ public class ConfigurationService : IConfigurationService
         SetInternal(key, value, ApplicationData.Current.RoamingSettings.Values);
     }
 
-    private T GetCached<T>(string key, bool isRoaming, T defaultValue)
+    private static T GetCached<T>(string key, bool isRoaming, T defaultValue)
     {
-        var collection = isRoaming
-            ? ApplicationData.Current.RoamingSettings.Values
-            : ApplicationData.Current.LocalSettings.Values;
-
-        if (!_useCache)
-            return TryGetStored<T>(key, collection, out var freshValue) ? freshValue : defaultValue;
-
         var cacheKey = new CacheKey(key, typeof(T), isRoaming);
         if (_cache.TryGetValue(cacheKey, out var cachedValue))
         {
@@ -78,6 +64,10 @@ public class ConfigurationService : IConfigurationService
                 ? defaultValue
                 : (T)cachedValue!;
         }
+
+        var collection = isRoaming
+            ? ApplicationData.Current.RoamingSettings.Values
+            : ApplicationData.Current.LocalSettings.Values;
 
         if (!TryGetStored<T>(key, collection, out var storedValue))
         {
