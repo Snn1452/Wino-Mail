@@ -1,12 +1,9 @@
 using System;
 using System.Linq;
-using System.Security;
 using System.IO;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Windows.AppNotifications;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
@@ -180,6 +177,37 @@ internal static class Program
         WriteStartupDiagnostic("LOGGING", "Configuring structured logging.");
         ConfigureLogging(provider);
 
+        if (isNotificationSmokeTest)
+        {
+            var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
+            var smokePayload = HeadlessNotificationPayloadBuilder.Build(
+                [
+                    ReleaseIdentity.Current.DisplayNames["Mail"],
+                    "Background notification smoke test"
+                ],
+                HeadlessNotificationPayloadBuilder.Arguments(
+                    ("wino-smoke-test", smokeTag)),
+                [
+                    (
+                        Translator.Buttons_Dismiss,
+                        HeadlessNotificationPayloadBuilder.Arguments(
+                            (Constants.ToastDismissActionKey, bool.TrueString)))
+                ],
+                audioEvent: HeadlessNotificationPayloadBuilder.GetAudioEvent(NotificationSoundEvent.Default));
+
+            WriteStartupDiagnostic("NOTIFICATION", $"Dispatching notification smoke request. Tag={smokeTag}");
+            await provider
+                .GetRequiredService<BackgroundNotificationHostClient>()
+                .ShowAndWaitForSmokeAsync(
+                    NotificationHostApplication.Mail,
+                    smokePayload,
+                    smokeTag)
+                .ConfigureAwait(false);
+
+            WriteStartupDiagnostic("NOTIFICATION", $"Background notification host confirmed delivery. Tag={smokeTag}");
+            return 0;
+        }
+
         WriteStartupDiagnostic("PREFERENCES", "Reading AppCloseBehavior.");
         var closeBehavior = provider.GetRequiredService<IPreferencesService>().AppCloseBehavior;
         WriteStartupDiagnostic("PREFERENCES", $"AppCloseBehavior={closeBehavior}");
@@ -225,39 +253,6 @@ internal static class Program
             return 0;
         }
 
-        if (isNotificationSmokeTest)
-        {
-            EnsureAppNotificationRegistration();
-
-            var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
-            var smokeTitle = SecurityElement.Escape(ReleaseIdentity.Current.DisplayNames["Mail"]);
-            var smokePayload = $"<toast><visual><binding template='ToastGeneric'><text>{smokeTitle}</text><text>Background notification smoke test</text></binding></visual></toast>";
-            var notification = new AppNotification(smokePayload)
-            {
-                Tag = smokeTag
-            };
-
-            await provider
-                .GetRequiredService<BackgroundNotificationHostClient>()
-                .ShowAsync(NotificationHostApplication.Mail, notification)
-                .ConfigureAwait(false);
-
-            var delivered = await NotificationHostDispatcher.WaitForNotificationAsync(
-                NotificationHostApplication.Mail,
-                smokeTag,
-                TimeSpan.FromSeconds(5),
-                CancellationToken.None).ConfigureAwait(false);
-
-            if (!delivered)
-            {
-                WriteStartupDiagnostic("NOTIFICATION", $"Background notification was not present in Windows notification history. Tag={smokeTag}");
-                return 2;
-            }
-
-            WriteStartupDiagnostic("NOTIFICATION", $"Background notification delivered. Tag={smokeTag}");
-            return 0;
-        }
-
         WriteStartupDiagnostic("LOOPS", "Starting automatic synchronization and calendar reminder loops.");
         await Task.WhenAll(
             provider.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
@@ -266,11 +261,6 @@ internal static class Program
 
         WriteStartupDiagnostic("EXIT", "Background synchronization host loops completed.");
         return 0;
-    }
-
-    private static void EnsureAppNotificationRegistration()
-    {
-        Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Register();
     }
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
