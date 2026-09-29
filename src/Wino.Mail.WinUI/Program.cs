@@ -35,6 +35,11 @@ public class Program
         "Wino Mail",
         "winui-launch-smoke.log");
 
+    /// <summary>
+    /// Process entry time. Launch log lines report their offset from it.
+    /// </summary>
+    internal static long StartupTimestamp { get; private set; }
+
     private static void WriteLaunchDiagnostic(string state, string message)
     {
         try
@@ -56,6 +61,8 @@ public class Program
     [STAThread]
     static int Main(string[] args)
     {
+        StartupTimestamp = Stopwatch.GetTimestamp();
+
         WriteLaunchDiagnostic(
             "MAIN",
             $"Program.Main entered. Args=[{string.Join(", ", args.Select(argument => $"'{argument}'"))}]; CommandLine={Environment.CommandLine}");
