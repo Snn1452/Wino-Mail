@@ -344,11 +344,31 @@ internal sealed class HeadlessNotificationBuilder(
         if (!decision.ShouldDeliver)
             return;
 
+        EnsureAppNotificationRegistration();
+
         var notification = builder.BuildNotification();
         if (!string.IsNullOrWhiteSpace(tag))
             notification.Tag = tag;
 
         await notificationHostClient.ShowAsync(application, notification).ConfigureAwait(false);
+    }
+
+    private static readonly object NotificationRegistrationLock = new();
+    private static bool _notificationRuntimeRegistered;
+
+    private static void EnsureAppNotificationRegistration()
+    {
+        if (_notificationRuntimeRegistered)
+            return;
+
+        lock (NotificationRegistrationLock)
+        {
+            if (_notificationRuntimeRegistered)
+                return;
+
+            Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Register();
+            _notificationRuntimeRegistered = true;
+        }
     }
 
     private static AppNotificationButton CreateDismissButton()
