@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +39,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     public static SynchronizationManager Instance => _instance.Value;
 
     private IReadOnlyDictionary<Guid, IWinoSynchronizerBase> _synchronizerCache => _concreteSynchronizerFactory.CachedSynchronizers;
+
+    private static readonly string SynchronizationLockRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "SynchronizationLocks");
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _accountSynchronizationCancellationSources = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _calendarSynchronizationLocks = new();
     private readonly ConcurrentDictionary<Guid, AccountSynchronizationProgress> _mailSynchronizationProgress = new();
@@ -217,6 +223,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                                                                       CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
 
         if (options.Type == MailSynchronizationType.ExecuteRequests && HasPendingUndoAction(options.AccountId))
@@ -844,20 +851,27 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <param name="options">Calendar synchronization options</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Synchronization result</returns>
-    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(CalendarSynchronizationOptions options,
-                                                                               CancellationToken cancellationToken = default)
-        => options.Type == CalendarSynchronizationType.Strict
+    public async Task<CalendarSynchronizationResult> SynchronizeCalendarAsync(
+        CalendarSynchronizationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
+
+        return options.Type == CalendarSynchronizationType.Strict
             ? await SynchronizeCalendarStrictAsync(options, cancellationToken).ConfigureAwait(false)
             : await RunCalendarSynchronizationWithLockAsync(
                 options.AccountId,
                 cancellationToken,
                 () => SynchronizeCalendarCoreAsync(options, cancellationToken, reportState: true)).ConfigureAwait(false);
+    }
 
     public async Task<ContactSynchronizationResult> SynchronizeContactsAsync(
         ContactSynchronizationOptions options,
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
 
         // Same gate as mail and calendar: a sign-in the user has not redone yet can only fail.
         if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
@@ -931,6 +945,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
 
@@ -1735,6 +1750,34 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
 
         var account = await _accountService.GetAccountAsync(accountId).ConfigureAwait(false);
         return account?.AttentionReason is AccountAttentionReason.InvalidCredentials or AccountAttentionReason.CertificateValidationFailed;
+    }
+
+    private static async Task<FileStream> AcquireAccountSynchronizationLockAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(SynchronizationLockRoot);
+        var lockPath = Path.Combine(SynchronizationLockRoot, $"{accountId:N}.lock");
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.SequentialScan);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private void PublishSynchronizationProgress(AccountSynchronizationProgress progress)

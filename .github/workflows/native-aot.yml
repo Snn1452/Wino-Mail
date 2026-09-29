@@ -8,6 +8,10 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: native-aot-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-aot:
     name: Publish x64 and run SQLite AOT smoke test
@@ -18,7 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check installed .NET 10 SDK
+        shell: pwsh
+        run: |
+          $hasCompatibleSdk = @(dotnet --list-sdks | Where-Object {
+            if ($_ -match '^([0-9]+)\.([0-9]+)\.([0-9]+)\s') {
+              return ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -eq 0 -and [int]$Matches[3] -ge 301)
+            }
+            return $false
+          }).Count -gt 0
+          "DOTNET_SDK_PRESENT=$($hasCompatibleSdk.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
       - name: Setup .NET SDK
+        if: env.DOTNET_SDK_PRESENT != 'true'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.301
