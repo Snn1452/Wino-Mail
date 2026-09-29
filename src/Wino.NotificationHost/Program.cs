@@ -107,7 +107,9 @@ public static class NotificationHostRuntime
     {
         for (var attempt = 0; attempt < 10; attempt++)
         {
-            var notifications = manager.GetAllAsync().AsTask().GetAwaiter().GetResult();
+            var notifications = manager.GetAllAsync().AsTask().GetAwaiter().GetResult()
+                ?? Array.Empty<AppNotification>();
+
             if (notifications.Any(notification =>
                     string.Equals(notification.Tag, tag, StringComparison.Ordinal)))
             {
@@ -117,6 +119,11 @@ public static class NotificationHostRuntime
                     message: $"Tag={tag}; Setting={manager.Setting}");
                 return;
             }
+
+            NotificationHostLogger.Write(
+                "smoke-notification-poll",
+                requestId,
+                message: $"Attempt={attempt + 1}; Count={notifications.Count}; Tag={tag}; Setting={manager.Setting}");
 
             Thread.Sleep(200);
         }
