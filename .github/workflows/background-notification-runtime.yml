@@ -186,14 +186,14 @@ jobs:
           Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
 
-          $env:WINO_CLOSE_BEHAVIOR_SMOKE_TEST = 'RunInBackgroundWithoutTrayIcon'
-          try {
-            Write-Host 'Launching packaged WinUI process with the CI-only no-tray preference seed.'
-            Start-Process -FilePath $exe -WorkingDirectory $package.InstallLocation | Out-Null
-          }
-          finally {
-            Remove-Item Env:\WINO_CLOSE_BEHAVIOR_SMOKE_TEST -ErrorAction SilentlyContinue
-          }
+          $markerDirectory = Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalState"
+          $markerPath = Join-Path $markerDirectory '.wino-close-behavior-smoke'
+          New-Item -ItemType Directory -Force -Path $markerDirectory | Out-Null
+          Set-Content -LiteralPath $markerPath -Value 'RunInBackgroundWithoutTrayIcon' -NoNewline
+
+          $targetAumid = "$($package.PackageFamilyName)!App"
+          Write-Host "Launching packaged WinUI through $targetAumid with the CI-only no-tray preference marker."
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
 
           $ui = $null
           for ($attempt = 0; $attempt -lt 30 -and $null -eq $ui; $attempt++) {
@@ -223,8 +223,8 @@ jobs:
             throw "WinUI PID $firstPid was still present after WaitForExit returned."
           }
 
-          Write-Host "WinUI PID $firstPid exited as expected. Relaunching to prove the old invisible process no longer captures activation."
-          Start-Process -FilePath $exe -WorkingDirectory $package.InstallLocation | Out-Null
+          Write-Host "WinUI PID $firstPid exited as expected. Relaunching through packaged activation to prove the old invisible process no longer captures activation."
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
 
           $secondUi = $null
           for ($attempt = 0; $attempt -lt 30 -and $null -eq $secondUi; $attempt++) {
