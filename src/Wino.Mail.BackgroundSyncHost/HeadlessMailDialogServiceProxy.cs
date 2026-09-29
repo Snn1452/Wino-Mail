@@ -3,7 +3,7 @@ using System.Reflection;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
-internal sealed class HeadlessMailDialogServiceProxy : DispatchProxy
+internal class HeadlessMailDialogServiceProxy : DispatchProxy
 {
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         => throw new NotSupportedException(
