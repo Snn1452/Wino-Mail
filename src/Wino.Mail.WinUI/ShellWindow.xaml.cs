@@ -631,9 +631,16 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
 
             PrepareForClose();
 
-            // PrepareForClose removes this handler and permits the real close. The managed
-            // app and tray keep running, but this HWND and its complete XAML tree do not.
+            // PrepareForClose removes this handler and permits the real close.
+            // Tray mode keeps the WinUI process alive through the background lifetime window.
+            // No-tray mode must terminate the WinUI process after the shell HWND is closed;
+            // otherwise AppInstance keeps redirecting future launches to an invisible process.
             Close();
+
+            if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+            {
+                app?.ExitApplication();
+            }
         }
         finally
         {
