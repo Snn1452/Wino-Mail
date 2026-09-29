@@ -6,6 +6,7 @@ on:
       - 'src/Wino.Mail.BackgroundSyncHost/**'
       - 'src/Wino.Mail.WinUI/**'
       - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.NotificationHost/**'
       - 'src/Wino.Platform.Windows/**'
       - 'src/Wino.Core/**'
       - 'src/Wino.Services/**'
