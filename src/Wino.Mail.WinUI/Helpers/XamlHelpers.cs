@@ -220,6 +220,13 @@ public static class XamlHelpers
     public static Visibility TextToVisibility(string value) => string.IsNullOrWhiteSpace(value) ? Visibility.Collapsed : Visibility.Visible;
     public static Visibility NotNullToVisibility(object value) => value is null ? Visibility.Collapsed : Visibility.Visible;
     public static Visibility CountToInvertedVisibility(int count) => count > 0 ? Visibility.Collapsed : Visibility.Visible;
+    public static Visibility NullToVisibility(object value) => value is null ? Visibility.Visible : Visibility.Collapsed;
+
+    // Profile editor footer: visible while saving or when the ViewModel left a message behind.
+    public static Visibility GetProfileStatusVisibility(bool isBusy, string message) => isBusy || !string.IsNullOrWhiteSpace(message) ? Visibility.Visible : Visibility.Collapsed;
+    public static Visibility GetProfileSavedVisibility(string message) => message == Translator.WinoAccount_Profile_Saved ? Visibility.Visible : Visibility.Collapsed;
+    public static Visibility GetProfileFailedVisibility(string message) => !string.IsNullOrWhiteSpace(message) && message != Translator.WinoAccount_Profile_Saved ? Visibility.Visible : Visibility.Collapsed;
+    public static string GetProfileStatusText(bool isBusy, string message) => isBusy ? Translator.WinoAccount_Profile_Saving : message;
 
     // x:Bind cannot nest function calls, so birthday formatting and its visibility are separate flat helpers.
     public static Visibility BirthdayVisibility(int? year, int? month, int? day)
@@ -342,6 +349,9 @@ public static class XamlHelpers
         }
     }
 
+    public static Microsoft.UI.Xaml.Media.Imaging.BitmapImage? AccountAvatarToBitmapImage(string? path)
+        => GetContactEditorPreviewPicture(null, path);
+
     public static Microsoft.UI.Xaml.Media.Imaging.BitmapImage? StringToBitmapImage(string? imagePath)
     {
         if (string.IsNullOrWhiteSpace(imagePath))
@@ -360,6 +370,13 @@ public static class XamlHelpers
             return null;
         }
     }
+
+    /// <summary>
+    /// Warning when the flag is set, informational otherwise. Used by hints that block a flow until
+    /// the user changes something outside Wino.
+    /// </summary>
+    public static InfoBarSeverity BoolToInfoBarSeverity(bool isWarning)
+        => isWarning ? InfoBarSeverity.Warning : InfoBarSeverity.Informational;
 
     public static InfoBarSeverity InfoBarSeverityConverter(InfoBarMessageType messageType)
     {
@@ -804,11 +821,14 @@ public static class XamlHelpers
         }
         else
         {
+            // Catalog providers have a brand glyph named after their enum member (Gmx, Proton, ...).
             return specialImapProvider switch
             {
                 SpecialImapProvider.iCloud => WinoIconGlyph.Apple,
                 SpecialImapProvider.Yahoo => WinoIconGlyph.Yahoo,
-                _ => WinoIconGlyph.None,
+                _ => Enum.TryParse<WinoIconGlyph>(specialImapProvider.ToString(), out var brandGlyph)
+                    ? brandGlyph
+                    : WinoIconGlyph.IMAP,
             };
         }
     }

@@ -21,14 +21,39 @@ namespace Wino.Core.Synchronizers;
 
 public abstract partial class BaseSynchronizer<TBaseRequest> : ObservableObject, IBaseSynchronizer
 {
+    /// <summary>
+    /// Serializes mail synchronization for the account.
+    /// </summary>
     protected SemaphoreSlim synchronizationSemaphore = new(1);
+
+    /// <summary>
+    /// Serializes contact synchronization for the account. Contacts do not share the mail gate:
+    /// an initial mail download can take minutes, and contacts must not wait for it.
+    /// Calendar already runs under its own per-account lock in the synchronization manager.
+    /// </summary>
+    protected readonly SemaphoreSlim contactSynchronizationSemaphore = new(1, 1);
+
+    /// <summary>
+    /// Serializes task synchronization for the account, independently from mail and contacts.
+    /// </summary>
+    protected readonly SemaphoreSlim taskSynchronizationSemaphore = new(1, 1);
+
     protected CancellationToken activeSynchronizationCancellationToken;
 
-    protected List<IRequestBase> changeRequestQueue = [];
+    private readonly List<IRequestBase> changeRequestQueue = [];
+    private readonly object requestQueueLock = new();
     private readonly ConcurrentDictionary<Guid, byte> _pendingMailOperationIds = new();
     private readonly ConcurrentDictionary<Guid, byte> _pendingCalendarOperationIds = new();
     private readonly ConcurrentDictionary<Guid, byte> _pendingContactOperationIds = new();
-    private readonly ConcurrentQueue<SynchronizationIssue> _capturedSynchronizationIssues = new();
+
+    // Modes of one account synchronize concurrently, so each top-level synchronization call keeps
+    // its own issue list in its async flow. The shared queue only catches issues captured outside
+    // any synchronization call.
+    private readonly ConcurrentQueue<SynchronizationIssue> _sharedCapturedSynchronizationIssues = new();
+    private readonly AsyncLocal<ConcurrentQueue<SynchronizationIssue>> _flowCapturedSynchronizationIssues = new();
+
+    private ConcurrentQueue<SynchronizationIssue> CapturedSynchronizationIssues
+        => _flowCapturedSynchronizationIssues.Value ?? _sharedCapturedSynchronizationIssues;
     protected readonly IMessenger Messenger;
     protected SynchronizationProgressCategory CurrentSynchronizationProgressCategory { get; set; } = SynchronizationProgressCategory.Mail;
     
@@ -133,11 +158,37 @@ public abstract partial class BaseSynchronizer<TBaseRequest> : ObservableObject,
     /// <param name="request">Request to execute.</param>
     public void QueueRequest(IRequestBase request)
     {
-        changeRequestQueue.Add(request);
-        TrackQueuedRequest(request);
+        lock (requestQueueLock)
+        {
+            TrackQueuedRequest(request);
+            changeRequestQueue.Add(request);
+        }
     }
 
-    public bool HasQueuedRequests() => changeRequestQueue.Count > 0;
+    public bool HasQueuedRequests()
+    {
+        lock (requestQueueLock)
+            return changeRequestQueue.Count > 0;
+    }
+
+    protected List<IRequestBase> GetQueuedRequests()
+    {
+        lock (requestQueueLock)
+            return changeRequestQueue.ToList();
+    }
+
+    protected void RemoveQueuedRequests(IEnumerable<IRequestBase> requests)
+    {
+        lock (requestQueueLock)
+        {
+            foreach (var request in requests)
+            {
+                var index = changeRequestQueue.FindIndex(queued => ReferenceEquals(queued, request));
+                if (index >= 0)
+                    changeRequestQueue.RemoveAt(index);
+            }
+        }
+    }
 
     public bool HasPendingOperation(Guid mailUniqueId) => _pendingMailOperationIds.ContainsKey(mailUniqueId);
 
@@ -192,13 +243,27 @@ public abstract partial class BaseSynchronizer<TBaseRequest> : ObservableObject,
 
     protected void UntrackProcessedRequests(IEnumerable<IRequestBase> requests)
     {
-        foreach (var request in requests)
-            UntrackProcessedRequest(request);
+        lock (requestQueueLock)
+        {
+            foreach (var request in requests)
+                UntrackProcessedRequest(request);
+            // A newer action for the same message, or an unstarted batch, is still pending.
+            foreach (var queued in changeRequestQueue)
+                TrackQueuedRequest(queued);
+        }
     }
 
+    /// <summary>
+    /// Starts a fresh issue list for the calling synchronization flow. This is a synchronous
+    /// method on purpose: the AsyncLocal value it sets stays visible to the rest of the calling
+    /// async method and everything it awaits, but never leaks into a concurrent synchronization
+    /// of another mode on the same account.
+    /// </summary>
     protected void ResetCapturedSynchronizationIssues()
     {
-        while (_capturedSynchronizationIssues.TryDequeue(out _))
+        _flowCapturedSynchronizationIssues.Value = new ConcurrentQueue<SynchronizationIssue>();
+
+        while (_sharedCapturedSynchronizationIssues.TryDequeue(out _))
         {
         }
     }
@@ -208,14 +273,14 @@ public abstract partial class BaseSynchronizer<TBaseRequest> : ObservableObject,
         if (issue == null || string.IsNullOrWhiteSpace(issue.Message))
             return;
 
-        _capturedSynchronizationIssues.Enqueue(issue);
+        CapturedSynchronizationIssues.Enqueue(issue);
     }
 
     protected void CaptureSynchronizationIssue(SynchronizerErrorContext errorContext)
         => CaptureSynchronizationIssue(SynchronizationIssue.FromErrorContext(errorContext));
 
     protected IReadOnlyList<SynchronizationIssue> GetCapturedSynchronizationIssues()
-        => _capturedSynchronizationIssues.ToArray();
+        => CapturedSynchronizationIssues.ToArray();
 
     /// <summary>
     /// Runs existing queued requests in the queue.

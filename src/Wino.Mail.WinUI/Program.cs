@@ -30,36 +30,11 @@ public class Program
     private static Mutex? _mailHostRunningMutex;
     private static PendingBootstrapActivation? _pendingBootstrapActivation;
 
-    private static readonly string LaunchDiagnosticPath = System.IO.Path.Combine(
-        System.IO.Path.GetTempPath(),
-        "Wino Mail",
-        "winui-launch-smoke.log");
-
-    private static void WriteLaunchDiagnostic(string state, string message)
-    {
-        try
-        {
-            var directory = System.IO.Path.GetDirectoryName(LaunchDiagnosticPath)!;
-            System.IO.Directory.CreateDirectory(directory);
-            System.IO.File.AppendAllText(
-                LaunchDiagnosticPath,
-                $"{DateTimeOffset.UtcNow:O} [PID:{Environment.ProcessId}] [{state}] {message}{Environment.NewLine}");
-        }
-        catch
-        {
-            // Diagnostics must never prevent the application from starting.
-        }
-    }
-
-
-
+[object Object]
     [STAThread]
     static int Main(string[] args)
     {
-        WriteLaunchDiagnostic(
-            "MAIN",
-            $"Program.Main entered. Args=[{string.Join(", ", args.Select(argument => $"'{argument}'"))}]; CommandLine={Environment.CommandLine}");
-
+[object Object]
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         var package = Windows.ApplicationModel.Package.Current;

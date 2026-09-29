@@ -93,6 +93,12 @@ public partial class App : WinoApplication,
     private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);
     private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly DateTimeOffset _sessionStartedAtUtc = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Completes after the launch activation, including the first frame of its window. Automatic
+    /// synchronization waits for it so the first sync does not compete with that frame.
+    /// </summary>
+    private readonly TaskCompletionSource _launchCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private MainTrayController? _companionIntegration;
     private Window? _backgroundLifetimeWindow;
     private Microsoft.UI.Xaml.LaunchActivatedEventArgs? _pendingMigrationLaunchArgs;
@@ -112,6 +118,44 @@ public partial class App : WinoApplication,
             return false;
 
         ExitApplication();
+
+        return true;
+    }
+
+    /// <summary>
+    /// Closing the welcome window before onboarding completes ends the application: without an
+    /// account there is nothing to run in the background. Returns true when the caller must cancel
+    /// the close so the window keeps the XAML dispatcher alive until the exit sequence completes.
+    /// </summary>
+    internal bool TryExitApplicationOnWelcomeWindowClose(WelcomeWindow welcomeWindow)
+    {
+        if (_isExiting)
+            return false;
+
+        // A shell window owns the application lifetime. Closing the welcome window then only closes it.
+        if (HasShellWindow())
+            return false;
+
+        LogActivation("Welcome window closed before onboarding completed. Exiting the application.");
+
+        void HideAndExit()
+        {
+            try
+            {
+                // The window stays alive as the XAML lifetime owner until Application.Exit runs.
+                welcomeWindow.AppWindow.Hide();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to hide the welcome window before exiting.");
+            }
+
+            ExitApplication();
+        }
+
+        // Run the exit outside the AppWindow.Closing callback.
+        if (_applicationDispatcherQueue?.TryEnqueue(HideAndExit) != true)
+            HideAndExit();
 
         return true;
     }
@@ -533,6 +577,22 @@ public partial class App : WinoApplication,
         // Activating first lets WinUI render one frame with its default light theme.
         windowManager.ActivateWindow(window);
 
+        EnqueueTrayIconStateUpdate();
+    }
+
+    /// <summary>
+    /// Creating the native tray icon and its companion is UI-thread work that no window's first
+    /// frame needs, so it runs at low priority after the frame the activation just queued.
+    /// </summary>
+    private void EnqueueTrayIconStateUpdate()
+    {
+        if (_applicationDispatcherQueue?.TryEnqueue(
+                DispatcherQueuePriority.Low,
+                () => UpdateTrayIconState(allowCreation: !_isExiting)) == true)
+        {
+            return;
+        }
+
         UpdateTrayIconState(allowCreation: !_isExiting);
     }
 
@@ -553,15 +613,52 @@ public partial class App : WinoApplication,
         }
         finally
         {
+            // Every step before Application.Exit is bounded and guarded. A failure here must not
+            // leave an exiting process alive without a window, which swallows every relaunch.
             if (_companionIntegration != null)
             {
                 var companion = _companionIntegration;
                 _companionIntegration = null;
-                await companion.ShutdownAsync();
+
+                try
+                {
+                    await companion.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Tray companion shutdown did not complete during application exit.");
+                }
             }
-            ReleaseBackgroundLifetimeWindow();
+
+            try
+            {
+                ReleaseBackgroundLifetimeWindow();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to release the background lifetime window during application exit.");
+            }
+
+            LogActivation("Exiting application.");
+            ScheduleForcedProcessExit();
             Application.Current.Exit();
         }
+    }
+
+    /// <summary>
+    /// Application.Exit ends the XAML loop, but the process can still outlive it. A lingering
+    /// process keeps the single-instance key, so later launches redirect to it and show nothing.
+    /// </summary>
+    private static void ScheduleForcedProcessExit()
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+            Log.Warning("The process is still running 5 seconds after Application.Exit. Forcing process exit.");
+            Log.CloseAndFlush();
+            Environment.Exit(0);
+        });
     }
 
     internal async void ExitApplication() => await ExitApplicationAsync();
@@ -815,21 +912,41 @@ public partial class App : WinoApplication,
         NewThemeService.ApplyIconStyle();
 
         _preferencesService ??= Services.GetRequiredService<IPreferencesService>();
-        if (ShouldCreateTrayIcon())
-        {
-            EnsureTrayIconCreated();
-            if (_companionIntegration != null)
-                await _companionIntegration.SetReadinessAsync(CompanionReadinessState.Initializing);
-        }
-
         var activationArgs = ResolveStartupActivation();
 
-        await TranslationService.InitializeAsync();
-        if (await TryShowMigrationAsync(args, activationArgs))
-            return;
+        try
+        {
+            // A normal launch shows a window first; ActivateWindowAsync adds the tray after that
+            // window's first frame. Other activations may never show one, so they get the tray now.
+            if (activationArgs.Kind != ExtendedActivationKind.Launch && ShouldCreateTrayIcon())
+            {
+                EnsureTrayIconCreated();
+                if (_companionIntegration != null)
+                    await _companionIntegration.SetReadinessAsync(CompanionReadinessState.Initializing);
+            }
 
-        await EnsureCoreActivationInfrastructureAsync();
-        await _activationHandler.HandleLaunchAsync(args, activationArgs);
+            await TranslationService.InitializeAsync();
+            if (await TryShowMigrationAsync(args, activationArgs))
+                return;
+
+            await EnsureCoreActivationInfrastructureAsync();
+            await _activationHandler.HandleLaunchAsync(args, activationArgs);
+        }
+        finally
+        {
+            // Low priority runs after the first frame of whatever window the launch activated.
+            // A launch route can also finish without a window, for example a forwarded notification.
+            if (_applicationDispatcherQueue?.TryEnqueue(DispatcherQueuePriority.Low, CompleteLaunch) != true)
+            {
+                CompleteLaunch();
+            }
+        }
+    }
+
+    private void CompleteLaunch()
+    {
+        UpdateTrayIconState(allowCreation: !_isExiting);
+        _launchCompleted.TrySetResult();
     }
 
     private async Task<bool> TryShowMigrationAsync(
@@ -1091,6 +1208,8 @@ public partial class App : WinoApplication,
             LogActivation($"Creating shell window for {mode} activation.");
             wasCreated = true;
 
+            var initialWinoAccount = _hasConfiguredAccounts ? ReadInitialWinoAccountAsync() : null;
+
             CreateWindow(
                 null,
                 AppEntryConstants.GetModeLaunchArgument(mode),
@@ -1102,9 +1221,9 @@ public partial class App : WinoApplication,
 
             await NewThemeService.InitializeAsync();
 
-            if (_hasConfiguredAccounts)
+            if (initialWinoAccount != null)
             {
-                await LoadInitialWinoAccountAsync();
+                PublishInitialWinoAccount(await initialWinoAccount);
             }
 
             shellWindow = windowManager.GetWindow(WinoWindowKind.Shell) as IWinoShellWindow ?? MainWindow as IWinoShellWindow;
@@ -1256,13 +1375,15 @@ public partial class App : WinoApplication,
             return;
         }
 
+        var initialWinoAccount = hasAnyAccount ? ReadInitialWinoAccountAsync() : null;
+
         CreateWindow(args);
 
         await NewThemeService.InitializeAsync();
 
-        if (hasAnyAccount)
+        if (initialWinoAccount != null)
         {
-            await LoadInitialWinoAccountAsync();
+            PublishInitialWinoAccount(await initialWinoAccount);
         }
 
         LogActivation("Theme service initialized.");
@@ -1936,41 +2057,48 @@ public partial class App : WinoApplication,
 
     private async Task SynchronizeCreatedAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account)
     {
+        // Start every granted mode at once. Each handler hops to the thread pool, and each mode
+        // has its own per-account gate, so contacts and To Do never wait for the initial mail
+        // download. The caller still waits until all of them finish.
+        var synchronizations = new List<Task>(4);
+
         if (account.IsMailAccessGranted)
         {
-            await HandleMailSynchronizationRequestedAsync(new NewMailSynchronizationRequested(new MailSynchronizationOptions
+            synchronizations.Add(HandleMailSynchronizationRequestedAsync(new NewMailSynchronizationRequested(new MailSynchronizationOptions
             {
                 AccountId = account.Id,
                 Type = MailSynchronizationType.FullFolders
-            })).ConfigureAwait(false);
+            })));
         }
 
         if (account.IsCalendarAccessGranted)
         {
-            await HandleCalendarSynchronizationRequestedAsync(new NewCalendarSynchronizationRequested(new CalendarSynchronizationOptions
+            synchronizations.Add(HandleCalendarSynchronizationRequestedAsync(new NewCalendarSynchronizationRequested(new CalendarSynchronizationOptions
             {
                 AccountId = account.Id,
                 Type = CalendarSynchronizationType.CalendarEvents
-            })).ConfigureAwait(false);
+            })));
         }
 
         if (account.IsContactAccessGranted)
         {
-            await HandleContactSynchronizationRequestedAsync(new NewContactSynchronizationRequested(new ContactSynchronizationOptions
+            synchronizations.Add(HandleContactSynchronizationRequestedAsync(new NewContactSynchronizationRequested(new ContactSynchronizationOptions
             {
                 AccountId = account.Id,
                 Type = ContactSynchronizationType.Delta
-            })).ConfigureAwait(false);
+            })));
         }
 
         if (account.IsTaskAccessGranted && !account.IsTaskReauthorizationRequired)
         {
-            await HandleTaskSynchronizationRequestedAsync(new NewTaskSynchronizationRequested(new TaskSynchronizationOptions
+            synchronizations.Add(HandleTaskSynchronizationRequestedAsync(new NewTaskSynchronizationRequested(new TaskSynchronizationOptions
             {
                 AccountId = account.Id,
                 Type = TaskSynchronizationType.Delta
-            })).ConfigureAwait(false);
+            })));
         }
+
+        await Task.WhenAll(synchronizations).ConfigureAwait(false);
     }
 
     private void EnsureAutoSynchronizationLoops()
@@ -2267,7 +2395,10 @@ public partial class App : WinoApplication,
         int intervalMinutes = Math.Max(1, _preferencesService.EmailSyncIntervalMinutes);
         _autoSynchronizationLoopCts = new CancellationTokenSource();
 
-        _ = RunAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), _autoSynchronizationLoopCts.Token);
+        // Run on the thread pool. Started from the UI thread, every continuation and timer tick of
+        // the loop would otherwise queue onto the dispatcher, starting with the first sync at launch.
+        var cancellationToken = _autoSynchronizationLoopCts.Token;
+        _ = Task.Run(() => RunAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), cancellationToken));
         LogActivation($"Automatic sync loop started. Interval: {intervalMinutes} minute(s).");
     }
 
@@ -2281,7 +2412,8 @@ public partial class App : WinoApplication,
         int intervalMinutes = Math.Max(1, _preferencesService.CalendarSyncIntervalMinutes);
         _calendarAutoSynchronizationLoopCts = new CancellationTokenSource();
 
-        _ = RunCalendarAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), _calendarAutoSynchronizationLoopCts.Token);
+        var cancellationToken = _calendarAutoSynchronizationLoopCts.Token;
+        _ = Task.Run(() => RunCalendarAutoSynchronizationLoopAsync(TimeSpan.FromMinutes(intervalMinutes), cancellationToken));
         LogActivation($"Automatic calendar sync loop started. Interval: {intervalMinutes} minute(s).");
     }
 
@@ -2373,10 +2505,18 @@ public partial class App : WinoApplication,
     }
 
     private async Task LoadInitialWinoAccountAsync()
-    {
-        var winoAccountProfileService = Services.GetRequiredService<IWinoAccountProfileService>();
-        var winoAccount = await winoAccountProfileService.GetActiveAccountAsync();
+        => PublishInitialWinoAccount(await ReadInitialWinoAccountAsync());
 
+    /// <summary>
+    /// Start this before the shell window is constructed. The read runs off the UI thread while
+    /// the window builds, and the result is published before activation so the title bar's
+    /// first frame already shows the signed-in account.
+    /// </summary>
+    private Task<Wino.Core.Domain.Entities.Shared.WinoAccount?> ReadInitialWinoAccountAsync()
+        => Services.GetRequiredService<IWinoAccountProfileService>().GetActiveAccountAsync();
+
+    private static void PublishInitialWinoAccount(Wino.Core.Domain.Entities.Shared.WinoAccount? winoAccount)
+    {
         if (winoAccount != null)
         {
             WeakReferenceMessenger.Default.Send(new WinoAccountProfileUpdatedMessage(winoAccount));
@@ -2387,6 +2527,7 @@ public partial class App : WinoApplication,
     {
         try
         {
+            await _launchCompleted.Task.WaitAsync(cancellationToken);
             await ExecuteAutoSynchronizationAsync(cancellationToken);
 
             using var timer = new PeriodicTimer(interval);
@@ -2410,6 +2551,7 @@ public partial class App : WinoApplication,
     {
         try
         {
+            await _launchCompleted.Task.WaitAsync(cancellationToken);
             await ExecuteCalendarAutoSynchronizationAsync(cancellationToken);
 
             using var timer = new PeriodicTimer(interval);
@@ -2585,6 +2727,13 @@ public partial class App : WinoApplication,
     /// </summary>
     public async void HandleRedirectedActivation(AppActivationArguments args)
     {
+        if (_isExiting)
+        {
+            // Do not re-show a window that the exit sequence is closing.
+            LogActivation("Ignoring redirected activation because the application is exiting.");
+            return;
+        }
+
         try
         {
             var route = _activationHandler.ResolveRedirectedActivationRoute(args);
@@ -2607,7 +2756,7 @@ public partial class App : WinoApplication,
 
     internal void TryActivateExistingWindowForRedirectedActivation(AppActivationArguments args)
     {
-        if (!Program.ShouldBringWindowToForegroundAfterRedirection(args))
+        if (_isExiting || !Program.ShouldBringWindowToForegroundAfterRedirection(args))
         {
             return;
         }

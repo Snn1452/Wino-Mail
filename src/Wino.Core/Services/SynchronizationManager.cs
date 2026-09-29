@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -38,12 +38,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private static readonly Lazy<SynchronizationManager> _instance = new(() => new SynchronizationManager());
     public static SynchronizationManager Instance => _instance.Value;
 
-    private readonly ConcurrentDictionary<Guid, IWinoSynchronizerBase> _synchronizerCache = new();
-
-    private static readonly string SynchronizationLockRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Wino Mail",
-        "SynchronizationLocks");
+[object Object]
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _accountSynchronizationCancellationSources = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _calendarSynchronizationLocks = new();
     private readonly ConcurrentDictionary<Guid, AccountSynchronizationProgress> _mailSynchronizationProgress = new();
@@ -871,7 +866,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
+[object Object]
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
@@ -940,6 +935,12 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
+
+        if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
+        {
+            _logger.Information("Skipping task synchronization for account {AccountId} because it requires credential attention.", options.AccountId);
+            return TaskSynchronizationResult.Canceled;
+        }
 
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
@@ -1271,7 +1272,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         try
         {
             var synchronizer = _concreteSynchronizerFactory.CreateNewSynchronizer(account);
-            _synchronizerCache.TryAdd(account.Id, synchronizer);
 
             _logger.Information("Created new synchronizer for account {AccountName} ({AccountId})",
                               account.Name, account.Id);
@@ -1333,11 +1333,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         if (_draftUpdateCoordinator != null) await _draftUpdateCoordinator.StopAccountAsync(accountId).ConfigureAwait(false);
         await CancelSynchronizationsAsync(accountId);
 
-        if (_synchronizerCache.TryRemove(accountId, out var synchronizer))
+        if (_synchronizerCache.ContainsKey(accountId))
         {
             try
             {
-                await synchronizer.KillSynchronizerAsync();
+                await _concreteSynchronizerFactory.DeleteSynchronizerAsync(accountId).ConfigureAwait(false);
                 _logger.Information("Destroyed synchronizer for account {AccountId}", accountId);
             }
             catch (OperationCanceledException)
@@ -1589,29 +1589,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             _ => "1000+"
         };
 
-    private async Task<IWinoSynchronizerBase> GetOrCreateSynchronizerAsync(Guid accountId)
-    {
-        if (_synchronizerCache.TryGetValue(accountId, out var existingSynchronizer))
-        {
-            var currentAccount = await _accountService.GetAccountAsync(accountId).ConfigureAwait(false);
-            if (currentAccount != null && RequiresSynchronizerRefresh(existingSynchronizer.Account, currentAccount))
-            {
-                await DestroySynchronizerAsync(accountId).ConfigureAwait(false);
-                return CreateSynchronizerForAccount(currentAccount);
-            }
-
-            return existingSynchronizer;
-        }
-
-        // Try to create a new synchronizer if not found
-        var account = await _accountService.GetAccountAsync(accountId);
-        if (account != null)
-        {
-            return CreateSynchronizerForAccount(account);
-        }
-
-        return null;
-    }
+    private Task<IWinoSynchronizerBase> GetOrCreateSynchronizerAsync(Guid accountId)
+        => _concreteSynchronizerFactory.GetAccountSynchronizerAsync(accountId);
 
     public static bool CanSynchronizeCalendar(MailAccount account)
         => account?.IsCalendarAccessGranted == true;
@@ -1619,6 +1598,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     public static bool RequiresSynchronizerRefresh(MailAccount cachedAccount, MailAccount currentAccount)
         => cachedAccount == null ||
            currentAccount == null ||
+           cachedAccount.IsProtocolLogEnabled != currentAccount.IsProtocolLogEnabled ||
            cachedAccount.IsMailAccessGranted != currentAccount.IsMailAccessGranted ||
            cachedAccount.IsCalendarAccessGranted != currentAccount.IsCalendarAccessGranted ||
            cachedAccount.IsContactAccessGranted != currentAccount.IsContactAccessGranted ||
@@ -1644,11 +1624,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// </summary>
     /// <param name="providerType">The mail provider type to authenticate</param>
     /// <param name="account">Optional account to authenticate (null for initial authentication)</param>
-    /// <param name="proposeCopyAuthorizationURL">Whether to propose copying auth URL for Gmail</param>
     /// <returns>Token information containing access token and username</returns>
     public async Task<TokenInformationEx> HandleAuthorizationAsync(MailProviderType providerType,
                                                                   MailAccount account = null,
-                                                                  bool proposeCopyAuthorizationURL = false,
                                                                   bool forceInteractive = false,
                                                                   IReadOnlyCollection<ProviderFeature> requestedFeatures = null)
     {
@@ -1657,15 +1635,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         try
         {
             var authenticator = _authenticationProvider.GetAuthenticator(providerType);
-
-            // Some users are having issues with Gmail authentication.
-            // Their browsers may never launch to complete authentication.
-            // Offer to copy auth url for them to complete it manually.
-            // Redirection will occur to the app and the token will be saved.
-            if (proposeCopyAuthorizationURL && authenticator is IGmailAuthenticator gmailAuthenticator)
-            {
-                gmailAuthenticator.ProposeCopyAuthURL = true;
-            }
 
             TokenInformationEx tokenInfo;
 
