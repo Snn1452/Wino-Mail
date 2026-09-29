@@ -72,15 +72,32 @@ public class Program
 
         WriteLaunchDiagnostic("IDENTITY", $"Distribution={Wino.NotificationHost.Contracts.ReleaseIdentity.Current.Distribution}; Package={package.Id.Name}");
 
-        // CI-only hook: seed the packaged LocalSettings value used by the real shell close path.
-        // Production launches are unaffected unless this exact environment variable is supplied.
-        var closeBehaviorSmoke = Environment.GetEnvironmentVariable("WINO_CLOSE_BEHAVIOR_SMOKE_TEST");
-        if (string.Equals(closeBehaviorSmoke, "RunInBackgroundWithoutTrayIcon", StringComparison.Ordinal))
+        // CI-only hook: the packaged test launcher creates this marker in LocalState before
+        // activation. The app owns the actual LocalSettings write so the test exercises the same
+        // preference path as a normal launch.
+        var closeBehaviorSmokeMarker = System.IO.Path.Combine(
+            Windows.Storage.ApplicationData.Current.LocalFolder.Path,
+            ".wino-close-behavior-smoke");
+
+        try
         {
-            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
-            localSettings["AppCloseBehavior"] = closeBehaviorSmoke;
-            localSettings["IsSystemTrayIconEnabled"] = "False";
-            WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Seeded AppCloseBehavior={closeBehaviorSmoke}.");
+            if (System.IO.File.Exists(closeBehaviorSmokeMarker))
+            {
+                var closeBehaviorSmoke = System.IO.File.ReadAllText(closeBehaviorSmokeMarker).Trim();
+                if (string.Equals(closeBehaviorSmoke, "RunInBackgroundWithoutTrayIcon", StringComparison.Ordinal))
+                {
+                    var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+                    localSettings["AppCloseBehavior"] = closeBehaviorSmoke;
+                    localSettings["IsSystemTrayIconEnabled"] = "False";
+                    WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Seeded AppCloseBehavior={closeBehaviorSmoke}.");
+                }
+
+                System.IO.File.Delete(closeBehaviorSmokeMarker);
+            }
+        }
+        catch (Exception exception)
+        {
+            WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Marker processing failed: {exception.Message}");
         }
 
         // Set before any editor/renderer creates an environment, including inherited overrides.
