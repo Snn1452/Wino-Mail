@@ -190,8 +190,8 @@ jobs:
           $before = @(Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
           Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
 
-          $host = $null
-          for ($attempt = 0; $attempt -lt 20 -and $null -eq $host; $attempt++) {
+          $backgroundHostProcess = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $backgroundHostProcess; $attempt++) {
             Start-Sleep -Seconds 1
             $host = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue |
               Where-Object { $before -notcontains $_.Id } |
@@ -208,13 +208,13 @@ jobs:
             }
           }
 
-          if ($null -ne $host) {
-            Write-Host "BackgroundSyncHost packaged activation produced PID $($host.Id)."
+          if ($null -ne $backgroundHostProcess) {
+            Write-Host "BackgroundSyncHost packaged activation produced PID $($backgroundHostProcess.Id)."
             Start-Sleep -Seconds 5
 
-            if (Get-Process -Id $host.Id -ErrorAction SilentlyContinue) {
+            if (Get-Process -Id $backgroundHostProcess.Id -ErrorAction SilentlyContinue) {
               Write-Host 'BackgroundSyncHost is still running after packaged activation; stopping the CI instance.'
-              Stop-Process -Id $host.Id -Force -ErrorAction SilentlyContinue
+              Stop-Process -Id $backgroundHostProcess.Id -Force -ErrorAction SilentlyContinue
             }
           }
 
@@ -241,7 +241,7 @@ jobs:
             throw "BackgroundSyncHost failed during packaged activation through $targetAumid."
           }
 
-          if ($null -eq $host -and $exitLines.Count -eq 0) {
+          if ($null -eq $backgroundHostProcess -and $exitLines.Count -eq 0) {
             throw "BackgroundSyncHost did not start or report a clean exit after packaged activation through $targetAumid."
           }
 
