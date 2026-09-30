@@ -155,6 +155,7 @@ internal static class Program
         services.AddSingleton<INativeAppService, BackgroundNativeAppService>();
         services.AddSingleton<IMicrosoftStoreService, BackgroundMicrosoftStoreService>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
+        services.AddSingleton<IExternalBrowserAuthenticationPresenter, HeadlessExternalBrowserAuthenticationPresenter>();
         services.AddSingleton<IStoreManagementService, BackgroundStoreManagementService>();
         services.AddSingleton<IKeyPressService, BackgroundKeyPressService>();
         services.AddSingleton<IConfigurationService>(_ => new ConfigurationService(useCache: false));
