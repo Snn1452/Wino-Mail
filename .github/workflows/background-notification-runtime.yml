@@ -208,27 +208,42 @@ jobs:
             }
           }
 
-          if ($null -eq $host) {
-            throw "BackgroundSyncHost did not remain running after packaged activation through $targetAumid."
-          }
+          if ($null -ne $host) {
+            Write-Host "BackgroundSyncHost packaged activation produced PID $($host.Id)."
+            Start-Sleep -Seconds 5
 
-          Write-Host "BackgroundSyncHost packaged activation produced PID $($host.Id)."
-          Start-Sleep -Seconds 5
-
-          $hostAfterDelay = Get-Process -Id $host.Id -ErrorAction SilentlyContinue
-          if ($null -eq $hostAfterDelay) {
-            foreach ($diagnosticPath in @(
-              (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
-              (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
-            )) {
-              if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
-                Get-Content -LiteralPath $diagnosticPath -Tail 160
-              }
+            if (Get-Process -Id $host.Id -ErrorAction SilentlyContinue) {
+              Write-Host 'BackgroundSyncHost is still running after packaged activation; stopping the CI instance.'
+              Stop-Process -Id $host.Id -Force -ErrorAction SilentlyContinue
             }
-            throw 'BackgroundSyncHost exited unexpectedly after packaged activation.'
           }
 
-          Stop-Process -Id $host.Id -Force -ErrorAction SilentlyContinue
+          $diagnosticText = ''
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              $diagnosticText += (Get-Content -LiteralPath $diagnosticPath -Raw) + [Environment]::NewLine
+              Get-Content -LiteralPath $diagnosticPath -Tail 160
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($diagnosticText)) {
+            throw "BackgroundSyncHost produced no diagnostic output after packaged activation through $targetAumid."
+          }
+
+          $failureLines = $diagnosticText -split [Environment]::NewLine | Where-Object { $_ -match '\[FAIL\]' }
+          $exitLines = $diagnosticText -split [Environment]::NewLine | Where-Object { $_ -match '\[EXIT\].*code\s+(\d+)' }
+
+          if ($failureLines.Count -gt 0 -or ($exitLines.Count -gt 0 -and (($exitLines[-1] -match 'code\s+(\d+)') -and [int]$Matches[1] -ne 0))) {
+            throw "BackgroundSyncHost failed during packaged activation through $targetAumid."
+          }
+
+          if ($null -eq $host -and $exitLines.Count -eq 0) {
+            throw "BackgroundSyncHost did not start or report a clean exit after packaged activation through $targetAumid."
+          }
 
       - name: Verify RunInBackgroundWithoutTrayIcon exits WinUI process
         shell: pwsh
