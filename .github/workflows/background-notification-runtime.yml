@@ -194,7 +194,7 @@ jobs:
           $backgroundHostProcess = $null
           for ($attempt = 0; $attempt -lt 20 -and $null -eq $backgroundHostProcess; $attempt++) {
             Start-Sleep -Seconds 1
-            $host = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue |
+            $backgroundHostProcess = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue |
               Where-Object { $before -notcontains $_.Id } |
               Select-Object -First 1
           }
