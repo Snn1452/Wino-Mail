@@ -8,7 +8,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Wino.Mail.WinUI.Services;
 
-internal sealed class NotificationHostProcessSupervisor : IDisposable
+internal sealed partial class NotificationHostProcessSupervisor : IDisposable
 {
     private readonly object _syncRoot = new();
     private readonly SafeJobHandle _job;
