@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$releaseScript = Join-Path $PSScriptRoot '..\..\scripts\build-releases.ps1'
+$releaseScript = Join-Path $PSScriptRoot '..\..\scripts\release\build-releases.ps1'
 . $releaseScript -NonInteractive -Beta -Architectures x64 -BetaAssetsPath $BetaAssetsPath
 
 $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction Stop
