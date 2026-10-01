@@ -479,7 +479,8 @@ public interface IPreferencesService : INotifyPropertyChanged
     #region Shell
 
     /// <summary>
-    /// Setting: Whether the navigation pane is opened on the last session or not.
+    /// Setting: Whether the navigation pane is currently opened. A newly created application window
+    /// starts with the pane collapsed, after which the user can open or close it normally.
     /// </summary>
     bool IsNavigationPaneOpened { get; set; }
 
