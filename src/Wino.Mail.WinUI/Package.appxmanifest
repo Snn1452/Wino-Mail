@@ -64,13 +64,6 @@
       </uap:VisualElements>
 
 		<Extensions>
-			<uap5:Extension Category="windows.startupTask">
-				<uap5:StartupTask
-					TaskId="WinoStartupId"
-					Enabled="true"
-					DisplayName="Wino Mail" />
-			</uap5:Extension>
-
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
 				<uap:Protocol Name="mailto" />
