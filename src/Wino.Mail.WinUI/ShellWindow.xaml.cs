@@ -92,6 +92,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         MinWidth = 420;
         MinHeight = 420;
         ConfigureTitleBar();
+        ConfigureStartupLayout();
         UpdateShellTitles();
         UpdateWinoAccountButtonVisibility();
         ApplyTitleBarSearchHost();
@@ -143,6 +144,19 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         TitleBarSearchBox.MinWidth = isCompact ? 0 : 210;
         TitleBarSearchBox.MaxWidth = isCompact ? 48 : 390;
         TitleBarSearchBox.HorizontalAlignment = isCompact ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+    }
+
+    private void ConfigureStartupLayout()
+    {
+        // Every newly created application window starts maximized.
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.Maximize();
+        }
+
+        // The navigation pane is intentionally collapsed at startup rather than restoring its
+        // persisted open state. The user can still open/close it normally after launch.
+        PreferencesService.IsNavigationPaneOpened = false;
     }
 
     private void ConfigureTitleBar()
