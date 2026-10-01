@@ -428,7 +428,7 @@ function Set-ReleaseLayoutProfile {
             $name = "$($Profile.DisplayNames.Mail) Background Service"
             $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
             $visual.SetAttribute('DisplayName', $name)
-            foreach ($startup in $app.SelectNodes(".//*[local-name()='StartupTask']")) { $startup.SetAttribute('DisplayName', "$name Startup Service") }
+            foreach ($startup in $app.SelectNodes(".//*[local-name()='StartupTask']")) { $startup.SetAttribute('DisplayName', $name) }
             continue
         }
 
