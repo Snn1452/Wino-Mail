@@ -9,9 +9,12 @@ public static class NotificationHostRuntime
 {
     private const string AppNotificationActivatedCommandLinePrefix = "----AppNotificationActivated:";
     private static readonly TimeSpan StaleEnvelopeAge = TimeSpan.FromHours(24);
+    private static readonly TimeSpan MaximumHostLifetime = TimeSpan.FromSeconds(30);
 
     public static int Run(string[] args)
     {
+        // Never retain a notification-host process indefinitely if a Windows notification or COM call blocks.
+        NotificationHostLifetime.Start(MaximumHostLifetime);
         NotificationHostLogger.Write("startup", exception: null);
 
         try
