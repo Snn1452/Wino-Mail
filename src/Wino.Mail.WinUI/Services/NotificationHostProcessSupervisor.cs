@@ -120,7 +120,7 @@ internal sealed partial class NotificationHostProcessSupervisor : IDisposable
         public UIntPtr PeakJobMemoryUsed;
     }
 
-    private sealed class SafeJobHandle : SafeHandleZeroOrMinusOneIsInvalid
+    private sealed partial class SafeJobHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
         public SafeJobHandle() : base(true) { }
         protected override bool ReleaseHandle() => CloseHandle(handle);
