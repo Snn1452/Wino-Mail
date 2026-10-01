@@ -106,7 +106,7 @@ Inside a `ControlTemplate` in a style dictionary, the implicit `WinoFontIcon` st
 
 ```powershell
 python icons/tools/build_fonts.py --check   # committed fonts match the sources
-.\scripts\audit-xaml-icons.ps1              # no SymbolIcon, PathIcon, Segoe glyphs or Symbol shorthand
+.\scripts\maintenance\audit-xaml-icons.ps1              # no SymbolIcon, PathIcon, Segoe glyphs or Symbol shorthand
 ```
 
 ## How it works
@@ -144,4 +144,4 @@ Every SVG in `icons/svg` is in em space: `viewBox="0 0 1024 1024"`, y pointing d
 
 ## History
 
-`tools/extract_font.py` split the original icomoon-built `WinoIcons.ttf` into these SVGs. It is kept to show where the first 111 glyphs came from. `build_fonts.py --verify-against <old.ttf>` compares outlines with any earlier font.
+The first 111 glyphs were extracted from the original IcoMoon-built font. Their editable sources now live in `svg/` and `manifest.json`. `build_fonts.py --verify-against <old.ttf>` compares outlines with any earlier font.
