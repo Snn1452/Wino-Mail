@@ -56,7 +56,7 @@ jobs:
       - name: Read Beta package identity
         shell: pwsh
         run: |
-          $profile = Get-Content -LiteralPath 'scripts/release-profiles/Beta.json' -Raw | ConvertFrom-Json
+          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
           if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
           "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
           "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
