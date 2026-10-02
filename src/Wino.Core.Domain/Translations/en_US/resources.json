@@ -3683,8 +3683,4 @@
   "ProviderSelection_SetupHint_TwoFactorCodeSuffix": "If two-factor authentication is on, enter your password followed by the current code.",
   "ProviderSelection_SetupHint_Help": "Show me how",
   "ProviderSelection_CalendarMode_CalDavDescription": "Your calendar events are synced to {0} servers between your devices.",
-  "WinoAccount_Management_SyncRowTitle": "Accounts and settings",
-  "WinoAccount_Management_ExportDialog_Description": "Choose what to back up.",
-  "WinoAccount_Management_ExportDialog_IncludePreferences": "Settings",
-  "WinoAccount_Management_ExportDialog_IncludeAccounts": "Accounts, signatures, and folders"
 }
