@@ -425,10 +425,16 @@ function Set-ReleaseLayoutProfile {
         MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks';
         BackgroundSyncHost = 'Mail' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
-        if (-not $mode) { throw "Unknown packaged application: $($app.Id)" }
-        $name = $Profile.DisplayNames.$mode
+        $applicationId = [string]$app.Id
         $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual.SetAttribute('DisplayName', 'Wino Mail Background Service')
+            continue
+        }
+
+        $mode = $entries[$applicationId]
+        if (-not $mode) { throw "Unknown packaged application: $applicationId" }
+        $name = $Profile.DisplayNames.$mode
         $visual.SetAttribute('DisplayName', $name)
         foreach ($startup in $app.SelectNodes(".//*[local-name()='StartupTask']")) { $startup.SetAttribute('DisplayName', "$name Startup Service") }
         foreach ($node in $app.SelectNodes(".//*[local-name()='ToastNotificationActivation']")) { $node.SetAttribute('ToastActivatorCLSID', $Profile.NotificationActivatorIds.$mode) }
