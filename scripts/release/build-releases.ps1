@@ -422,12 +422,19 @@ function Set-ReleaseLayoutProfile {
     $Profile | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Layout 'release-profile.json') -Encoding utf8
     $Manifest.Package.Properties.DisplayName = $Profile.DisplayNames.Mail
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
-        MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks' }
+        MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks';
+        BackgroundSyncHost = 'Mail' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
-        if (-not $mode) { throw "Unknown packaged application: $($app.Id)" }
-        $name = $Profile.DisplayNames.$mode
+        $applicationId = [string]$app.Id
         $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual.SetAttribute('DisplayName', 'Wino Mail Background Service')
+            continue
+        }
+
+        $mode = $entries[$applicationId]
+        if (-not $mode) { throw "Unknown packaged application: $applicationId" }
+        $name = $Profile.DisplayNames.$mode
         $visual.SetAttribute('DisplayName', $name)
         foreach ($startup in $app.SelectNodes(".//*[local-name()='StartupTask']")) { $startup.SetAttribute('DisplayName', "$name Startup Service") }
         foreach ($node in $app.SelectNodes(".//*[local-name()='ToastNotificationActivation']")) { $node.SetAttribute('ToastActivatorCLSID', $Profile.NotificationActivatorIds.$mode) }
@@ -576,7 +583,19 @@ function Assert-PackagedReleaseProfile {
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
         MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
+        $applicationId = [string]$app.Id
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            if ($null -eq $visual -or $visual.GetAttribute('DisplayName') -cne 'Wino Mail Background Service') {
+                throw 'The background synchronization application has an unexpected display name.'
+            }
+            if (@($app.SelectNodes(".//*[local-name()='ToastNotificationActivation'] | .//*[local-name()='Class']")).Count -ne 0) {
+                throw 'The background synchronization application must not register notification activation.'
+            }
+            continue
+        }
+
+        $mode = $entries[$applicationId]
         if (-not $mode) { throw 'Unknown application in release manifest.' }
         if ($profile.DisplayNames.$mode -cne $expected.DisplayNames.$mode -or
             $profile.NotificationActivatorIds.$mode -cne $expected.NotificationActivatorIds.$mode) { throw 'Unexpected release branding or notification identity.' }

@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,10 @@ namespace Wino.Mail.WinUI;
 
 public class Program
 {
+    private const string AppNotificationActivatedCommandLinePrefix = "----AppNotificationActivated:";
+    private static bool _hasDeferredAppNotificationStartup;
+    private static bool _shouldRegisterAppNotifications;
+
     private static string SingleInstanceKey => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.SingleInstanceKey;
     private static string ForceAlternateModeSignalEventName => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.AlternateModeEventName;
     private static string MailHostRunningMutexName => Wino.NotificationHost.Contracts.ReleaseIdentity.Current.MailHostMutexName;
@@ -25,28 +30,98 @@ public class Program
     private static Mutex? _mailHostRunningMutex;
     private static PendingBootstrapActivation? _pendingBootstrapActivation;
 
+    private static readonly string LaunchDiagnosticPath = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "Wino Mail",
+        "winui-launch-smoke.log");
+
     /// <summary>
     /// Process entry time. Launch log lines report their offset from it.
     /// </summary>
     internal static long StartupTimestamp { get; private set; }
+
+    private static void WriteLaunchDiagnostic(string state, string message)
+    {
+        try
+        {
+            var directory = System.IO.Path.GetDirectoryName(LaunchDiagnosticPath)!;
+            System.IO.Directory.CreateDirectory(directory);
+            System.IO.File.AppendAllText(
+                LaunchDiagnosticPath,
+                $"{DateTimeOffset.UtcNow:O} [PID:{Environment.ProcessId}] [{state}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Diagnostics must never prevent the application from starting.
+        }
+    }
+
+
 
     [STAThread]
     static int Main(string[] args)
     {
         StartupTimestamp = Stopwatch.GetTimestamp();
 
+        WriteLaunchDiagnostic(
+            "MAIN",
+            $"Program.Main entered. Args=[{string.Join(", ", args.Select(argument => $"'{argument}'"))}]; CommandLine={Environment.CommandLine}");
+
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         var package = Windows.ApplicationModel.Package.Current;
+        WriteLaunchDiagnostic(
+            "PACKAGE",
+            $"Package={package.Id.Name}; Family={package.Id.FamilyName}; Location={package.InstalledLocation.Path}");
+
         Wino.NotificationHost.Contracts.ReleaseIdentity.Initialize(
             package.InstalledLocation.Path, package.Id.Name, package.Id.Publisher, package.Id.FamilyName);
+
+        WriteLaunchDiagnostic("IDENTITY", $"Distribution={Wino.NotificationHost.Contracts.ReleaseIdentity.Current.Distribution}; Package={package.Id.Name}");
+
+        // CI-only hook: the packaged test launcher creates this marker in LocalState before
+        // activation. The app owns the actual LocalSettings write so the test exercises the same
+        // preference path as a normal launch.
+        var closeBehaviorSmokeMarker = System.IO.Path.Combine(
+            Windows.Storage.ApplicationData.Current.LocalFolder.Path,
+            ".wino-close-behavior-smoke");
+
+        try
+        {
+            if (System.IO.File.Exists(closeBehaviorSmokeMarker))
+            {
+                var closeBehaviorSmoke = System.IO.File.ReadAllText(closeBehaviorSmokeMarker).Trim();
+                if (string.Equals(closeBehaviorSmoke, "RunInBackgroundWithoutTrayIcon", StringComparison.Ordinal))
+                {
+                    var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+                    localSettings["AppCloseBehavior"] = closeBehaviorSmoke;
+                    localSettings["IsSystemTrayIconEnabled"] = "False";
+                    WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Seeded AppCloseBehavior={closeBehaviorSmoke}.");
+                }
+
+                System.IO.File.Delete(closeBehaviorSmokeMarker);
+            }
+        }
+        catch (Exception exception)
+        {
+            WriteLaunchDiagnostic("CLOSE_BEHAVIOR_SMOKE", $"Marker processing failed: {exception.Message}");
+        }
 
         // Set before any editor/renderer creates an environment, including inherited overrides.
         Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER",
             System.IO.Path.Combine(Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path, "WebView2"));
 
+        if (TryCaptureCommandLineToastActivation(args))
+        {
+            _shouldRegisterAppNotifications = true;
+            EnsureMailHostRunningMutex();
+            StartApplication();
+            return 0;
+        }
+
         var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
         var shouldBootstrapSecondaryEntry = SecondaryEntryBootstrapActivation.ShouldBootstrapToMailHost(activationArgs);
+        _shouldRegisterAppNotifications = !shouldBootstrapSecondaryEntry;
 
         if (shouldBootstrapSecondaryEntry && !IsMailHostRunning())
         {
@@ -62,13 +137,44 @@ public class Program
         _pendingBootstrapActivation = SecondaryEntryBootstrapActivation.ConsumePendingActivation();
         bool isRedirect = DecideRedirection(activationArgs);
 
+        WriteLaunchDiagnostic(
+            "REDIRECTION",
+            $"ActivationKind={activationArgs.Kind}; ShouldBootstrapSecondary={shouldBootstrapSecondaryEntry}; IsRedirect={isRedirect}; IsMailHostRunning={IsMailHostRunning()}");
+
         if (!isRedirect)
         {
             EnsureMailHostRunningMutex();
+            WriteLaunchDiagnostic("START_APPLICATION", "Calling Application.Start.");
             StartApplication();
+            WriteLaunchDiagnostic("APPLICATION_START_RETURNED", "Application.Start returned.");
         }
 
         return 0;
+    }
+
+    public static bool ShouldRegisterAppNotifications()
+        => _shouldRegisterAppNotifications;
+
+    internal static bool TryConsumeDeferredAppNotificationStartup()
+    {
+        if (!_hasDeferredAppNotificationStartup)
+            return false;
+
+        _hasDeferredAppNotificationStartup = false;
+        return true;
+    }
+
+    private static bool TryCaptureCommandLineToastActivation(string[] args)
+    {
+        if (!Environment.CommandLine.Contains(
+                AppNotificationActivatedCommandLinePrefix,
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Do not query AppInstance.GetActivatedEventArgs before AppNotificationManager.Register().
+        // WinAppSDK notification COM activation expects registration to happen first.
+        _hasDeferredAppNotificationStartup = true;
+        return true;
     }
 
     internal static bool TryConsumePendingBootstrapActivation(out PendingBootstrapActivation activation)
@@ -127,8 +233,6 @@ public class Program
 
     private static void EnableAllXamlOptionalChanges()
     {
-        var t = 5;
-        
         foreach (var changeId in Enum.GetValues<XamlChangeId>())
         {
             if (changeId == XamlChangeId._Reserved)

@@ -71,6 +71,16 @@
       <Platform Solution="*|x64" Project="x64" />
       <Platform Solution="*|x86" Project="x86" />
     </Project>
+    <Project Path="src/Wino.Platform.Windows/Wino.Platform.Windows.csproj">
+      <Platform Solution="*|arm64" Project="arm64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+    </Project>
+    <Project Path="src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj">
+      <Platform Solution="*|arm64" Project="ARM64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+    </Project>
     <Project Path="src/Wino.Core/Wino.Core.csproj">
       <Platform Solution="*|arm64" Project="arm64" />
       <Platform Solution="*|x64" Project="x64" />
@@ -133,6 +143,16 @@
       <Platform Solution="*|x86" Project="x86" />
     </Project>
     <Project Path="tests/Wino.Mail.ViewModels.Tests/Wino.Mail.ViewModels.Tests.csproj">
+      <Platform Solution="*|arm64" Project="arm64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+    </Project>
+    <Project Path="tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj">
+      <Platform Solution="*|arm64" Project="arm64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+    </Project>
+    <Project Path="tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj">
       <Platform Solution="*|arm64" Project="arm64" />
       <Platform Solution="*|x64" Project="x64" />
       <Platform Solution="*|x86" Project="x86" />

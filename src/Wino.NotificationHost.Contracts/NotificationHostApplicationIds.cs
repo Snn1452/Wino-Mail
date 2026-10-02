@@ -8,6 +8,17 @@ public static class NotificationHostApplicationIds
     public const string People = "PeopleNotificationHost";
     public const string Tasks = "ToDoNotificationHost";
 
+    public static string GetToastTargetApplicationId(NotificationHostApplication application)
+        => application switch
+        {
+            NotificationHostApplication.Mail => Main,
+            NotificationHostApplication.Calendar => "CalendarApp",
+            NotificationHostApplication.People => "ContactsApp",
+            NotificationHostApplication.Tasks => "ToDoApp",
+            _ => throw new ArgumentOutOfRangeException(nameof(application), application, "Unknown notification target.")
+        };
+
+
     public static string GetApplicationId(NotificationHostApplication application)
         => application switch
         {
