@@ -577,7 +577,19 @@ function Assert-PackagedReleaseProfile {
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
         MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
+        $applicationId = [string]$app.Id
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            if ($null -eq $visual -or $visual.GetAttribute('DisplayName') -cne 'Wino Mail Background Service') {
+                throw 'The background synchronization application has an unexpected display name.'
+            }
+            if (@($app.SelectNodes(".//*[local-name()='ToastNotificationActivation'] | .//*[local-name()='Class']")).Count -ne 0) {
+                throw 'The background synchronization application must not register notification activation.'
+            }
+            continue
+        }
+
+        $mode = $entries[$applicationId]
         if (-not $mode) { throw 'Unknown application in release manifest.' }
         if ($profile.DisplayNames.$mode -cne $expected.DisplayNames.$mode -or
             $profile.NotificationActivatorIds.$mode -cne $expected.NotificationActivatorIds.$mode) { throw 'Unexpected release branding or notification identity.' }
