@@ -479,25 +479,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     async void IRecipient<ClearMailSelectionsRequested>.Receive(ClearMailSelectionsRequested message)
     {
-        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (!DispatcherQueue.TryEnqueue(() =>
-        {
-            try
-            {
-                MailListView.ClearSelection();
-                completionSource.SetResult();
-            }
-            catch (Exception ex)
-            {
-                completionSource.SetException(ex);
-            }
-        }))
-        {
-            return;
-        }
-
-        await completionSource.Task;
+        await DispatcherQueue.EnqueueAsync(() => MailListView.ClearSelection());
         await MailListView.WaitForSelectionSyncAsync();
     }
 
