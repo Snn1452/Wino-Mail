@@ -50,7 +50,7 @@ jobs:
           "Feature delta source: $integrationSha" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Feature patch base: $patchBase" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-      - name: Apply feature-only 53-path patch without a merge
+      - name: Port only the 53 audited feature paths onto main
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -109,34 +109,48 @@ jobs:
             'tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj',
             'tests/scripts/Build-Beta-TestBundle.ps1'
           )
-          $patchPath = Join-Path $env:RUNNER_TEMP 'pr4-feature-only.patch'
-          git diff --binary --full-index "--output=$patchPath" $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths
-          if ($LASTEXITCODE -ne 0) { throw 'Could not generate the feature-only patch.' }
-          if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf) -or (Get-Item -LiteralPath $patchPath).Length -eq 0) {
-            throw 'Feature-only patch is empty.'
-          }
+
+          $baseFiles = @(git ls-tree -r --name-only $env:PORT_PATCH_BASE -- $paths)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the feature patch base tree.' }
+          $mainFiles = @(git ls-tree -r --name-only $env:PORT_MAIN_SHA -- $paths)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the restored main tree.' }
+          $featureFiles = @(git ls-tree -r --name-only $env:PORT_INTEGRATION_SHA -- $paths)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the feature tree.' }
 
           $changedPaths = @(git diff --name-only $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths)
-          if ($changedPaths.Count -ne 53) {
-            throw "Expected the audited 53-path feature delta, found $($changedPaths.Count) paths."
-          }
-          "Feature delta contains $($changedPaths.Count) paths." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          $changedPaths | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate feature delta paths.' }
+          if ($changedPaths.Count -ne 53) { throw "Expected 53 audited feature paths, found $($changedPaths.Count)." }
+          "Feature delta contains $($changedPaths.Count) audited paths." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
+          # If a feature file has no counterpart at all on the restored main, add only that file from the feature tree.
+          $addFromFeature = @($featureFiles | Where-Object { $mainFiles -notcontains $_ })
+          foreach ($featurePath in $addFromFeature) {
+            git checkout $env:PORT_INTEGRATION_SHA -- $featurePath
+            if ($LASTEXITCODE -ne 0) { throw "Could not port new feature file '$featurePath'." }
+            Write-Host "Added feature file absent from restored main: $featurePath"
+          }
+
+          # Three-way-apply changes only for files that exist on both restored main and the patch base.
+          $mergeablePaths = @($changedPaths | Where-Object { $mainFiles -contains $_ -and $baseFiles -contains $_ })
+          if ($mergeablePaths.Count -eq 0) { throw 'No existing feature paths were available for a three-way port.' }
+          $patchPath = Join-Path $env:RUNNER_TEMP 'pr4-feature-only-existing-files.patch'
+          git diff --binary --full-index "--output=$patchPath" $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $mergeablePaths
+          if ($LASTEXITCODE -ne 0) { throw 'Could not generate the existing-files feature patch.' }
           $applyOutput = git apply --3way --index $patchPath 2>&1
           $applyExit = $LASTEXITCODE
           $applyOutput | Write-Host
           $conflicts = @(git diff --name-only --diff-filter=U)
           if ($conflicts.Count -gt 0) {
-            "### Unresolved 3-way port conflicts" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### Existing-file port conflicts that need specific resolution" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             $conflicts | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            throw "Feature-only port has $($conflicts.Count) true conflicts; no commit or branch update was made. Resolve only these paths before retrying."
+            throw "Feature-only port has $($conflicts.Count) file conflicts. No commit or PR update was made."
           }
-          if ($applyExit -ne 0) {
-            throw "git apply --3way failed with exit code $applyExit without a recognized conflict list."
-          }
+          if ($applyExit -ne 0) { throw "git apply --3way failed with exit code $applyExit." }
+
+          git add -A
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the file-only port.' }
           git diff --cached --check
-          if ($LASTEXITCODE -ne 0) { throw 'Feature-only patch contains whitespace errors.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Feature-only port contains whitespace errors.' }
           git status --short | Write-Host
 
       - name: Remove duplicate SDK embedded-resource entries
