@@ -280,25 +280,25 @@ jobs:
               $targetAnchor = '  <Target Name="PublishNotificationHost"'
               $targetIndex = $projectText.IndexOf($targetAnchor, [StringComparison]::Ordinal)
               if ($targetIndex -lt 0) { throw 'Could not find main PublishNotificationHost target.' }
-              $backgroundTarget = @'
-  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(RuntimeIdentifier)' != ''">
-    <MSBuild
-      Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
-      Targets="Restore;Publish"
-      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)"
-      RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />
-    <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
-           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
-    <ItemGroup>
-      <BackgroundSyncHostContent Include="$(BackgroundSyncHostOutput)**\*" />
-      <Content Include="@(BackgroundSyncHostContent)"
-               CopyToOutputDirectory="PreserveNewest"
-               CopyToPublishDirectory="PreserveNewest"
-               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
-    </ItemGroup>
-  </Target>
-
-'@
+              $backgroundTarget = @(
+                '  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="''$(WinoIsReleaseBuild)'' == ''true'' and ''$(RuntimeIdentifier)'' != ''''">',
+                '    <MSBuild',
+                '      Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"',
+                '      Targets="Restore;Publish"',
+                '      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)"',
+                '      RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />',
+                '    <Error Condition="!Exists(''$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe'')"',
+                '           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />',
+                '    <ItemGroup>',
+                '      <BackgroundSyncHostContent Include="$(BackgroundSyncHostOutput)**\*" />',
+                '      <Content Include="@(BackgroundSyncHostContent)"',
+                '               CopyToOutputDirectory="PreserveNewest"',
+                '               CopyToPublishDirectory="PreserveNewest"',
+                '               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />',
+                '    </ItemGroup>',
+                '  </Target>',
+                ''
+              ) -join [Environment]::NewLine
               $projectText = $projectText.Insert($targetIndex, $backgroundTarget)
             }
             Set-Content -LiteralPath $projectPath -Value $projectText -NoNewline
@@ -312,17 +312,18 @@ jobs:
           $platformProjectPath = 'src/Wino.Platform.Windows/Wino.Platform.Windows.csproj'
           $platformText = Get-Content -LiteralPath $platformProjectPath -Raw
           if ($platformText -notmatch 'Services\\ConfigurationService\.cs') {
-            $platformText = $platformText.Replace('</Project>', @'
-  <ItemGroup>
-    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />
-    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />
-    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
-    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
-    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
-  </ItemGroup>
-</Project>
-'@)
+            $platformItems = @(
+              '  <ItemGroup>',
+              '    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />',
+              '    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />',
+              '    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />',
+              '    <PackageReference Include="CommunityToolkit.Mvvm" />',
+              '    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />',
+              '    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />',
+              '  </ItemGroup>',
+              '</Project>'
+            ) -join [Environment]::NewLine
+            $platformText = $platformText.Replace('</Project>', $platformItems)
           }
           if ($platformText -notmatch '<RuntimeIdentifiers>') {
             $platformText = $platformText.Replace('<Platforms>x86;x64;arm64</Platforms>', '<Platforms>x86;x64;arm64</Platforms>' + [Environment]::NewLine + '    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>')
