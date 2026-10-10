@@ -376,6 +376,29 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Feature-only port contains whitespace errors.' }
           "Three-way feature-only port merged without textual conflicts." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
+      - name: Bind the background host to main's compatible service contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hostProjectPath = 'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj'
+          $hostProjectText = Get-Content -LiteralPath $hostProjectPath -Raw
+          if ($hostProjectText -notmatch 'Wino\.Core\.ViewModels\.csproj') {
+            $coreProjectReference = '<ProjectReference Include="..\Wino.Core\Wino.Core.csproj" />'
+            if (-not $hostProjectText.Contains($coreProjectReference)) { throw 'Could not locate BackgroundSyncHost Wino.Core reference.' }
+            $viewModelsReference = '<ProjectReference Include="..\Wino.Core.ViewModels\Wino.Core.ViewModels.csproj" />'
+            $hostProjectText = $hostProjectText.Replace($coreProjectReference, $coreProjectReference + [Environment]::NewLine + '    ' + $viewModelsReference)
+            Set-Content -LiteralPath $hostProjectPath -Value $hostProjectText -NoNewline
+            git add -- $hostProjectPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage the Wino.Core.ViewModels reference.' }
+          }
+          # Main's unified notification COM host remains authoritative. Do not retain the old per-request host entry point from integration.
+          $notificationProgramPath = 'src/Wino.NotificationHost/Program.cs'
+          git checkout $env:PORT_MAIN_SHA -- $notificationProgramPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not restore the unified NotificationHost entry point from main.' }
+          git add -- $notificationProgramPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the unified NotificationHost entry point.' }
+          Write-Host 'Retained current NotificationHost Main() and added the legacy service contract needed by BackgroundSyncHost.'
+
       - name: Remove duplicate SDK embedded-resource entries
         shell: pwsh
         run: |
