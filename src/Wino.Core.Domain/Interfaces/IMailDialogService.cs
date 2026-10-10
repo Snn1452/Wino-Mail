@@ -33,6 +33,7 @@ public interface IMailDialogService : IDialogServiceBase
     Task<MailAccount> ShowAccountPickerDialogAsync(List<MailAccount> availableAccounts);
     Task<AccountCalendarPickingResult> ShowSingleCalendarPickerDialogAsync(List<CalendarPickerAccountGroup> availableCalendarGroups);
     Task<ContactCreateDestination?> ShowContactDestinationPickerDialogAsync(IReadOnlyList<ContactCreateDestination> destinations);
+    Task<ContactListCreationResult?> ShowNewContactListDialogAsync(IReadOnlyList<MailAccount> accounts, MailAccount? selectedAccount);
     Task<AccountTaskList?> ShowTaskListPickerDialogAsync(
         IReadOnlyList<AccountTaskList> taskLists,
         IReadOnlyList<MailAccount> accounts);
@@ -100,7 +101,10 @@ public interface IMailDialogService : IDialogServiceBase
 
     Task<WinoAccount?> ShowWinoAccountLoginDialogAsync();
 
-    Task<WinoAccountSyncExportResult?> ShowWinoAccountExportDialogAsync();
+    /// <summary>
+    /// Confirms a backup to the Wino Account. Returns false when the user closes the dialog.
+    /// </summary>
+    Task<bool> ShowWinoAccountExportDialogAsync();
 
     /// <summary>
     /// Asks for the Wino Account password or the sync passphrase that unlocks a sync snapshot.

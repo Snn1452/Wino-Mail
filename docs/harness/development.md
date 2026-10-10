@@ -123,6 +123,46 @@ winapp run src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --arch x64 --debug-output
 
 Only one debugger can attach to a process. Exit this diagnostic session before F5 debugging.
 
+## Windows Sandbox with WinApp CLI
+
+Use WinApp CLI 0.7.1 or later and an enabled Windows Sandbox on Windows 11 24H2 or newer.
+Builds run on the host; package registration and activation run in the guest.
+See Microsoft's [Sandbox prerequisites and execution guide](https://github.com/microsoft/WinAppCli/blob/main/docs/sandbox-execution.md).
+
+In VS Code, select **Run Wino Mail (Sandbox, Debug x64)** in Run and Debug and press **F5**.
+The same named task is available through **Tasks: Run Task**. Both invoke the existing helper:
+
+```powershell
+pwsh -NoProfile -File scripts/development/start-wino.ps1 -Target sandbox
+```
+
+The helper checks the guest package identity and development status, closes its app and tray processes,
+then uses `winapp run -c Debug --arch x64 --on sandbox --detach --json`.
+It shares the host build cache with local F5; add `-ForceBuild` to bypass that cache.
+Guest preflight failure stops deployment. The helper preserves application data and leaves Sandbox running.
+This F5 option uses VS Code's built-in terminal launcher to run the Debug build; it does not attach a C# debugger.
+For managed debugging on the host, select **Debug Wino Mail (packaged, x64)**.
+
+Before deployment, inspect the guest installation:
+
+```powershell
+winapp target exec sandbox --json -- powershell.exe -NoProfile -Command "Get-AppxPackage -Name 58272BurakKSE.WinoMailPreview | Select-Object Name,Publisher,IsDevelopmentMode,InstallLocation | ConvertTo-Json"
+```
+
+If installed, its publisher must match `CN=51FBDAF3-E212-4149-89A2-A2636B3BC911` and `IsDevelopmentMode` must be true.
+Stop on a mismatch or a signed non-development installation. Close the guest Debug app and its tray process before redeployment.
+
+Build, deploy, and activate the checked-in package in Sandbox:
+
+```powershell
+winapp run src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --arch x64 --on sandbox --detach --json
+```
+
+After a successful Debug x64 build, add `--no-build` to deploy that output.
+The run result must identify the Sandbox target and include the guest process ID.
+Preserve guest application data: do not use `--clean`, unregister the package, or stop an existing Sandbox to retry.
+Use manual interaction for UI verification; successful activation alone does not verify mail behavior.
+
 ## Unit tests and manual lab checks
 
 Run the affected unit-test project directly:

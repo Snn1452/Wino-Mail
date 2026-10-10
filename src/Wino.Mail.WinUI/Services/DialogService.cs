@@ -32,16 +32,13 @@ namespace Wino.Services;
 public class DialogService : DialogServiceBase, IMailDialogService, IRecipient<SemanticIndexingCompleted>
 {
     private readonly IWinoAccountProfileService _winoAccountProfileService;
-    private readonly IWinoAccountDataSyncService _winoAccountDataSyncService;
 
     public DialogService(INewThemeService themeService,
                          IConfigurationService configurationService,
                          IApplicationResourceManager<ResourceDictionary> applicationResourceManager,
-                         IWinoAccountProfileService winoAccountProfileService,
-                         IWinoAccountDataSyncService winoAccountDataSyncService) : base(themeService, configurationService, applicationResourceManager)
+                         IWinoAccountProfileService winoAccountProfileService) : base(themeService, configurationService, applicationResourceManager)
     {
         _winoAccountProfileService = winoAccountProfileService;
-        _winoAccountDataSyncService = winoAccountDataSyncService;
         WeakReferenceMessenger.Default.Register(this);
     }
 
@@ -244,6 +241,16 @@ public class DialogService : DialogServiceBase, IMailDialogService, IRecipient<S
         return dialog.PickedDestination;
     }
 
+    public async Task<ContactListCreationResult?> ShowNewContactListDialogAsync(IReadOnlyList<MailAccount> accounts, MailAccount? selectedAccount)
+    {
+        var dialog = new NewContactListDialog(accounts, selectedAccount)
+        {
+            RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
+        };
+        await HandleDialogPresentationAsync(dialog);
+        return dialog.Result;
+    }
+
     public async Task<AccountTaskList?> ShowTaskListPickerDialogAsync(
         IReadOnlyList<AccountTaskList> taskLists,
         IReadOnlyList<MailAccount> accounts)
@@ -411,21 +418,14 @@ public class DialogService : DialogServiceBase, IMailDialogService, IRecipient<S
         return dialog.Result;
     }
 
-    public async Task<WinoAccountSyncExportResult?> ShowWinoAccountExportDialogAsync()
+    public async Task<bool> ShowWinoAccountExportDialogAsync()
     {
-        var dialog = new WinoAccountSyncExportDialog(_winoAccountDataSyncService, this)
+        var dialog = new WinoAccountSyncExportDialog
         {
             RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
         };
 
-        await HandleDialogPresentationAsync(dialog);
-
-        if (dialog.FailureException != null)
-        {
-            throw dialog.FailureException;
-        }
-
-        return dialog.Result;
+        return await HandleDialogPresentationAsync(dialog) == ContentDialogResult.Primary;
     }
 
     public async Task<string?> ShowWinoAccountSyncSecretDialogAsync(SyncSnapshotSecretRequest request)

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Windows.Foundation;
 using Wino.Core.Domain;
+using Wino.Core.Domain.Entities.Mail;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Interfaces;
 using Wino.Helpers;
@@ -32,7 +34,8 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
         AccountContactViewModel contact)
     {
         var requestVersion = ++_showRequestVersion;
-        var assignableLists = await viewModel.GetAssignableListsAsync(contact);
+        var contacts = viewModel.ResolveContactContextTargets(contact);
+        var assignableLists = await viewModel.GetAssignableListsAsync(contacts);
 
         if (requestVersion != _showRequestVersion)
             return;
@@ -40,7 +43,7 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
         if (target.XamlRoot is null)
             return;
 
-        BuildItems(viewModel, contact, assignableLists);
+        BuildItems(viewModel, contact, contacts, assignableLists, viewModel.GetAvailableCategories(contacts));
 
         if (position is Point targetPosition)
         {
@@ -58,11 +61,13 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
     private void BuildItems(
         ContactsPageViewModel viewModel,
         AccountContactViewModel contact,
-        IReadOnlyList<ContactList> assignableLists)
+        IReadOnlyList<AccountContactViewModel> contacts,
+        IReadOnlyList<ContactList> assignableLists,
+        IReadOnlyList<MailCategory> categories)
     {
         var items = new List<ContextFlyoutMenuEntry>();
 
-        if (contact.CanEdit)
+        if (contacts.Count == 1 && contact.CanEdit)
         {
             items.Add(CreateCommandItem(
                 Translator.ContactAction_Edit,
@@ -73,20 +78,20 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
         }
 
         items.Add(CreateCommandItem(
-            contact.FavoriteActionText,
+            contacts.Any(item => !item.IsFavorite) ? Translator.ContactAction_Favorite : Translator.ContactAction_Unfavorite,
             WinoIconGlyph.Star,
             "ContactCardContextFavorite",
-            viewModel.ToggleFavoriteCommand,
-            contact));
+            new AsyncRelayCommand(() => viewModel.FavoriteContactsAsync(contacts)),
+            null));
 
-        if (contact.CanSendMail)
+        if (contacts.Any(item => item.CanSendMail))
         {
             items.Add(CreateCommandItem(
                 Translator.ContactAction_SendMail,
                 WinoIconGlyph.Send,
                 "ContactCardContextSendMail",
-                viewModel.ComposeToContactCommand,
-                contact));
+                new RelayCommand(() => viewModel.ComposeToContacts(contacts)),
+                null));
         }
 
         if (assignableLists.Count > 0)
@@ -97,7 +102,7 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
                 assignItems.Add(new ContextFlyoutCommandEntry
                 {
                     Text = list.Name,
-                    Command = new AsyncRelayCommand(() => viewModel.AssignContactsToListAsync(list, (System.Guid[])[contact.Id])),
+                    Command = new AsyncRelayCommand(() => viewModel.AssignContactsToListAsync(list, contacts.Select(item => item.Id))),
                     AutomationId = $"ContactCardContextAssignList_{list.Id:N}"
                 });
             }
@@ -108,6 +113,31 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
                 Icon = CreateIcon(WinoIconGlyph.People),
                 Items = assignItems,
                 AutomationId = "ContactCardContextAssignToList"
+            });
+        }
+
+        if (categories.Count > 0)
+        {
+            var categoryItems = new List<ContextFlyoutMenuEntry>();
+            foreach (var category in categories)
+            {
+                categoryItems.Add(new ContextFlyoutToggleEntry
+                {
+                    Text = category.Name,
+                    SearchKeywords = category.Name,
+                    Icon = new ContextFlyoutIcon(WinoIconGlyphs.GetGlyph(WinoIconGlyph.SpecialFolderCategory), category.TextColorHex),
+                    IsChecked = contacts.All(item => item.Categories.Any(assigned => assigned.Id == category.Id)),
+                    Command = new AsyncRelayCommand(() => viewModel.ToggleContactCategoryAsync(category, contacts)),
+                    AutomationId = $"ContactCardContextCategory_{category.Id:N}"
+                });
+            }
+
+            items.Add(new ContextFlyoutSubMenuEntry
+            {
+                Text = Translator.MailCategoryMenuItem,
+                Icon = CreateIcon(WinoIconGlyph.SpecialFolderCategory),
+                Items = categoryItems,
+                AutomationId = "ContactCardContextCategories"
             });
         }
 
@@ -122,15 +152,15 @@ public partial class ContactCardMenuFlyout : WinoContextFlyout
         });
 #endif
 
-        if (contact.CanDelete)
+        if (contacts.Any(item => item.CanDelete))
         {
             items.Add(ContextFlyoutSeparatorEntry.Instance);
             items.Add(CreateCommandItem(
                 Translator.ContactAction_Delete,
                 WinoIconGlyph.Delete,
                 "ContactCardContextDelete",
-                viewModel.DeleteContactCommand,
-                contact,
+                new AsyncRelayCommand(() => viewModel.DeleteContactsAsync(contacts)),
+                null,
                 isDestructive: true,
                 shortcut: new ContextFlyoutShortcut("Delete", "Delete")));
         }

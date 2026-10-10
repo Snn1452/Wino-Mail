@@ -23,7 +23,7 @@
   <Identity
     Name="58272BurakKSE.WinoMailPreview"
     Publisher="CN=51FBDAF3-E212-4149-89A2-A2636B3BC911"
-    Version="2.1.6.0" />
+    Version="2.2.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="7b7e90e9-cc55-4409-9769-99b4b5ed6e9b" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -101,6 +101,18 @@
 					</uap:SupportedFileTypes>
 				</uap:FileTypeAssociation>
 			</uap:Extension>
+
+			<!-- Toast activation: Windows starts the notification host, not the UI executable. -->
+			<desktop:Extension Category="windows.toastNotificationActivation">
+				<desktop:ToastNotificationActivation ToastActivatorCLSID="b67c209f-9f3b-4220-ad8f-828073616967" />
+			</desktop:Extension>
+			<com:Extension Category="windows.comServer">
+				<com:ComServer>
+					<com:ExeServer Executable="Wino.NotificationHost.exe" Arguments="----AppNotificationActivated:" DisplayName="Wino Mail notification host">
+						<com:Class Id="b67c209f-9f3b-4220-ad8f-828073616967" DisplayName="Wino Mail notification host" />
+					</com:ExeServer>
+				</com:ComServer>
+			</com:Extension>
 		</Extensions>
     </Application>
 
@@ -145,6 +157,17 @@
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
+
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="a075d82f-106f-4007-b69a-5c4135b2ac58" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Wino.NotificationHost.exe" Arguments="----AppNotificationActivated:" DisplayName="Wino Calendar notification host">
+              <com:Class Id="a075d82f-106f-4007-b69a-5c4135b2ac58" DisplayName="Wino Calendar notification host" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
       </Extensions>
     </Application>
     <Application Id="ContactsApp"
@@ -166,6 +189,19 @@
         </uap:DefaultTile>
         <uap:SplashScreen Image="Assets\AppEntries\PeopleAssets\SplashScreen.png" />
       </uap:VisualElements>
+
+      <Extensions>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="427688f0-3b7f-4f5b-938f-f76535aa7970" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Wino.NotificationHost.exe" Arguments="----AppNotificationActivated:" DisplayName="Wino People notification host">
+              <com:Class Id="427688f0-3b7f-4f5b-938f-f76535aa7970" DisplayName="Wino People notification host" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
     </Application>
     <Application Id="ToDoApp"
       Executable="$targetnametoken$.exe"
@@ -186,8 +222,20 @@
         </uap:DefaultTile>
         <uap:SplashScreen Image="Assets\AppEntries\ToDoAssets\SplashScreen.png" />
       </uap:VisualElements>
-    </Application>
 
+      <Extensions>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="a5851908-6870-4384-912c-be36b23f142f" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Wino.NotificationHost.exe" Arguments="----AppNotificationActivated:" DisplayName="Wino To Do notification host">
+              <com:Class Id="a5851908-6870-4384-912c-be36b23f142f" DisplayName="Wino To Do notification host" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
     <Application Id="MailNotificationHost"
       Executable="Wino.Mail.NotificationHost.exe"
       EntryPoint="Windows.FullTrustApplication">
