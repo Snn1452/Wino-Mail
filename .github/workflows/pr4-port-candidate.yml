@@ -563,6 +563,46 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage removal of the superseded notification supervisor test.' }
           Write-Host 'Replaced CsWinRT1032 collection expressions with explicit arrays and removed the test for the deleted legacy supervisor.'
 
+      - name: Fix self-contained host reference and retire superseded protocol tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $winuiProjectPath = 'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj'
+          $winuiProjectText = Get-Content -LiteralPath $winuiProjectPath -Raw
+          $reference = '<ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj" ReferenceOutputAssembly="false" Private="false" />'
+          if ($winuiProjectText.Contains($reference)) {
+            $referenceWithProperties = @(
+              '<ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj" ReferenceOutputAssembly="false" Private="false">',
+              '      <AdditionalProperties>Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true</AdditionalProperties>',
+              '    </ProjectReference>'
+            ) -join [Environment]::NewLine
+            $winuiProjectText = $winuiProjectText.Replace($reference, $referenceWithProperties)
+            Set-Content -LiteralPath $winuiProjectPath -Value $winuiProjectText -NoNewline
+            git add -- $winuiProjectPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage self-contained BackgroundSyncHost project-reference metadata.' }
+            Write-Host 'Passes the active WinUI RuntimeIdentifier and SelfContained=true to the referenced BackgroundSyncHost.'
+          }
+          elseif ($winuiProjectText -notmatch '(?s)<ProjectReference[^>]*Wino\.Mail\.BackgroundSyncHost\.csproj[^>]*>.*?<AdditionalProperties>[^<]*SelfContained=true') {
+            throw 'BackgroundSyncHost project reference is absent or does not carry SelfContained=true.'
+          }
+
+          # These tests target the retired per-request file protocol; the current source uses the packaged toast dispatcher.
+          $obsoleteProtocolTests = @(
+            'tests/Wino.NotificationHost.Tests/NotificationHostCodecTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationHostFileStoreTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationPayloadValidatorTests.cs'
+          )
+          foreach ($testPath in $obsoleteProtocolTests) {
+            if (Test-Path -LiteralPath $testPath) {
+              Remove-Item -LiteralPath $testPath -Force
+              git rm --cached --ignore-unmatch -- $testPath 2>$null
+              if (Test-Path -LiteralPath $testPath) { throw "Could not remove obsolete test '$testPath'." }
+              Write-Host "Removed test for retired file-transport API: $testPath"
+            }
+          }
+          git add -A
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage self-contained host-reference and obsolete-test corrections.' }
+
       - name: Remove duplicate SDK embedded-resource entries
         shell: pwsh
         run: |
