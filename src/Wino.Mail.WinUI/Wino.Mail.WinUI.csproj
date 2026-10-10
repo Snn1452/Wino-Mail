@@ -505,6 +505,16 @@
 
   <Import Project="..\..\scripts\release\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
 
+  <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
+    <MakeDir Directories="$(NotificationHostOutput)" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.NotificationHost\Wino.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(NotificationHostOutput);Restore=false" />
+  </Target>
+
+
+  <ItemGroup>
+    <Compile Remove="Services\NotificationHostProcessSupervisor.cs" />
+  </ItemGroup>
+
   <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MSBuild
       Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
@@ -520,11 +530,6 @@
                CopyToPublishDirectory="PreserveNewest"
                Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
-  </Target>
-
-  <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
-    <MakeDir Directories="$(NotificationHostOutput)" />
-    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.NotificationHost\Wino.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(NotificationHostOutput);Restore=false" />
   </Target>
 
 </Project>

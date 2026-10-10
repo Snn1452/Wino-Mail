@@ -65,6 +65,7 @@
 
 		<Extensions>
 
+
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
 				<uap:Protocol Name="mailto" />
@@ -237,6 +238,7 @@
         </com:Extension>
       </Extensions>
     </Application>
+    
     <Application Id="BackgroundSyncHost"
       Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
       EntryPoint="Windows.FullTrustApplication">

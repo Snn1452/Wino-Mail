@@ -15,45 +15,46 @@ public sealed class NotificationHostFileStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteRequestAsync_PublishesOnlyFinalEnvelope()
+    public async Task WriteActivationAsync_PublishesOnlyFinalEnvelope()
     {
-        var requestId = Guid.NewGuid();
-        var request = new NotificationHostRequest(
+        var activationId = Guid.NewGuid();
+        var activation = new NotificationHostActivation(
             DateTimeOffset.UtcNow,
-            NotificationHostOperation.RemoveAll,
             NotificationHostApplication.People,
-            null,
-            null,
-            null);
+            "ToastModeKey=ToastModePeople",
+            new Dictionary<string, string> { ["reply"] = "hello" });
 
-        await NotificationHostFileStore.WriteRequestAsync(_tempFolder, requestId, request);
+        await NotificationHostFileStore.WriteActivationAsync(_tempFolder, activationId, activation);
 
-        Directory.EnumerateFiles(NotificationHostPaths.GetRequestDirectory(_tempFolder))
+        Directory.EnumerateFiles(NotificationHostPaths.GetActivationDirectory(_tempFolder))
             .Should().ContainSingle()
-            .Which.Should().Be(NotificationHostPaths.GetRequestPath(_tempFolder, requestId));
-        NotificationHostFileStore.ReadRequest(_tempFolder, requestId).Should().BeEquivalentTo(request);
+            .Which.Should().Be(NotificationHostPaths.GetActivationPath(_tempFolder, activationId));
+        NotificationHostFileStore.ReadActivation(_tempFolder, activationId).Should().BeEquivalentTo(activation);
     }
 
     [Fact]
-    public async Task CleanupStaleFiles_RemovesOldRequestsAndActivationsOnly()
+    public async Task CleanupStaleFiles_RemovesLegacyRequestsAndPreservesCurrentActivations()
     {
         var oldRequestId = Guid.NewGuid();
         var currentActivationId = Guid.NewGuid();
-        await NotificationHostFileStore.WriteRequestAsync(
-            _tempFolder,
-            oldRequestId,
-            new NotificationHostRequest(DateTimeOffset.UtcNow, NotificationHostOperation.RemoveAll, NotificationHostApplication.Mail, null, null, null));
+        var requestDirectory = NotificationHostPaths.GetRequestDirectory(_tempFolder);
+        Directory.CreateDirectory(requestDirectory);
+        var oldRequestPath = Path.Combine(requestDirectory, $"{oldRequestId:N}.bin");
+        await File.WriteAllTextAsync(oldRequestPath, "legacy request");
+
         await NotificationHostFileStore.WriteActivationAsync(
             _tempFolder,
             currentActivationId,
-            new NotificationHostActivation(DateTimeOffset.UtcNow, NotificationHostApplication.Mail, "ToastModeKey=ToastModeMail", new Dictionary<string, string>()));
+            new NotificationHostActivation(
+                DateTimeOffset.UtcNow,
+                NotificationHostApplication.Mail,
+                "ToastModeKey=ToastModeMail",
+                new Dictionary<string, string>()));
 
-        File.SetLastWriteTimeUtc(
-            NotificationHostPaths.GetRequestPath(_tempFolder, oldRequestId),
-            DateTime.UtcNow.AddDays(-2));
+        File.SetLastWriteTimeUtc(oldRequestPath, DateTime.UtcNow.AddDays(-2));
 
         NotificationHostFileStore.CleanupStaleFiles(_tempFolder, TimeSpan.FromHours(24)).Should().Be(1);
-        File.Exists(NotificationHostPaths.GetRequestPath(_tempFolder, oldRequestId)).Should().BeFalse();
+        File.Exists(oldRequestPath).Should().BeFalse();
         File.Exists(NotificationHostPaths.GetActivationPath(_tempFolder, currentActivationId)).Should().BeTrue();
     }
 }

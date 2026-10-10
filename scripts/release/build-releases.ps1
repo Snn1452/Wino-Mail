@@ -427,9 +427,7 @@ function Set-ReleaseLayoutProfile {
 
     $Profile | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Layout 'release-profile.json') -Encoding utf8
     $Manifest.Package.Properties.DisplayName = $Profile.DisplayNames.Mail
-    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks';
-        MailNotificationHost = 'Mail'; CalendarNotificationHost = 'Calendar'; PeopleNotificationHost = 'People'; ToDoNotificationHost = 'Tasks';
-        BackgroundSyncHost = 'Mail' }
+    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks'; BackgroundSyncHost = 'Mail' }
     foreach ($app in $Manifest.Package.Applications.Application) {
         $applicationId = [string]$app.Id
         $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")

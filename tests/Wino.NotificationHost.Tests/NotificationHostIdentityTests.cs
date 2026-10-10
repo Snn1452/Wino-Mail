@@ -4,6 +4,7 @@ using Xunit;
 
 namespace Wino.NotificationHost.Tests;
 
+// AppUserModelIDs follow the current unified NotificationHost manifest.
 public sealed class NotificationHostIdentityTests
 {
     [Theory]
