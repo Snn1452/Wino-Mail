@@ -331,20 +331,21 @@ jobs:
           git add -- $platformProjectPath
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage platform project service links needed by BackgroundSyncHost.' }
 
-          # Keep main's notification application entries and add just the packaged BackgroundSyncHost entry.
+          # Rebuild the manifest from restored main, then add only BackgroundSyncHost.
+          # This deliberately excludes the obsolete four hidden NotificationHost application identities.
           $manifestPath = 'src/Wino.Mail.WinUI/Package.appxmanifest'
+          git checkout $env:PORT_MAIN_SHA -- $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not restore main package manifest before adding BackgroundSyncHost.' }
+          $sourceManifestText = (git show ($env:PORT_INTEGRATION_SHA + ':src/Wino.Mail.WinUI/Package.appxmanifest') | Out-String)
+          $backgroundAppMatch = [regex]::Match($sourceManifestText, '(?s)<Application Id="BackgroundSyncHost".*?</Application>')
+          if (-not $backgroundAppMatch.Success) { throw 'Could not find the feature BackgroundSyncHost application entry.' }
           $manifestText = Get-Content -LiteralPath $manifestPath -Raw
-          if ($manifestText -notmatch '<Application Id="BackgroundSyncHost"') {
-            $sourceManifestText = (git show ($env:PORT_INTEGRATION_SHA + ':src/Wino.Mail.WinUI/Package.appxmanifest') | Out-String)
-            $backgroundAppMatch = [regex]::Match($sourceManifestText, '(?s)<Application Id="BackgroundSyncHost".*?</Application>')
-            if (-not $backgroundAppMatch.Success) { throw 'Could not find the feature BackgroundSyncHost application entry.' }
-            $appsClose = $manifestText.LastIndexOf('</Applications>', [StringComparison]::Ordinal)
-            if ($appsClose -lt 0) { throw 'Could not find Applications element in the main package manifest.' }
-            $manifestText = $manifestText.Insert($appsClose, [Environment]::NewLine + '    ' + $backgroundAppMatch.Value + [Environment]::NewLine + '  ')
-            Set-Content -LiteralPath $manifestPath -Value $manifestText -NoNewline
-            git add -- $manifestPath
-            if ($LASTEXITCODE -ne 0) { throw 'Could not stage BackgroundSyncHost package manifest entry.' }
-          }
+          $appsClose = $manifestText.LastIndexOf('</Applications>', [StringComparison]::Ordinal)
+          if ($appsClose -lt 0) { throw 'Could not find Applications element in the main package manifest.' }
+          $manifestText = $manifestText.Insert($appsClose, [Environment]::NewLine + '    ' + $backgroundAppMatch.Value + [Environment]::NewLine + '  ')
+          Set-Content -LiteralPath $manifestPath -Value $manifestText -NoNewline
+          git add -- $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the main-compatible BackgroundSyncHost package manifest.' }
 
           if ($conflicts.Count -gt 0) {
             "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
@@ -397,7 +398,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not restore the unified NotificationHost entry point from main.' }
           git add -- $notificationProgramPath
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage the unified NotificationHost entry point.' }
-          Write-Host 'Retained current NotificationHost Main() and added the legacy service contract needed by BackgroundSyncHost.'
+          # Keep the current manifest application IDs authoritative for COM toast activation.
+          $applicationIdsPath = 'src/Wino.NotificationHost.Contracts/NotificationHostApplicationIds.cs'
+          git checkout $env:PORT_MAIN_SHA -- $applicationIdsPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not restore the current notification application ID mapping.' }
+          $applicationIdsText = Get-Content -LiteralPath $applicationIdsPath -Raw
+          if ($applicationIdsText -notmatch 'GetToastTargetApplicationId') {
+            $applicationIdsAnchor = '    public static bool TryResolveFromAppUserModelId'
+            if (-not $applicationIdsText.Contains($applicationIdsAnchor)) { throw 'Could not find the application ID resolver insertion point.' }
+            $toastTargetMethod = '    public static string GetToastTargetApplicationId(NotificationHostApplication application)' + [Environment]::NewLine + '        => GetApplicationId(application);' + [Environment]::NewLine + [Environment]::NewLine
+            $applicationIdsText = $applicationIdsText.Replace($applicationIdsAnchor, $toastTargetMethod + $applicationIdsAnchor)
+            Set-Content -LiteralPath $applicationIdsPath -Value $applicationIdsText -NoNewline
+          }
+          git add -- $applicationIdsPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage current notification application IDs with the toast target helper.' }
+          Write-Host 'Kept the unified notification host entry point and AUMID map; added the legacy service contract and a compatible toast target helper.'
 
       - name: Use the current packaged toast dispatcher for background notifications
         shell: pwsh
