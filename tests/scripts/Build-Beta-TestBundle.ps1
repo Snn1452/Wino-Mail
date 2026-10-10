@@ -13,7 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $releaseScript = Join-Path $PSScriptRoot '..\..\scripts\release\build-releases.ps1'
-. $releaseScript -NonInteractive -Beta -Architectures x64 -BetaAssetsPath $BetaAssetsPath
+. $releaseScript -NonInteractive -Beta -Architectures x64 -BetaAssetsPath $BetaAssetsPath -OutputRoot (Join-Path $env:RUNNER_TEMP 'Wino Beta Test Releases')
 
 $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction Stop
 if (-not $certificate.HasPrivateKey) {
@@ -86,8 +86,9 @@ $signing = [pscustomobject]@{
 
 $symbolsPath = Invoke-ReleaseBuild $plan $tools $signing $null
 
-$releaseDir = Join-Path $plan.OutputRoot "WinoMail_Beta_$($plan.Version)"
-$bundlePath = Join-Path $releaseDir "WinoMail_Beta_$($plan.Version).msixbundle"
+$releaseDir = Join-Path $plan.VersionRoot 'Beta'
+$bundleName = "$($plan.SideloadChannels[0].FolderName).msixbundle"
+$bundlePath = Join-Path $releaseDir $bundleName
 $certificatePath = Join-Path $releaseDir 'WinoMail_Beta_TestCertificate.cer'
 
 if (-not (Test-Path -LiteralPath $bundlePath -PathType Leaf)) {

@@ -92,10 +92,10 @@ jobs:
           pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
           if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
-          $releaseDirs = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Directory -Filter 'WinoMail_Beta_*' | Sort-Object LastWriteTime -Descending)
-          if ($releaseDirs.Count -ne 1) { throw "Expected exactly one Beta release directory, found $($releaseDirs.Count)." }
-          $releaseDir = $releaseDirs[0].FullName
-          $bundle = Join-Path $releaseDir ($releaseDirs[0].Name + '.msixbundle')
+          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
+          $version = [string]$manifest.Package.Identity.Version
+          $releaseDir = Join-Path (Join-Path (Join-Path $env:RUNNER_TEMP 'Wino Beta Test Releases') $version) 'Beta'
+          $bundle = Join-Path $releaseDir "WinoMail_Beta_$version.msixbundle"
           $certificate = Join-Path $releaseDir 'WinoMail_Beta_TestCertificate.cer'
 
           if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Beta MSIXBundle was not produced: $bundle" }
