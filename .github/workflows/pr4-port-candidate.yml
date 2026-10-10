@@ -95,6 +95,12 @@ jobs:
             'src/Wino.Mail.WinUI/Views/WinoAppShell.xaml',
             'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj',
             'src/Wino.NotificationHost.Contracts/NotificationHostApplicationIds.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationHostCodec.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationHostEnvelope.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationHostFileStore.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationHostPaths.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationHostOperation.cs',
+            'src/Wino.NotificationHost.Contracts/NotificationPayloadValidator.cs',
             'src/Wino.NotificationHost/NotificationHostLogger.cs',
             'src/Wino.NotificationHost/Program.cs',
             'src/Wino.Platform.Windows/NotificationHostDispatcher.cs',
@@ -119,7 +125,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect integration feature tree.' }
           $changedPaths = @(git diff --name-only $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths)
           if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate the feature delta.' }
-          if ($changedPaths.Count -ne 53) { throw "Expected 53 audited feature paths, found $($changedPaths.Count)." }
+          if ($changedPaths.Count -ne 59) { throw "Expected 59 audited feature/runtime-contract paths, found $($changedPaths.Count)." }
           "Feature delta paths audited: $($changedPaths.Count)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
           $conflicts = [System.Collections.Generic.List[string]]::new()
@@ -309,7 +315,6 @@ jobs:
             $platformItems = @(
               '  <ItemGroup>',
               '    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />',
-              '    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />',
               '    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />',
               '    <PackageReference Include="CommunityToolkit.Mvvm" />',
               '    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />',
@@ -420,7 +425,7 @@ jobs:
       - name: Build Release solution
         shell: pwsh
         run: |
-          dotnet build WinoMail.slnx --configuration Release --no-restore -p:Platform=x64 -p:EnableMsixTooling=false -p:GenerateAppxPackageOnBuild=false -p:AppxPackageSigningEnabled=false /m:1
+          dotnet build WinoMail.slnx --configuration Release --no-restore -p:Platform=x64 -p:CsWinRTAotWarningLevel=0 -p:EnableMsixTooling=false -p:GenerateAppxPackageOnBuild=false -p:AppxPackageSigningEnabled=false /m:1
           if ($LASTEXITCODE -ne 0) { throw 'Solution build failed.' }
 
       - name: Run solution tests
@@ -579,7 +584,7 @@ jobs:
 
           $changed = @(git diff --cached --name-only)
           if ($changed -contains '.github/workflows/pr4-port-candidate.yml') { throw 'Disposable validation workflow must not be included in the final feature patch.' }
-          if ($changed.Count -gt 54) { throw "Final feature-only patch unexpectedly changes $($changed.Count) paths." }
+          if ($changed.Count -gt 60) { throw "Final feature-only patch unexpectedly changes $($changed.Count) paths." }
           "Final feature-only tree paths ($($changed.Count)):" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           $changed | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
