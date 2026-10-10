@@ -42,7 +42,7 @@ jobs:
           if ($integrationSha -cne '2ba1b7b7b312e580a3774c80c5175cab51abd21a') {
             throw "Integration source changed unexpectedly; refusing to apply a stale patch: $integrationSha"
           }
-          $patchBase = '1375a84015f6c1e9592fe310b5849bf958de2c96'
+          $patchBase = '5b18ab36b112a4ae272ccf2c6aa4df3590291130'
           "PORT_MAIN_SHA=$mainSha" >> $env:GITHUB_ENV
           "PORT_INTEGRATION_SHA=$integrationSha" >> $env:GITHUB_ENV
           "PORT_PATCH_BASE=$patchBase" >> $env:GITHUB_ENV
@@ -50,7 +50,7 @@ jobs:
           "Feature delta source: $integrationSha" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Feature patch base: $patchBase" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-      - name: Port only the 53 audited feature paths onto main
+      - name: Three-way port only the 53 feature paths onto restored main
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -109,49 +109,109 @@ jobs:
             'tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj',
             'tests/scripts/Build-Beta-TestBundle.ps1'
           )
-
           $baseFiles = @(git ls-tree -r --name-only $env:PORT_PATCH_BASE -- $paths)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the feature patch base tree.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the feature base tree.' }
           $mainFiles = @(git ls-tree -r --name-only $env:PORT_MAIN_SHA -- $paths)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the restored main tree.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect restored main tree.' }
           $featureFiles = @(git ls-tree -r --name-only $env:PORT_INTEGRATION_SHA -- $paths)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the feature tree.' }
-
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect integration feature tree.' }
           $changedPaths = @(git diff --name-only $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate feature delta paths.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate the feature delta.' }
           if ($changedPaths.Count -ne 53) { throw "Expected 53 audited feature paths, found $($changedPaths.Count)." }
-          "Feature delta contains $($changedPaths.Count) audited paths." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Feature delta paths audited: $($changedPaths.Count)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-          # If a feature file has no counterpart at all on the restored main, add only that file from the feature tree.
-          $addFromFeature = @($featureFiles | Where-Object { $mainFiles -notcontains $_ })
-          foreach ($featurePath in $addFromFeature) {
-            git checkout $env:PORT_INTEGRATION_SHA -- $featurePath
-            if ($LASTEXITCODE -ne 0) { throw "Could not port new feature file '$featurePath'." }
-            Write-Host "Added feature file absent from restored main: $featurePath"
+          $conflicts = [System.Collections.Generic.List[string]]::new()
+          $temporaryRoot = Join-Path $env:RUNNER_TEMP 'pr4-three-way'
+          New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
+          $index = 0
+          foreach ($featurePath in $paths) {
+            if ($changedPaths -notcontains $featurePath) { continue }
+            $index++
+            $baseExists = $baseFiles -contains $featurePath
+            $mainExists = $mainFiles -contains $featurePath
+            $sourceExists = $featureFiles -contains $featurePath
+            if (-not $sourceExists) { throw "Audited feature file '$featurePath' is absent from integration." }
+
+            if (-not $baseExists) {
+              if (-not $mainExists) {
+                git checkout $env:PORT_INTEGRATION_SHA -- $featurePath
+                if ($LASTEXITCODE -ne 0) { throw "Could not add feature-only file '$featurePath'." }
+                git add -- $featurePath
+                if ($LASTEXITCODE -ne 0) { throw "Could not stage feature-only file '$featurePath'." }
+                Write-Host "Added feature-only file: $featurePath"
+              }
+              elseif ($featurePath -eq 'src/Wino.Platform.Windows/Wino.Platform.Windows.csproj') {
+                # Keep main's pre-existing platform project; only add the contract reference needed by the new dispatcher.
+                $project = Get-Content -LiteralPath $featurePath -Raw
+                if ($project -notmatch 'Wino\.NotificationHost\.Contracts\.csproj') {
+                  $anchor = '<ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />'
+                  if (-not $project.Contains($anchor)) { throw 'Could not locate platform project's core-domain reference.' }
+                  $project = $project.Replace($anchor, $anchor + [Environment]::NewLine + '    <ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />')
+                  Set-Content -LiteralPath $featurePath -Value $project -NoNewline
+                  git add -- $featurePath
+                  if ($LASTEXITCODE -ne 0) { throw 'Could not stage platform contract reference.' }
+                }
+                Write-Host 'Preserved main platform project and added only the contract reference.'
+              }
+              else {
+                throw "Feature path '$featurePath' has no upstream base blob but already exists on main; refusing to overwrite without a common base."
+              }
+              continue
+            }
+
+            if (-not $mainExists) {
+              Write-Host "Skipped refactor-only path not present on restored main: $featurePath"
+              continue
+            }
+            if ($featurePath -eq 'global.json') {
+              Write-Host 'Retained restored main SDK version; SDK pin is not part of the runtime feature.'
+              continue
+            }
+
+            $baseFile = Join-Path $temporaryRoot ("{0}.base" -f $index)
+            $sourceFile = Join-Path $temporaryRoot ("{0}.source" -f $index)
+            $baseText = (git show ($env:PORT_PATCH_BASE + ':' + $featurePath) | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw "Could not read feature base blob for '$featurePath'." }
+            $sourceText = (git show ($env:PORT_INTEGRATION_SHA + ':' + $featurePath) | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw "Could not read feature source blob for '$featurePath'." }
+            Set-Content -LiteralPath $baseFile -Value $baseText -NoNewline
+            Set-Content -LiteralPath $sourceFile -Value $sourceText -NoNewline
+            $mainFile = (Resolve-Path -LiteralPath $featurePath).Path
+
+            $mergedLines = & git merge-file --diff3 -p -L 'restored-main' -L 'feature-vNext-base' -L 'integration-feature-delta' $mainFile $baseFile $sourceFile
+            $mergeExit = $LASTEXITCODE
+            $mergedText = [string]::Join([Environment]::NewLine, $mergedLines)
+            Set-Content -LiteralPath $featurePath -Value $mergedText -NoNewline
+            if ($mergeExit -eq 1 -or $mergedText -match '(?m)^<<<<<<< ') {
+              $conflicts.Add($featurePath)
+              Write-Host "MERGE CONFLICT: $featurePath"
+            }
+            elseif ($mergeExit -ne 0) {
+              throw "git merge-file failed for '$featurePath' with code $mergeExit."
+            }
+            git add -- $featurePath
+            if ($LASTEXITCODE -ne 0) { throw "Could not stage merged feature file '$featurePath'." }
           }
 
-          # Three-way-apply changes only for files that exist on both restored main and the patch base.
-          $mergeablePaths = @($changedPaths | Where-Object { $mainFiles -contains $_ -and $baseFiles -contains $_ })
-          if ($mergeablePaths.Count -eq 0) { throw 'No existing feature paths were available for a three-way port.' }
-          $patchPath = Join-Path $env:RUNNER_TEMP 'pr4-feature-only-existing-files.patch'
-          git diff --binary --full-index "--output=$patchPath" $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $mergeablePaths
-          if ($LASTEXITCODE -ne 0) { throw 'Could not generate the existing-files feature patch.' }
-          $applyOutput = git apply --3way --index $patchPath 2>&1
-          $applyExit = $LASTEXITCODE
-          $applyOutput | Write-Host
-          $conflicts = @(git diff --name-only --diff-filter=U)
           if ($conflicts.Count -gt 0) {
-            "### Existing-file port conflicts that need specific resolution" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             $conflicts | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            throw "Feature-only port has $($conflicts.Count) file conflicts. No commit or PR update was made."
+            foreach ($conflictPath in $conflicts) {
+              Write-Host "---- Conflict preview: $conflictPath ----"
+              Select-String -LiteralPath $conflictPath -Pattern '^<<<<<<< |^=======$|^>>>>>>> ' -Context 1,1 | ForEach-Object { Write-Host $_.ToString() }
+            }
+            git add -A
+            git -c user.name='Snn1452' -c user.email='snn1452@gmail.com' commit -m "Diagnostic feature-only port with explicit merge conflicts"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not preserve diagnostic conflict tree.' }
+            git push --force origin 'HEAD:refs/heads/automation/pr4-port-conflicts-20261010'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not persist diagnostic conflict tree.' }
+            throw "Feature-only port has $($conflicts.Count) textual conflicts. Diagnostic snapshot was kept off the PR branch."
           }
-          if ($applyExit -ne 0) { throw "git apply --3way failed with exit code $applyExit." }
 
           git add -A
-          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the file-only port.' }
           git diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Feature-only port contains whitespace errors.' }
-          git status --short | Write-Host
+          "Three-way feature-only port merged without textual conflicts." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Remove duplicate SDK embedded-resource entries
         shell: pwsh
