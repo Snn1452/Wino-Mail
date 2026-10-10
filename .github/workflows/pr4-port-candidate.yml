@@ -145,7 +145,7 @@ jobs:
                 $project = Get-Content -LiteralPath $featurePath -Raw
                 if ($project -notmatch 'Wino\.NotificationHost\.Contracts\.csproj') {
                   $anchor = '<ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />'
-                  if (-not $project.Contains($anchor)) { throw 'Could not locate platform project's core-domain reference.' }
+                  if (-not $project.Contains($anchor)) { throw "Could not locate platform project core-domain reference." }
                   $project = $project.Replace($anchor, $anchor + [Environment]::NewLine + '    <ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />')
                   Set-Content -LiteralPath $featurePath -Value $project -NoNewline
                   git add -- $featurePath
