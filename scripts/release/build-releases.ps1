@@ -433,7 +433,7 @@ function Set-ReleaseLayoutProfile {
 
     $Profile | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Layout 'release-profile.json') -Encoding utf8
     $Manifest.Package.Properties.DisplayName = $Profile.DisplayNames.Mail
-    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks' }
+    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks'; BackgroundSyncHost = 'Mail' }
     foreach ($app in $Manifest.Package.Applications.Application) {
         $mode = $entries[[string]$app.Id]
         if (-not $mode) { throw "Unknown packaged application: $($app.Id)" }
@@ -584,7 +584,7 @@ function Assert-PackagedReleaseProfile {
         $profile.PackageName -cne [string]$Manifest.Package.Identity.Name -or $profile.Publisher -cne [string]$Manifest.Package.Identity.Publisher) {
         throw 'The packaged release profile does not match its manifest or distribution.'
     }
-    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks' }
+    $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks'; BackgroundSyncHost = 'Mail' }
     foreach ($app in $Manifest.Package.Applications.Application) {
         $mode = $entries[[string]$app.Id]
         if (-not $mode) { throw 'Unknown application in release manifest.' }

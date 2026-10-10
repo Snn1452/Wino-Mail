@@ -63,6 +63,11 @@
       <Platform Solution="*|x86" Project="x86" />
     </Project>
     <Project Path="src/Wino.SourceGenerators/Wino.SourceGenerators.csproj" />
+    <Project Path="src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj">
+      <Platform Solution="*|arm64" Project="ARM64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+    </Project>
   </Folder>
   <Folder Name="/controls/">
     <Project Path="controls/Wino.Editor.Core/Wino.Editor.Core.csproj" />
@@ -108,6 +113,12 @@
       <Platform Solution="*|arm64" Project="arm64" />
       <Platform Solution="*|x64" Project="x64" />
       <Platform Solution="*|x86" Project="x86" />
+    </Project>
+    <Project Path="tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+    <Project Path="tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj">
+      <Platform Solution="*|x64" Project="x64" />
     </Project>
   </Folder>
   <Folder Name="/tools/">
