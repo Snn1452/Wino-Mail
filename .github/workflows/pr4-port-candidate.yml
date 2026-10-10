@@ -126,7 +126,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect integration feature tree.' }
           $changedPaths = @(git diff --name-only $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths)
           if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate the feature delta.' }
-          if ($changedPaths.Count -ne 59) { throw "Expected 59 audited feature/runtime-contract paths, found $($changedPaths.Count)." }
+          if ($changedPaths.Count -ne 53) { throw "Expected the audited 53-path feature delta, found $($changedPaths.Count)." }
           "Feature delta paths audited: $($changedPaths.Count)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
           $conflicts = [System.Collections.Generic.List[string]]::new()
