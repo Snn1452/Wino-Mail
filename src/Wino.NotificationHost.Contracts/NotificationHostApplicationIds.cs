@@ -20,6 +20,9 @@ public static class NotificationHostApplicationIds
             _ => throw new ArgumentOutOfRangeException(nameof(application), application, "Unknown notification host application.")
         };
 
+    public static string GetToastTargetApplicationId(NotificationHostApplication application)
+        => GetApplicationId(application);
+
     public static bool TryResolveFromAppUserModelId(string? appUserModelId, out NotificationHostApplication application)
     {
         application = default;
