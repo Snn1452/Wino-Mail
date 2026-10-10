@@ -19,7 +19,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />
-    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />
     <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />
   </ItemGroup>
 </Project>
