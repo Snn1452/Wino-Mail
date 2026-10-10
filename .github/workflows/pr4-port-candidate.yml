@@ -399,6 +399,62 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage the unified NotificationHost entry point.' }
           Write-Host 'Retained current NotificationHost Main() and added the legacy service contract needed by BackgroundSyncHost.'
 
+      - name: Use the current packaged toast dispatcher for background notifications
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clientPath = 'src/Wino.Mail.BackgroundSyncHost/BackgroundNotificationHostClient.cs'
+          $clientText = @'
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Wino.NotificationHost.Contracts;
+using Wino.Platform.Windows;
+
+namespace Wino.Mail.BackgroundSyncHost;
+
+internal sealed class BackgroundNotificationHostClient
+{
+    public Task ShowAsync(
+        NotificationHostApplication application,
+        string payload,
+        string? tag = null,
+        string? group = null,
+        CancellationToken cancellationToken = default)
+        => NotificationHostDispatcher.ShowAsync(application, payload, tag, group, cancellationToken);
+
+    public Task RemoveByTagAsync(
+        NotificationHostApplication application,
+        string tag,
+        CancellationToken cancellationToken = default)
+        => NotificationHostDispatcher.RemoveByTagAsync(application, tag, cancellationToken);
+
+    public async Task ShowAndWaitForSmokeAsync(
+        NotificationHostApplication application,
+        string payload,
+        string tag,
+        CancellationToken cancellationToken = default)
+    {
+        await NotificationHostDispatcher.ShowAsync(application, payload, tag, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        var shown = await NotificationHostDispatcher.WaitForNotificationAsync(
+                application,
+                tag,
+                TimeSpan.FromSeconds(15),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!shown)
+            throw new TimeoutException($"Windows notification history did not record smoke tag '{tag}'.");
+    }
+}
+'@
+          Set-Content -LiteralPath $clientPath -Value $clientText -NoNewline
+          git add -- $clientPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the BackgroundNotificationHostClient modern dispatch implementation.' }
+          Write-Host 'Background notifications now use main-compatible AUMIDs and the shared toast dispatcher.'
+
       - name: Remove duplicate SDK embedded-resource entries
         shell: pwsh
         run: |
