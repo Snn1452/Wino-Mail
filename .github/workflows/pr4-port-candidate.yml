@@ -348,8 +348,25 @@ jobs:
           git add -- $manifestPath
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage the main-compatible BackgroundSyncHost package manifest.' }
 
+          # Three additional conflicts are old implementations superseded by main's current single-host/release model.
+          # Preserve main's authoritative versions; the background host uses the new shared toast dispatcher instead.
+          foreach ($mainAuthoritativePath in @(
+            'scripts/release/build-releases.ps1',
+            'src/Wino.Mail.WinUI/Services/NotificationHostClient.cs',
+            'src/Wino.NotificationHost/Program.cs'
+          )) {
+            if ($conflicts.Contains($mainAuthoritativePath)) {
+              git checkout $env:PORT_MAIN_SHA -- $mainAuthoritativePath
+              if ($LASTEXITCODE -ne 0) { throw "Could not preserve main's authoritative '$mainAuthoritativePath'." }
+              git add -- $mainAuthoritativePath
+              if ($LASTEXITCODE -ne 0) { throw "Could not stage main's authoritative '$mainAuthoritativePath'." }
+              [void]$conflicts.Remove($mainAuthoritativePath)
+              Write-Host "Resolved obsolete implementation conflict by preserving main: $mainAuthoritativePath"
+            }
+          }
+
           if ($conflicts.Count -gt 0) {
-            "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             $conflicts | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             foreach ($conflictPath in $conflicts) {
               Write-Host "---- Conflict preview: $conflictPath ----"
