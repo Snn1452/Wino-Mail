@@ -1,0 +1,362 @@
+name: PR4 feature-only port and validation
+
+on:
+  push:
+    branches:
+      - automation/pr4-port-candidate-20261010
+    paths:
+      - .github/workflows/pr4-port-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: pr4-feature-only-port-candidate
+  cancel-in-progress: true
+
+jobs:
+  port-and-validate:
+    name: Port only requested feature delta onto restored main
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git and pin source refs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "Snn1452"
+          git config user.email "snn1452@gmail.com"
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/integration/msix-release:refs/remotes/origin/integration/msix-release'
+          $mainSha = (git rev-parse refs/remotes/origin/main).Trim()
+          $integrationSha = (git rev-parse refs/remotes/origin/integration/msix-release).Trim()
+          if ($mainSha -cne '4cf39fd9ebd36477a251f4f2dda94657a15c2557') {
+            throw "Restored main changed unexpectedly: $mainSha"
+          }
+          if ($integrationSha -cne '2ba1b7b7b312e580a3774c80c5175cab51abd21a') {
+            throw "Integration source changed unexpectedly; refusing to apply a stale patch: $integrationSha"
+          }
+          $patchBase = '1375a84015f6c1e9592fe310b5849bf958de2c96'
+          "PORT_MAIN_SHA=$mainSha" >> $env:GITHUB_ENV
+          "PORT_INTEGRATION_SHA=$integrationSha" >> $env:GITHUB_ENV
+          "PORT_PATCH_BASE=$patchBase" >> $env:GITHUB_ENV
+          "Port base (restored main): $mainSha" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Feature delta source: $integrationSha" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Feature patch base: $patchBase" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Apply feature-only 53-path patch without a merge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $paths = @(
+            '.github/workflows/background-notification-runtime.yml',
+            '.github/workflows/native-aot.yml',
+            'Directory.Build.targets',
+            'WinoMail.slnx',
+            'global.json',
+            'scripts/release/build-releases.ps1',
+            'src/Wino.Core.Domain/Interfaces/IKeyPressService.cs',
+            'src/Wino.Core.Domain/Interfaces/IStoreManagementService.cs',
+            'src/Wino.Core/Services/SynchronizationManager.cs',
+            'src/Wino.Mail.BackgroundSyncHost/AutoSynchronizationService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundAppMetadataService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundKeyPressService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundMicrosoftStoreService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundNativeAppService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundNotificationHostClient.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundStatePersistenceService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/BackgroundStoreManagementService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/CalendarReminderService.cs',
+            'src/Wino.Mail.BackgroundSyncHost/HeadlessExternalBrowserAuthenticationPresenter.cs',
+            'src/Wino.Mail.BackgroundSyncHost/HeadlessMailDialogServiceProxy.cs',
+            'src/Wino.Mail.BackgroundSyncHost/HeadlessNotificationBuilder.cs',
+            'src/Wino.Mail.BackgroundSyncHost/HeadlessNotificationPayloadBuilder.cs',
+            'src/Wino.Mail.BackgroundSyncHost/PackagedApplicationActivator.cs',
+            'src/Wino.Mail.BackgroundSyncHost/Program.cs',
+            'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj',
+            'src/Wino.Mail.WinUI/App.xaml.cs',
+            'src/Wino.Mail.WinUI/Package.appxmanifest',
+            'src/Wino.Mail.WinUI/PackagedApplicationActivator.cs',
+            'src/Wino.Mail.WinUI/Program.cs',
+            'src/Wino.Mail.WinUI/Services/ConfigurationService.cs',
+            'src/Wino.Mail.WinUI/Services/NotificationHostClient.cs',
+            'src/Wino.Mail.WinUI/Services/NotificationHostProcessSupervisor.cs',
+            'src/Wino.Mail.WinUI/Services/ShellUserPresenceStateProvider.cs',
+            'src/Wino.Mail.WinUI/ShellWindow.xaml.cs',
+            'src/Wino.Mail.WinUI/Views/Mail/MailListPage.xaml.cs',
+            'src/Wino.Mail.WinUI/Views/WinoAppShell.xaml',
+            'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj',
+            'src/Wino.NotificationHost.Contracts/NotificationHostApplicationIds.cs',
+            'src/Wino.NotificationHost/NotificationHostLogger.cs',
+            'src/Wino.NotificationHost/Program.cs',
+            'src/Wino.Platform.Windows/NotificationHostDispatcher.cs',
+            'src/Wino.Platform.Windows/ToastNotificationDispatcher.cs',
+            'src/Wino.Platform.Windows/Wino.Platform.Windows.csproj',
+            'tests/Wino.NotificationHost.Tests/NotificationHostCodecTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationHostFileStoreTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationHostIdentityTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationHostProcessSupervisorTests.cs',
+            'tests/Wino.NotificationHost.Tests/NotificationPayloadValidatorTests.cs',
+            'tests/Wino.NotificationHost.Tests/ReleaseIdentityTests.cs',
+            'tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj',
+            'tests/Wino.Services.AotSmoke/Program.cs',
+            'tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj',
+            'tests/scripts/Build-Beta-TestBundle.ps1'
+          )
+          $patchPath = Join-Path $env:RUNNER_TEMP 'pr4-feature-only.patch'
+          git diff --binary --full-index "--output=$patchPath" $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths
+          if ($LASTEXITCODE -ne 0) { throw 'Could not generate the feature-only patch.' }
+          if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf) -or (Get-Item -LiteralPath $patchPath).Length -eq 0) {
+            throw 'Feature-only patch is empty.'
+          }
+
+          $changedPaths = @(git diff --name-only $env:PORT_PATCH_BASE $env:PORT_INTEGRATION_SHA -- $paths)
+          if ($changedPaths.Count -ne 53) {
+            throw "Expected the audited 53-path feature delta, found $($changedPaths.Count) paths."
+          }
+          "Feature delta contains $($changedPaths.Count) paths." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $changedPaths | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $applyOutput = git apply --3way --index $patchPath 2>&1
+          $applyExit = $LASTEXITCODE
+          $applyOutput | Write-Host
+          $conflicts = @(git diff --name-only --diff-filter=U)
+          if ($conflicts.Count -gt 0) {
+            "### Unresolved 3-way port conflicts" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            $conflicts | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            throw "Feature-only port has $($conflicts.Count) true conflicts; no commit or branch update was made. Resolve only these paths before retrying."
+          }
+          if ($applyExit -ne 0) {
+            throw "git apply --3way failed with exit code $applyExit without a recognized conflict list."
+          }
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Feature-only patch contains whitespace errors.' }
+          git status --short | Write-Host
+
+      - name: Remove duplicate SDK embedded-resource entries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'src/Wino.Services/Wino.Services.csproj'
+          $text = Get-Content -LiteralPath $path -Raw
+          $before = $text
+          $text = [regex]::Replace($text, '(?m)^[ \t]*<EmbeddedResource Include="Security\\Keys\\intelligence-public\.pem"\s*/>[ \t]*\r?\n', '')
+          $text = [regex]::Replace($text, '(?m)^[ \t]*<EmbeddedResource Include="Configuration\\known-imap-providers\.json"\s*/>[ \t]*\r?\n', '')
+          if ($text -ne $before) {
+            Set-Content -LiteralPath $path -Value $text -NoNewline
+            git add -- $path
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage the duplicate embedded-resource fix.' }
+            Write-Host 'Removed explicit resource entries already included by SDK defaults.'
+          }
+          else {
+            Write-Host 'No duplicate explicit resource entries were present.'
+          }
+
+      - name: Point Beta test workflow output at the bundle validation directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = '.github/workflows/background-notification-runtime.yml'
+          $text = Get-Content -LiteralPath $path -Raw
+          $anchor = '          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta'
+          if (-not $text.Contains($anchor)) { throw 'Could not locate the Beta test bundle invocation.' }
+          if ($text -notmatch 'WINO_RELEASES_ROOT') {
+            $replacement = '          $env:WINO_RELEASES_ROOT = Join-Path $env:GITHUB_WORKSPACE ''src/Wino.Mail.WinUI/AppPackages''' + [Environment]::NewLine + $anchor
+            $text = $text.Replace($anchor, $replacement)
+            Set-Content -LiteralPath $path -Value $text -NoNewline
+            git add -- $path
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage the corrected Beta package output root.' }
+          }
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.401
+
+      - name: Restore Release solution graph
+        shell: pwsh
+        run: |
+          dotnet restore WinoMail.slnx --configfile nuget.config -p:Platform=x64 -p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw 'Solution restore failed.' }
+
+      - name: Build Release solution
+        shell: pwsh
+        run: |
+          dotnet build WinoMail.slnx --configuration Release --no-restore -p:Platform=x64 -p:EnableMsixTooling=false -p:GenerateAppxPackageOnBuild=false -p:AppxPackageSigningEnabled=false /m:1
+          if ($LASTEXITCODE -ne 0) { throw 'Solution build failed.' }
+
+      - name: Run solution tests
+        shell: pwsh
+        run: |
+          dotnet test WinoMail.slnx --configuration Release --no-build -p:Platform=x64 --logger "trx;LogFileName=pr4-port-tests.trx"
+          if ($LASTEXITCODE -ne 0) { throw 'Solution tests failed.' }
+
+      - name: Publish Native AOT WinUI and SQLite smoke harness
+        shell: pwsh
+        run: |
+          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configfile nuget.config -r win-x64 -p:Platform=x64 -p:Configuration=Release -p:UseNativeAot=true
+          if ($LASTEXITCODE -ne 0) { throw 'Native AOT WinUI restore failed.' }
+          dotnet restore tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj --configfile nuget.config -r win-x64 -p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite AOT smoke restore failed.' }
+
+          dotnet publish src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configuration Release --no-restore -r win-x64 /m:1 /p:Platform=x64 /p:EnableMsixTooling=false /p:GenerateAppxPackageOnBuild=false /p:AppxPackageSigningEnabled=false /p:TreatWarningsAsErrors=true /p:TrimmerSingleWarn=false
+          if ($LASTEXITCODE -ne 0) { throw 'Native AOT WinUI publish failed.' }
+          if (-not (Get-ChildItem src/Wino.Mail.WinUI/bin/Release -Recurse -Filter Wino.Mail.WinUI.exe | Select-Object -First 1)) { throw 'Native AOT WinUI executable was not generated.' }
+
+          dotnet publish tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj --configuration Release --no-restore -r win-x64 /p:Platform=x64 /p:TreatWarningsAsErrors=true /p:TrimmerSingleWarn=false
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite AOT smoke publish failed.' }
+          & tests/Wino.Services.AotSmoke/bin/x64/Release/net10.0/win-x64/publish/Wino.Services.AotSmoke.exe
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite AOT smoke execution failed.' }
+
+      - name: Build and validate signed Beta MSIXBundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE 'src/Wino.Mail.WinUI/AppPackages'
+          New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+          $env:WINO_RELEASES_ROOT = $outputRoot
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $profile.Publisher -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the Beta test signing certificate.' }
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          pwsh -NoProfile -File tests/scripts/Build-Beta-TestBundle.ps1 -CertificateThumbprint $cert.Thumbprint -BetaAssetsPath release-assets/Beta
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
+
+          $releaseDirs = @(Get-ChildItem -LiteralPath $outputRoot -Directory -Filter 'WinoMail_Beta_*' | Sort-Object LastWriteTime -Descending)
+          if ($releaseDirs.Count -ne 1) { throw "Expected exactly one Beta release directory, found $($releaseDirs.Count)." }
+          $releaseDir = $releaseDirs[0].FullName
+          $bundle = Join-Path $releaseDir ($releaseDirs[0].Name + '.msixbundle')
+          $certificate = Join-Path $releaseDir 'WinoMail_Beta_TestCertificate.cer'
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Beta MSIXBundle missing: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Beta certificate missing: $certificate" }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $bundle
+          if ($null -eq $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -cne $cert.Thumbprint) { throw 'Beta bundle signature does not match the generated certificate.' }
+          "BUNDLE_PATH=$bundle" >> $env:GITHUB_ENV
+          "CERTIFICATE_PATH=$certificate" >> $env:GITHUB_ENV
+          "BETA_RELEASE_DIR=$releaseDir" >> $env:GITHUB_ENV
+          "Validated signed Beta MSIXBundle: $bundle" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Beta certificate thumbprint: $($cert.Thumbprint)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Install Beta and test background runtime plus close behavior
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Certificate -FilePath $env:CERTIFICATE_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+          Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
+
+          $package = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
+          $manifest = Get-AppxPackageManifest $package
+          if ([string]$manifest.Package.Identity.Name -cne 'WinoMail.Beta') { throw 'Installed package identity mismatch.' }
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath -PathType Leaf)) { throw 'Packaged BackgroundSyncHost executable is missing.' }
+          $targetAumid = "$($package.PackageFamilyName)!App"
+
+          # Toast/notification path with the UI visibly open.
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+          }
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI did not open.' }
+          $openSmoke = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          if ($openSmoke.ExitCode -ne 0) { throw "Background toast smoke with UI open failed: $($openSmoke.ExitCode)" }
+          if ($ui.HasExited) { throw 'UI process exited during the open-window notification smoke.' }
+
+          # Close with the actual no-tray preference marker, require process exit, then relaunch.
+          $markerDirectory = Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalState"
+          New-Item -ItemType Directory -Force -Path $markerDirectory | Out-Null
+          $markerPath = Join-Path $markerDirectory '.wino-close-behavior-smoke'
+          Set-Content -LiteralPath $markerPath -Value 'RunInBackgroundWithoutTrayIcon' -NoNewline
+          $firstPid = $ui.Id
+          if (-not $ui.CloseMainWindow()) { throw "CloseMainWindow returned false for WinUI PID $firstPid." }
+          if (-not $ui.WaitForExit(15000)) { throw "WinUI PID $firstPid did not exit for RunInBackgroundWithoutTrayIcon." }
+          Start-Sleep -Seconds 2
+          if (Get-Process -Id $firstPid -ErrorAction SilentlyContinue) { throw 'WinUI process still exists after expected close.' }
+
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+          $secondUi = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $secondUi; $attempt++) {
+            Start-Sleep -Seconds 1
+            $secondUi = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+          }
+          if ($null -eq $secondUi -or $secondUi.Id -eq $firstPid) { throw 'Visible relaunch did not produce a new WinUI process.' }
+          Stop-Process -Id $secondUi.Id -Force -ErrorAction SilentlyContinue
+
+          # Background notification smoke with UI closed.
+          $closedSmoke = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          if ($closedSmoke.ExitCode -ne 0) { throw "Background toast smoke with UI closed failed: $($closedSmoke.ExitCode)" }
+
+          # Packaged activation by AUMID, independently of direct exe invocation.
+          $hostAumid = "$($package.PackageFamilyName)!BackgroundSyncHost"
+          $beforeIds = @(Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$hostAumid" | Out-Null
+          $newHost = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $newHost; $attempt++) {
+            Start-Sleep -Seconds 1
+            $newHost = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue | Where-Object { $beforeIds -notcontains $_.Id } | Select-Object -First 1
+          }
+          $diagnosticPaths = @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )
+          $diagnostics = ''
+          foreach ($path in $diagnosticPaths) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) { $diagnostics += (Get-Content -LiteralPath $path -Raw) + [Environment]::NewLine }
+          }
+          if ([string]::IsNullOrWhiteSpace($diagnostics)) { throw "No BackgroundSyncHost diagnostic was produced after packaged activation through $hostAumid." }
+          $failureLines = $diagnostics -split [Environment]::NewLine | Where-Object { $_ -match '\[FAIL\]' }
+          if ($failureLines.Count -gt 0) { throw "BackgroundSyncHost reported a failure after package activation through $hostAumid." }
+          if ($null -eq $newHost -and $diagnostics -notmatch '\[EXIT\].*code\s+0') { throw 'BackgroundSyncHost did not start or report a clean exit after packaged activation.' }
+          if ($null -ne $newHost) { Stop-Process -Id $newHost.Id -Force -ErrorAction SilentlyContinue }
+          "Beta install, notification smoke with UI open/closed, no-tray exit, relaunch, and packaged activation passed." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Clean installed Beta package and test certificate
+        if: always()
+        shell: pwsh
+        run: |
+          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue
+          }
+          if ($env:CERT_THUMBPRINT) {
+            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Persist verified feature-only port on temporary candidate ref
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Make the final source commit a direct child of restored main. The workflow exists only for this disposable validation branch.
+          git reset --soft $env:PORT_MAIN_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Could not reset the final port commit onto restored main.' }
+          if (Test-Path -LiteralPath '.github/workflows/pr4-port-candidate.yml') {
+            Remove-Item -LiteralPath '.github/workflows/pr4-port-candidate.yml' -Force
+          }
+          git add -A
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the final port tree.' }
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Final port tree contains whitespace errors.' }
+
+          $changed = @(git diff --cached --name-only)
+          if ($changed -contains '.github/workflows/pr4-port-candidate.yml') { throw 'Disposable validation workflow must not be included in the final feature patch.' }
+          if ($changed.Count -gt 54) { throw "Final feature-only patch unexpectedly changes $($changed.Count) paths." }
+          "Final feature-only tree paths ($($changed.Count)):" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $changed | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          git commit -m "Port background sync runtime and startup layout onto restored main"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not commit the validated feature-only port.' }
+          $parent = (git rev-parse HEAD^).Trim()
+          if ($parent -cne $env:PORT_MAIN_SHA) { throw "Final port commit parent is not restored main: $parent" }
+          $portSha = (git rev-parse HEAD).Trim()
+          "PORT_COMMIT_SHA=$portSha" >> $env:GITHUB_ENV
+          "Verified port commit: $portSha (direct parent: $parent)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          git push --force origin "HEAD:refs/heads/automation/pr4-port-candidate-20261010"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not persist the verified feature-only candidate commit.' }
