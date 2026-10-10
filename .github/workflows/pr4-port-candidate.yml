@@ -371,6 +371,11 @@ jobs:
           Set-Content -LiteralPath $runtimeWorkflowPath -Value $runtimeWorkflowText -NoNewline
           git add -- $runtimeWorkflowPath
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage whitespace cleanup for the runtime workflow.' }
+          $manifestWhitespacePath = 'src/Wino.Mail.WinUI/Package.appxmanifest'
+          $manifestLines = @(Get-Content -LiteralPath $manifestWhitespacePath | ForEach-Object { $_.TrimEnd($spaceChars) })
+          Set-Content -LiteralPath $manifestWhitespacePath -Value ($manifestLines -join [Environment]::NewLine) -NoNewline
+          git add -- $manifestWhitespacePath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage package manifest whitespace cleanup.' }
 
           git add -A
           git diff --cached --check
