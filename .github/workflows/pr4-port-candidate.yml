@@ -281,20 +281,14 @@ jobs:
               $targetIndex = $projectText.IndexOf($targetAnchor, [StringComparison]::Ordinal)
               if ($targetIndex -lt 0) { throw 'Could not find main PublishNotificationHost target.' }
               $backgroundTarget = @(
-                '  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="''$(WinoIsReleaseBuild)'' == ''true'' and ''$(RuntimeIdentifier)'' != ''''">',
+                '  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild">',
                 '    <MSBuild',
                 '      Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"',
                 '      Targets="Restore;Publish"',
-                '      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)"',
-                '      RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />',
-                '    <Error Condition="!Exists(''$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe'')"',
-                '           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />',
+                '      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)" />',
                 '    <ItemGroup>',
                 '      <BackgroundSyncHostContent Include="$(BackgroundSyncHostOutput)**\*" />',
-                '      <Content Include="@(BackgroundSyncHostContent)"',
-                '               CopyToOutputDirectory="PreserveNewest"',
-                '               CopyToPublishDirectory="PreserveNewest"',
-                '               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />',
+                '      <Content Include="@(BackgroundSyncHostContent)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />',
                 '    </ItemGroup>',
                 '  </Target>',
                 ''
