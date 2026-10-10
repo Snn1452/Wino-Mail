@@ -1,0 +1,324 @@
+name: Background notification runtime smoke
+
+on:
+  pull_request:
+    paths:
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.NotificationHost/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'tests/scripts/Build-Beta-TestBundle.ps1'
+      - '.github/workflows/background-notification-runtime.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: background-notification-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  notification-runtime:
+    name: Install package and test BackgroundSyncHost toast
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check installed .NET SDK
+        shell: pwsh
+        run: |
+          $present = @(dotnet --list-sdks | Where-Object {
+            if ($_ -match '^([0-9]+)\.([0-9]+)\.([0-9]+)\s') {
+              return ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -eq 0 -and [int]$Matches[3] -ge 301)
+            }
+            return $false
+          }).Count -gt 0
+          "DOTNET_SDK_PRESENT=$($present.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
+      - name: Setup .NET SDK
+        if: env.DOTNET_SDK_PRESENT != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.301
+
+      - name: Read Beta package identity
+        shell: pwsh
+        run: |
+          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
+          if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
+          "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
+
+      - name: Create Beta test certificate
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $env:PACKAGE_PUBLISHER -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
+          if ($null -eq $cert -or -not $cert.HasPrivateKey) { throw 'Could not create the Beta test signing certificate.' }
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build installable Beta MSIXBundle
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
+          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
+
+          $releaseDirs = @(Get-ChildItem -LiteralPath 'src/Wino.Mail.WinUI/AppPackages' -Directory -Filter 'WinoMail_Beta_*' | Sort-Object LastWriteTime -Descending)
+          if ($releaseDirs.Count -ne 1) { throw "Expected exactly one Beta release directory, found $($releaseDirs.Count)." }
+          $releaseDir = $releaseDirs[0].FullName
+          $bundle = Join-Path $releaseDir ($releaseDirs[0].Name + '.msixbundle')
+          $certificate = Join-Path $releaseDir 'WinoMail_Beta_TestCertificate.cer'
+
+          if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Installable Beta MSIXBundle was not produced: $bundle" }
+          if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) { throw "Beta test certificate was not produced: $certificate" }
+
+          "BUNDLE_PATH=$((Resolve-Path -LiteralPath $bundle).Path)" >> $env:GITHUB_ENV
+          "CERTIFICATE_PATH=$((Resolve-Path -LiteralPath $certificate).Path)" >> $env:GITHUB_ENV
+          "BETA_RELEASE_DIR=$((Resolve-Path -LiteralPath $releaseDir).Path)" >> $env:GITHUB_ENV
+
+      - name: Install Beta test certificate and bundle
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath $env:CERTIFICATE_PATH -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
+          Add-AppxPackage -Path $env:BUNDLE_PATH -ForceApplicationShutdown -ErrorAction Stop
+
+          $package = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
+          "PACKAGE_FAMILY=$($package.PackageFamilyName)" >> $env:GITHUB_ENV
+          $manifest = Get-AppxPackageManifest $package
+          if ([string]$manifest.Package.Identity.Name -cne 'WinoMail.Beta') { throw 'Installed package identity mismatch.' }
+
+      - name: Upload installable Beta bundle and certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Installable-Beta-MSIXBundle
+          path: |
+            ${{ env.BUNDLE_PATH }}
+            ${{ env.CERTIFICATE_PATH }}
+          if-no-files-found: error
+      - name: Run background notification smoke while UI is open
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath)) { throw 'BackgroundSyncHost payload is missing.' }
+
+          $targetAumid = "$($package.PackageFamilyName)!App"
+          Write-Host "Launching packaged UI through $targetAumid"
+
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
+
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          foreach ($notificationLog in @(
+            (Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalCache\NotificationHost\Logs\NotificationHost.log"),
+            (Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalCache\NotificationHost.log"),
+            (Join-Path $env:TEMP 'Wino Mail/NotificationHost.log')
+          ) | Select-Object -Unique) {
+            if (Test-Path -LiteralPath $notificationLog -PathType Leaf) {
+              Write-Host "NotificationHost diagnostic: $notificationLog"
+              Get-Content -LiteralPath $notificationLog -Tail 120
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was open with exit code $smokeExitCode." }
+          Start-Sleep -Seconds 3
+          if ($ui.HasExited) { throw 'UI process exited unexpectedly during the background notification smoke.' }
+          Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Run background notification smoke with UI closed
+        shell: pwsh
+        run: |
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          $smokeExitCode = $smokeProcess.ExitCode
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 80
+            }
+          }
+
+          if ($smokeExitCode -ne 0) { throw "Background notification smoke failed while UI was closed with exit code $smokeExitCode." }
+
+      - name: Verify BackgroundSyncHost packaged activation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $backgroundHostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
+          if (-not (Test-Path -LiteralPath $backgroundHostPath -PathType Leaf)) { throw 'BackgroundSyncHost payload is missing.' }
+
+          $targetAumid = "$($package.PackageFamilyName)!BackgroundSyncHost"
+          Write-Host "Launching BackgroundSyncHost through packaged AUMID $targetAumid"
+
+          $before = @(Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $backgroundHostProcess = $null
+          for ($attempt = 0; $attempt -lt 20 -and $null -eq $backgroundHostProcess; $attempt++) {
+            Start-Sleep -Seconds 1
+            $backgroundHostProcess = Get-Process -Name 'Wino.Mail.BackgroundSyncHost' -ErrorAction SilentlyContinue |
+              Where-Object { $before -notcontains $_.Id } |
+              Select-Object -First 1
+          }
+
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              Get-Content -LiteralPath $diagnosticPath -Tail 120
+            }
+          }
+
+          if ($null -ne $backgroundHostProcess) {
+            Write-Host "BackgroundSyncHost packaged activation produced PID $($backgroundHostProcess.Id)."
+            Start-Sleep -Seconds 5
+
+            if (Get-Process -Id $backgroundHostProcess.Id -ErrorAction SilentlyContinue) {
+              Write-Host 'BackgroundSyncHost is still running after packaged activation; stopping the CI instance.'
+              Stop-Process -Id $backgroundHostProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          $diagnosticText = ''
+          foreach ($diagnosticPath in @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          )) {
+            if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+              Write-Host "BackgroundSyncHost diagnostic: $diagnosticPath"
+              $diagnosticText += (Get-Content -LiteralPath $diagnosticPath -Raw) + [Environment]::NewLine
+              Get-Content -LiteralPath $diagnosticPath -Tail 160
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($diagnosticText)) {
+            throw "BackgroundSyncHost produced no diagnostic output after packaged activation through $targetAumid."
+          }
+
+          $failureLines = $diagnosticText -split [Environment]::NewLine | Where-Object { $_ -match '\[FAIL\]' }
+          $exitLines = $diagnosticText -split [Environment]::NewLine | Where-Object { $_ -match '\[EXIT\].*code\s+(\d+)' }
+
+          if ($failureLines.Count -gt 0 -or ($exitLines.Count -gt 0 -and (($exitLines[-1] -match 'code\s+(\d+)') -and [int]$Matches[1] -ne 0))) {
+            throw "BackgroundSyncHost failed during packaged activation through $targetAumid."
+          }
+
+          if ($null -eq $backgroundHostProcess -and $exitLines.Count -eq 0) {
+            throw "BackgroundSyncHost did not start or report a clean exit after packaged activation through $targetAumid."
+          }
+
+      - name: Verify RunInBackgroundWithoutTrayIcon exits WinUI process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-AppxPackage -Name $env:PACKAGE_NAME -ErrorAction Stop
+          $exe = Join-Path $package.InstallLocation 'Wino.Mail.WinUI.exe'
+
+          Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          $markerDirectory = Join-Path $env:LOCALAPPDATA "Packages\$($package.PackageFamilyName)\LocalState"
+          $markerPath = Join-Path $markerDirectory '.wino-close-behavior-smoke'
+          New-Item -ItemType Directory -Force -Path $markerDirectory | Out-Null
+          Set-Content -LiteralPath $markerPath -Value 'RunInBackgroundWithoutTrayIcon' -NoNewline
+
+          $targetAumid = "$($package.PackageFamilyName)!App"
+          Write-Host "Launching packaged WinUI through $targetAumid with the CI-only no-tray preference marker."
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $ui = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $ui; $attempt++) {
+            Start-Sleep -Seconds 1
+            $ui = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue |
+              Where-Object { $_.MainWindowHandle -ne 0 } |
+              Select-Object -First 1
+          }
+
+          if ($null -eq $ui) { throw 'Packaged Wino Mail UI window did not become visible for the close-behavior smoke test.' }
+          $firstPid = $ui.Id
+          Write-Host "Closing WinUI PID $firstPid via its real main window." 
+
+          if (-not $ui.CloseMainWindow()) {
+            throw "CloseMainWindow returned false for WinUI PID $firstPid."
+          }
+
+          if (-not $ui.WaitForExit(15000)) {
+            $diagnosticPath = Join-Path $env:TEMP 'Wino Mail/winui-launch-smoke.log'
+            if (Test-Path -LiteralPath $diagnosticPath) { Get-Content -LiteralPath $diagnosticPath -Tail 120 }
+            Get-Process -Id $firstPid -ErrorAction SilentlyContinue | Format-List Id,ProcessName,MainWindowHandle,StartTime,Path
+            throw "WinUI PID $firstPid remained alive after RunInBackgroundWithoutTrayIcon close."
+          }
+
+          Start-Sleep -Seconds 2
+          if (Get-Process -Id $firstPid -ErrorAction SilentlyContinue) {
+            throw "WinUI PID $firstPid was still present after WaitForExit returned."
+          }
+
+          Write-Host "WinUI PID $firstPid exited as expected. Relaunching through packaged activation to prove the old invisible process no longer captures activation."
+          Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "shell:AppsFolder\$targetAumid" | Out-Null
+
+          $secondUi = $null
+          for ($attempt = 0; $attempt -lt 30 -and $null -eq $secondUi; $attempt++) {
+            Start-Sleep -Seconds 1
+            $secondUi = Get-Process -Name 'Wino.Mail.WinUI' -ErrorAction SilentlyContinue |
+              Where-Object { $_.MainWindowHandle -ne 0 } |
+              Select-Object -First 1
+          }
+
+          if ($null -eq $secondUi) { throw 'Wino Mail could not present a visible window after the no-tray process exited.' }
+          if ($secondUi.Id -eq $firstPid) { throw 'The relaunch unexpectedly reused the closed WinUI process PID.' }
+          Write-Host "Second launch produced visible WinUI PID $($secondUi.Id)."
+
+          Stop-Process -Id $secondUi.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Uninstall Beta package and remove certificate
+        if: always()
+        shell: pwsh
+        run: |
+          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue
+          }
+          if ($env:CERT_THUMBPRINT) {
+            Get-ChildItem 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+            Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+          }
+

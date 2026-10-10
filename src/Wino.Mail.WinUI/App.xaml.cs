@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -82,6 +83,7 @@ public partial class App : WinoApplication,
     private int _initialShareActivationHandled;
     private readonly SemaphoreSlim _activationInfrastructureSemaphore = new(1, 1);
     private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);
+    private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);
     private readonly AppNotificationHandler _notificationHandler;
     private readonly AppActivationHandler _activationHandler;
     private readonly DispatcherQueue? _applicationDispatcherQueue;
@@ -187,7 +189,8 @@ public partial class App : WinoApplication,
         if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
         {
             DisposeTrayIcon();
-            LogActivation("Background shell close prepared without a system tray icon.");
+            ReleaseBackgroundLifetimeWindow();
+            LogActivation("Background shell close prepared without a system tray icon; WinUI process may terminate.");
             return true;
         }
 
@@ -857,6 +860,8 @@ public partial class App : WinoApplication,
             _accountService = Services.GetRequiredService<IAccountService>();
 
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
+            if (_hasConfiguredAccounts)
+                _ = StartBackgroundSyncHostIfNeededAsync();
 
             if (_companionIntegration != null)
             {
@@ -903,6 +908,57 @@ public partial class App : WinoApplication,
         }
     }
 
+    internal async Task<bool> StartBackgroundSyncHostIfNeededAsync()
+    {
+        var preferences = _preferencesService ?? Services.GetService<IPreferencesService>();
+        if (preferences?.AppCloseBehavior == AppCloseBehavior.Terminate)
+            return true;
+
+        if (IsBackgroundSyncHostRunning())
+            return true;
+
+        await _backgroundSyncHostLaunchSemaphore.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            if (IsBackgroundSyncHostRunning())
+                return true;
+
+            await LaunchBackgroundSyncHostAsync().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Log.Error(exception, "Failed to start the BackgroundSyncHost.");
+            return false;
+        }
+        finally
+        {
+            _backgroundSyncHostLaunchSemaphore.Release();
+        }
+    }
+
+    private static bool IsBackgroundSyncHostRunning()
+    {
+        try
+        {
+            return Process.GetProcessesByName("Wino.Mail.BackgroundSyncHost").Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task LaunchBackgroundSyncHostAsync()
+    {
+        var appUserModelId = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!BackgroundSyncHost";
+        var processId = await Task.Run(() => PackagedApplicationActivator.Activate(appUserModelId, string.Empty))
+            .WaitAsync(TimeSpan.FromSeconds(15))
+            .ConfigureAwait(true);
+
+        if (processId == 0)
+            throw new InvalidOperationException("BackgroundSyncHost activation returned process id 0.");
+    }
     private bool TryMarkInitialNotificationActivationHandled()
         => Interlocked.Exchange(ref _initialNotificationActivationHandled, 1) == 0;
 
@@ -1862,6 +1918,7 @@ public partial class App : WinoApplication,
     public void Receive(AccountCreatedMessage message)
     {
         _hasConfiguredAccounts = true;
+        _ = StartBackgroundSyncHostIfNeededAsync();
         _ = _companionIntegration?.SetReadinessAsync(CompanionReadinessState.Ready);
         EnsurePreferenceChangedSubscription();
         QueueJumpListOptionsUpdateOnUiThread();
