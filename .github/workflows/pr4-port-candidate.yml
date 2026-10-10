@@ -244,22 +244,115 @@ jobs:
             Write-Host 'Resolved WinoMail.slnx: restored main projects retained; only background host and feature test projects added.'
           }
 
-          # The runtime feature's side of this hunk adds background-host activation and AppCloseBehavior routing.
-          if ($conflicts.Contains('src/Wino.Mail.WinUI/App.xaml.cs')) {
-            $appPath = 'src/Wino.Mail.WinUI/App.xaml.cs'
-            $appText = Get-Content -LiteralPath $appPath -Raw
-            $pattern = '(?s)<<<<<<< restored-main\r?\n.*?=======\r?\n(?<feature>.*?)>>>>>>> integration-feature-delta\r?\n?'
-            $match = [regex]::Match($appText, $pattern)
-            if (-not $match.Success) { throw 'Could not locate the App.xaml.cs conflict block to resolve.' }
-            $appText = $appText.Substring(0, $match.Index) + $match.Groups['feature'].Value + $appText.Substring($match.Index + $match.Length)
-            if ($appText -match '(?m)^(<<<<<<<|=======|>>>>>>>|\|\|\|\|\|\|\|)') { throw 'App.xaml.cs still contains merge markers after choosing the feature-side host activation block.' }
-            Set-Content -LiteralPath $appPath -Value $appText -NoNewline
-            git add -- $appPath
-            if ($LASTEXITCODE -ne 0) { throw 'Could not stage resolved App.xaml.cs.' }
-            [void]$conflicts.Remove($appPath)
-            Write-Host 'Resolved App.xaml.cs using the feature-side background host activation block.'
+          # The current main App.xaml.cs is authoritative; port only background-host launch and close semantics.
+          $appPath = 'src/Wino.Mail.WinUI/App.xaml.cs'
+          git checkout $env:PORT_MAIN_SHA -- $appPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not restore main App.xaml.cs before porting the BackgroundSyncHost entry point.' }
+          $appText = Get-Content -LiteralPath $appPath -Raw
+          if ($appText -notmatch '(?m)^using System\.Diagnostics;') {
+            $usingAnchor = 'using System.Collections.Generic;'
+            if (-not $appText.Contains($usingAnchor)) { throw 'Could not locate the App.xaml.cs using section.' }
+            $appText = $appText.Replace($usingAnchor, $usingAnchor + [Environment]::NewLine + 'using System.Diagnostics;')
+          }
+          $semaphoreAnchor = '    private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);'
+          if ($appText -notmatch '_backgroundSyncHostLaunchSemaphore') {
+            if (-not $appText.Contains($semaphoreAnchor)) { throw 'Could not locate the app-host semaphore declaration.' }
+            $appText = $appText.Replace($semaphoreAnchor, $semaphoreAnchor + [Environment]::NewLine + '    private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);')
           }
 
+          $noTrayBlock = @(
+            '        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)',
+            '        {',
+            '            DisposeTrayIcon();',
+            '            LogActivation("Background shell close prepared without a system tray icon.");',
+            '            return true;',
+            '        }'
+          ) -join [Environment]::NewLine
+          $noTrayReplacement = @(
+            '        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)',
+            '        {',
+            '            DisposeTrayIcon();',
+            '            ReleaseBackgroundLifetimeWindow();',
+            '            LogActivation("Background shell close prepared without a system tray icon; WinUI process may terminate.");',
+            '            return true;',
+            '        }'
+          ) -join [Environment]::NewLine
+          if ($appText.Contains($noTrayBlock)) {
+            $appText = $appText.Replace($noTrayBlock, $noTrayReplacement)
+          } elseif ($appText -notmatch 'Background shell close prepared without a system tray icon; WinUI process may terminate\.') {
+            throw 'Could not port the no-tray close behavior to allow WinUI process exit.'
+          }
+
+          $accountAnchor = '            _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();'
+          if ($appText.Contains($accountAnchor) -and $appText -notmatch '_ = StartBackgroundSyncHostIfNeededAsync\(\);') {
+            $accountReplacement = $accountAnchor + [Environment]::NewLine + '            if (_hasConfiguredAccounts)' + [Environment]::NewLine + '                _ = StartBackgroundSyncHostIfNeededAsync();'
+            $appText = $appText.Replace($accountAnchor, $accountReplacement)
+          }
+          $appText = [regex]::Replace($appText, '(?m)^([ \t]*)_hasConfiguredAccounts = true;\s*$', { param($m) $m.Groups[1].Value + '_hasConfiguredAccounts = true;' + [Environment]::NewLine + $m.Groups[1].Value + '_ = StartBackgroundSyncHostIfNeededAsync();' })
+
+          if ($appText -notmatch 'internal async Task<bool> StartBackgroundSyncHostIfNeededAsync\(') {
+            $methodAnchor = '    private bool TryMarkInitialNotificationActivationHandled()'
+            if (-not $appText.Contains($methodAnchor)) { throw 'Could not locate the App.xaml.cs insertion point for BackgroundSyncHost launch methods.' }
+            $hostMethods = @(
+              '    internal async Task<bool> StartBackgroundSyncHostIfNeededAsync()',
+              '    {',
+              '        var preferences = _preferencesService ?? Services.GetService<IPreferencesService>();',
+              '        if (preferences?.AppCloseBehavior == AppCloseBehavior.Terminate)',
+              '            return true;',
+              '',
+              '        if (IsBackgroundSyncHostRunning())',
+              '            return true;',
+              '',
+              '        await _backgroundSyncHostLaunchSemaphore.WaitAsync().ConfigureAwait(true);',
+              '        try',
+              '        {',
+              '            if (IsBackgroundSyncHostRunning())',
+              '                return true;',
+              '',
+              '            await LaunchBackgroundSyncHostAsync().ConfigureAwait(true);',
+              '            return true;',
+              '        }',
+              '        catch (Exception exception)',
+              '        {',
+              '            Log.Error(exception, "Failed to start the BackgroundSyncHost.");',
+              '            return false;',
+              '        }',
+              '        finally',
+              '        {',
+              '            _backgroundSyncHostLaunchSemaphore.Release();',
+              '        }',
+              '    }',
+              '',
+              '    private static bool IsBackgroundSyncHostRunning()',
+              '    {',
+              '        try',
+              '        {',
+              '            return Process.GetProcessesByName("Wino.Mail.BackgroundSyncHost").Length > 0;',
+              '        }',
+              '        catch',
+              '        {',
+              '            return false;',
+              '        }',
+              '    }',
+              '',
+              '    private static async Task LaunchBackgroundSyncHostAsync()',
+              '    {',
+              '        var appUserModelId = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!BackgroundSyncHost";',
+              '        var processId = await Task.Run(() => PackagedApplicationActivator.Activate(appUserModelId, string.Empty))',
+              '            .WaitAsync(TimeSpan.FromSeconds(15))',
+              '            .ConfigureAwait(true);',
+              '',
+              '        if (processId == 0)',
+              '            throw new InvalidOperationException("BackgroundSyncHost activation returned process id 0.");',
+              '    }',
+              ''
+            ) -join [Environment]::NewLine
+            $appText = $appText.Replace($methodAnchor, $hostMethods + $methodAnchor)
+          }
+          Set-Content -LiteralPath $appPath -Value $appText -NoNewline
+          git add -- $appPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage main-based App.xaml.cs with background host activation.' }
+          Write-Host 'Ported BackgroundSyncHost startup and process-exit behavior without importing legacy in-app sync loops.'
           # Resolve the application project by preserving main's unified notification-host pipeline and adding only BackgroundSyncHost.
           if ($conflicts.Contains('src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj')) {
             $projectPath = 'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj'
@@ -309,29 +402,49 @@ jobs:
             Write-Host "Resolved WinUI project by preserving main's unified host and adding only BackgroundSyncHost packaging support."
           }
 
-          # The BackgroundSyncHost needs three shared service implementations in the Windows platform assembly.
+          # Keep the platform project free of WinUI app-layer source files to avoid duplicate type conflicts.
           $platformProjectPath = 'src/Wino.Platform.Windows/Wino.Platform.Windows.csproj'
           $platformText = Get-Content -LiteralPath $platformProjectPath -Raw
-          if ($platformText -notmatch 'Services\\ConfigurationService\.cs') {
-            $platformItems = @(
-              '  <ItemGroup>',
-              '    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />',
-              '    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />',
-              '    <PackageReference Include="CommunityToolkit.Mvvm" />',
-              '    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />',
-              '    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />',
-              '  </ItemGroup>',
-              '</Project>'
-            ) -join [Environment]::NewLine
-            $platformText = $platformText.Replace('</Project>', $platformItems)
+          $coreReference = '<ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />'
+          if (-not $platformText.Contains('Wino.NotificationHost.Contracts.csproj')) {
+            if (-not $platformText.Contains($coreReference)) { throw 'Could not locate the platform core-domain project reference.' }
+            $contractReference = '<ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />'
+            $platformText = $platformText.Replace($coreReference, $coreReference + [Environment]::NewLine + '    ' + $contractReference)
+          }
+          if (-not $platformText.Contains('Wino.Services.csproj')) {
+            $platformText = $platformText.Replace($coreReference, $coreReference + [Environment]::NewLine + '    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />')
+          }
+          if ($platformText -notmatch 'CommunityToolkit\.Mvvm') {
+            $projectItemAnchor = '<ItemGroup>'
+            $firstItemIndex = $platformText.IndexOf($projectItemAnchor, [StringComparison]::Ordinal)
+            if ($firstItemIndex -lt 0) { throw 'Could not locate a platform project item group.' }
+            $platformText = $platformText.Insert($firstItemIndex + $projectItemAnchor.Length, [Environment]::NewLine + '    <PackageReference Include="CommunityToolkit.Mvvm" />')
           }
           if ($platformText -notmatch '<RuntimeIdentifiers>') {
             $platformText = $platformText.Replace('<Platforms>x86;x64;arm64</Platforms>', '<Platforms>x86;x64;arm64</Platforms>' + [Environment]::NewLine + '    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>')
           }
           Set-Content -LiteralPath $platformProjectPath -Value $platformText -NoNewline
           git add -- $platformProjectPath
-          if ($LASTEXITCODE -ne 0) { throw 'Could not stage platform project service links needed by BackgroundSyncHost.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage the platform notification contract references.' }
 
+          # Compile the two app-layer runtime services into the background executable only.
+          $hostProjectPath = 'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj'
+          $hostProjectText = Get-Content -LiteralPath $hostProjectPath -Raw
+          if ($hostProjectText -notmatch 'Link="Services\\ConfigurationService\.cs"') {
+            $hostCompileItems = @(
+              '  <ItemGroup>',
+              '    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />',
+              '    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />',
+              '  </ItemGroup>',
+              ''
+            ) -join [Environment]::NewLine
+            $projectEnd = $hostProjectText.LastIndexOf('</Project>', [StringComparison]::Ordinal)
+            if ($projectEnd -lt 0) { throw 'Could not find BackgroundSyncHost project end tag.' }
+            $hostProjectText = $hostProjectText.Insert($projectEnd, $hostCompileItems)
+            Set-Content -LiteralPath $hostProjectPath -Value $hostProjectText -NoNewline
+            git add -- $hostProjectPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage app-layer service links in BackgroundSyncHost.csproj.' }
+          }
           # Rebuild the manifest from restored main, then add only BackgroundSyncHost.
           # This deliberately excludes the obsolete four hidden NotificationHost application identities.
           $manifestPath = 'src/Wino.Mail.WinUI/Package.appxmanifest'
