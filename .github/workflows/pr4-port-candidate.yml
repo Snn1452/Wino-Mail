@@ -34,6 +34,7 @@ jobs:
           git config user.name "Snn1452"
           git config user.email "snn1452@gmail.com"
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/integration/msix-release:refs/remotes/origin/integration/msix-release'
+          git fetch https://github.com/bkaankose/Wino-Mail.git '+refs/heads/feature/vNext:refs/remotes/upstream/feature-vNext'
           $mainSha = (git rev-parse refs/remotes/origin/main).Trim()
           $integrationSha = (git rev-parse refs/remotes/origin/integration/msix-release).Trim()
           if ($mainSha -cne '4cf39fd9ebd36477a251f4f2dda94657a15c2557') {
@@ -42,7 +43,8 @@ jobs:
           if ($integrationSha -cne '2ba1b7b7b312e580a3774c80c5175cab51abd21a') {
             throw "Integration source changed unexpectedly; refusing to apply a stale patch: $integrationSha"
           }
-          $patchBase = '5b18ab36b112a4ae272ccf2c6aa4df3590291130'
+          $patchBase = (git rev-parse refs/remotes/upstream/feature-vNext).Trim()
+          if ($patchBase -cne '5b18ab36b112a4ae272ccf2c6aa4df3590291130') { throw "Upstream feature/vNext moved unexpectedly: $patchBase" }
           "PORT_MAIN_SHA=$mainSha" >> $env:GITHUB_ENV
           "PORT_INTEGRATION_SHA=$integrationSha" >> $env:GITHUB_ENV
           "PORT_PATCH_BASE=$patchBase" >> $env:GITHUB_ENV
