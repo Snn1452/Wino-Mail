@@ -356,6 +356,15 @@ jobs:
             throw "Feature-only port has $($conflicts.Count) textual conflicts. Diagnostic snapshot was kept off the PR branch."
           }
 
+          # Normalize whitespace only in the added runtime workflow; preserve all code and other files unchanged.
+          $runtimeWorkflowPath = '.github/workflows/background-notification-runtime.yml'
+          $runtimeWorkflowText = Get-Content -LiteralPath $runtimeWorkflowPath -Raw
+          $runtimeWorkflowText = [regex]::Replace($runtimeWorkflowText, '[ 	]+(?=?$)', '', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+          $runtimeWorkflowText = $runtimeWorkflowText.TrimEnd([char[]]"`r`n") + [Environment]::NewLine
+          Set-Content -LiteralPath $runtimeWorkflowPath -Value $runtimeWorkflowText -NoNewline
+          git add -- $runtimeWorkflowPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage whitespace cleanup for the runtime workflow.' }
+
           git add -A
           git diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Feature-only port contains whitespace errors.' }
