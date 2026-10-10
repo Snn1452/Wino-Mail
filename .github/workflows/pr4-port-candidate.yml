@@ -359,8 +359,9 @@ jobs:
           # Normalize whitespace only in the added runtime workflow; preserve all code and other files unchanged.
           $runtimeWorkflowPath = '.github/workflows/background-notification-runtime.yml'
           $runtimeWorkflowText = Get-Content -LiteralPath $runtimeWorkflowPath -Raw
-          $runtimeWorkflowText = [regex]::Replace($runtimeWorkflowText, '[ 	]+(?=?$)', '', [System.Text.RegularExpressions.RegexOptions]::Multiline)
-          $runtimeWorkflowText = $runtimeWorkflowText.TrimEnd([char[]]"`r`n") + [Environment]::NewLine
+          $spaceChars = [char[]]@([char]32, [char]9)
+          $runtimeWorkflowLines = @($runtimeWorkflowText -split "\r?\n" | ForEach-Object { $_.TrimEnd($spaceChars) })
+          $runtimeWorkflowText = ($runtimeWorkflowLines -join [Environment]::NewLine).TrimEnd([char[]]@([char]13, [char]10)) + [Environment]::NewLine
           Set-Content -LiteralPath $runtimeWorkflowPath -Value $runtimeWorkflowText -NoNewline
           git add -- $runtimeWorkflowPath
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage whitespace cleanup for the runtime workflow.' }
