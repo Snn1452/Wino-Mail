@@ -1,6 +1,23 @@
 name: Background notification runtime smoke
 
 on:
+  push:
+    branches:
+      - integration/msix-release
+    paths:
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.NotificationHost.Contracts/**'
+      - 'src/Wino.NotificationHost/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'src/Wino.SourceGenerators/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'tests/scripts/Build-Beta-TestBundle.ps1'
+      - '.github/workflows/background-notification-runtime.yml'
   pull_request:
     paths:
       - 'src/Wino.Mail.BackgroundSyncHost/**'
