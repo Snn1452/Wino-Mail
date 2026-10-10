@@ -1,6 +1,21 @@
 name: Native AOT Compatibility
 
 on:
+  push:
+    branches:
+      - integration/msix-release
+    paths:
+      - 'src/Wino.Mail.BackgroundSyncHost/**'
+      - 'src/Wino.Mail.WinUI/**'
+      - 'src/Wino.Platform.Windows/**'
+      - 'src/Wino.Services/**'
+      - 'src/Wino.Core/**'
+      - 'src/Wino.Core.Domain/**'
+      - 'tests/Wino.Services.AotSmoke/**'
+      - 'tests/scripts/Build-Beta-TestBundle.ps1'
+      - 'WinoMail.slnx'
+      - 'Directory.*'
+      - '.github/workflows/native-aot.yml'
   pull_request:
   workflow_dispatch:
 
