@@ -495,6 +495,74 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not stage the BackgroundNotificationHostClient modern dispatch implementation.' }
           Write-Host 'Background notifications now use main-compatible AUMIDs and the shared toast dispatcher.'
 
+      - name: Fix WinRT AOT collection types and drop legacy supervisor tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-IndexOfLine {
+            param([System.Collections.Generic.List[string]]$Lines, [int]$Start, [string]$Contains, [int]$Limit = -1)
+            if ($Limit -lt 0 -or $Limit -gt $Lines.Count) { $Limit = $Lines.Count }
+            for ($index = $Start; $index -lt $Limit; $index++) {
+              if ($Lines[$index].Contains($Contains)) { return $index }
+            }
+            return -1
+          }
+          function Replace-ArrayArgument {
+            param([System.Collections.Generic.List[string]]$Lines, [int]$Start, [int]$Limit, [string]$ArrayType)
+            $open = -1
+            for ($index = $Start; $index -lt $Limit; $index++) { if ($Lines[$index].Trim() -eq '[') { $open = $index; break } }
+            if ($open -lt 0) { return @{ Next = $Start; Found = $false } }
+            $close = -1
+            for ($index = $open + 1; $index -lt $Limit; $index++) { if ($Lines[$index].Trim() -eq '],') { $close = $index; break } }
+            if ($close -lt 0) { throw "Could not find collection-expression end after line $($open + 1)." }
+            $indent = $Lines[$open].Substring(0, $Lines[$open].Length - $Lines[$open].TrimStart().Length)
+            $Lines[$open] = $indent + $ArrayType + ' {'
+            $Lines[$close] = $Lines[$close].Replace('],', '},')
+            return @{ Next = $close + 1; Found = $true }
+          }
+
+          $programPath = 'src/Wino.Mail.BackgroundSyncHost/Program.cs'
+          $programLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($line in (Get-Content -LiteralPath $programPath)) { $programLines.Add($line) }
+          $smokeBuild = Get-IndexOfLine $programLines 0 'var smokePayload = HeadlessNotificationPayloadBuilder.Build('
+          if ($smokeBuild -lt 0) { throw 'Could not locate BackgroundSyncHost notification smoke payload.' }
+          $first = Replace-ArrayArgument $programLines ($smokeBuild + 1) $programLines.Count 'new string[]'
+          if (-not $first.Found) { throw 'Could not convert the notification smoke text collection.' }
+          $second = Replace-ArrayArgument $programLines $first.Next $programLines.Count 'new (string Content, System.Collections.Generic.IReadOnlyDictionary<string, string> Arguments)[]'
+          if (-not $second.Found) { throw 'Could not convert the notification smoke button collection.' }
+          Set-Content -LiteralPath $programPath -Value ($programLines -join [Environment]::NewLine) -NoNewline
+          git add -- $programPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage BackgroundSyncHost WinRT collection fixes.' }
+
+          $builderPath = 'src/Wino.Mail.BackgroundSyncHost/HeadlessNotificationBuilder.cs'
+          $builderLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($line in (Get-Content -LiteralPath $builderPath)) { $builderLines.Add($line) }
+          $buildIndices = [System.Collections.Generic.List[int]]::new()
+          for ($index = 0; $index -lt $builderLines.Count; $index++) {
+            if ($builderLines[$index].Contains('HeadlessNotificationPayloadBuilder.Build(')) { $buildIndices.Add($index) }
+          }
+          foreach ($buildIndex in $buildIndices) {
+            $limit = Get-IndexOfLine $builderLines ($buildIndex + 1) 'HeadlessNotificationPayloadBuilder.Build('
+            if ($limit -lt 0) { $limit = $builderLines.Count }
+            $texts = Replace-ArrayArgument $builderLines ($buildIndex + 1) $limit 'new string[]'
+            if ($texts.Found) {
+              $buttons = Replace-ArrayArgument $builderLines $texts.Next $limit 'new (string Content, System.Collections.Generic.IReadOnlyDictionary<string, string> Arguments)[]'
+            }
+          }
+          Set-Content -LiteralPath $builderPath -Value ($builderLines -join [Environment]::NewLine) -NoNewline
+          git add -- $builderPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage headless notification WinRT collection fixes.' }
+
+          $testProject = 'tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj'
+          $testProjectText = Get-Content -LiteralPath $testProject -Raw
+          $legacyCompileLine = '(?m)^\s*<Compile Include="\.\.\\\.\.\\src\\Wino\.Mail\.WinUI\\Services\\NotificationHostProcessSupervisor\.cs"[^\r\n]*\r?\n'
+          $testProjectText = [regex]::Replace($testProjectText, $legacyCompileLine, '')
+          Set-Content -LiteralPath $testProject -Value $testProjectText -NoNewline
+          Remove-Item -LiteralPath 'tests/Wino.NotificationHost.Tests/NotificationHostProcessSupervisorTests.cs' -Force -ErrorAction SilentlyContinue
+          git add -A
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage removal of the superseded notification supervisor test.' }
+          Write-Host 'Replaced CsWinRT1032 collection expressions with explicit arrays and removed the test for the deleted legacy supervisor.'
+
       - name: Remove duplicate SDK embedded-resource entries
         shell: pwsh
         run: |
