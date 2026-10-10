@@ -415,6 +415,24 @@ jobs:
             git add -- $hostProjectPath
             if ($LASTEXITCODE -ne 0) { throw 'Could not stage the Wino.Core.ViewModels reference.' }
           }
+          # Ensure the executable is self-contained when built directly from the solution as well as through WinUI.
+          $hostPropertiesChanged = $false
+          $hostProjectText = $hostProjectText.Replace('<SelfContained>false</SelfContained>', '<SelfContained>true</SelfContained>')
+          if ($hostProjectText -notmatch '<RuntimeIdentifier Condition=') {
+            $runtimeIdentifiersAnchor = '<RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>'
+            if (-not $hostProjectText.Contains($runtimeIdentifiersAnchor)) { throw 'Could not locate BackgroundSyncHost RuntimeIdentifiers property.' }
+            $runtimeDefaults = @(
+              '    <RuntimeIdentifier Condition="''$(RuntimeIdentifier)'' == '''' and ''$(Platform)'' == ''x86''">win-x86</RuntimeIdentifier>',
+              '    <RuntimeIdentifier Condition="''$(RuntimeIdentifier)'' == '''' and ''$(Platform)'' == ''x64''">win-x64</RuntimeIdentifier>',
+              '    <RuntimeIdentifier Condition="''$(RuntimeIdentifier)'' == '''' and ''$(Platform)'' == ''ARM64''">win-arm64</RuntimeIdentifier>'
+            ) -join [Environment]::NewLine
+            $hostProjectText = $hostProjectText.Replace($runtimeIdentifiersAnchor, $runtimeIdentifiersAnchor + [Environment]::NewLine + $runtimeDefaults)
+          }
+          Set-Content -LiteralPath $hostProjectPath -Value $hostProjectText -NoNewline
+          git add -- $hostProjectPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage self-contained BackgroundSyncHost runtime properties.' }
+          Write-Host 'BackgroundSyncHost now defaults to a self-contained executable with the platform-specific RuntimeIdentifier.'
+
           # Main's unified notification COM host remains authoritative. Do not retain the old per-request host entry point from integration.
           $notificationProgramPath = 'src/Wino.NotificationHost/Program.cs'
           git checkout $env:PORT_MAIN_SHA -- $notificationProgramPath
