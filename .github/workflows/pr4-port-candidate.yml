@@ -195,8 +195,159 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Could not stage merged feature file '$featurePath'." }
           }
 
+          # Resolve WinoMail.slnx by preserving restored main's project model and adding only feature projects.
+          if ($conflicts.Contains('WinoMail.slnx')) {
+            $solutionPath = 'WinoMail.slnx'
+            git checkout $env:PORT_MAIN_SHA -- $solutionPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restore the main solution before applying feature project entries.' }
+            $doc = New-Object System.Xml.XmlDocument
+            $doc.PreserveWhitespace = $false
+            $doc.Load((Resolve-Path -LiteralPath $solutionPath).Path)
+            $libsFolder = $doc.SelectSingleNode('/Solution/Folder[@Name="/libs/"]')
+            if ($null -eq $libsFolder) { throw 'Main solution has no /libs/ folder.' }
+            $testsFolder = $doc.SelectSingleNode('/Solution/Folder[@Name="/tests/"]')
+            if ($null -eq $testsFolder) {
+              $testsFolder = $doc.CreateElement('Folder')
+              $testsFolder.SetAttribute('Name', '/tests/')
+              $doc.DocumentElement.AppendChild($testsFolder) | Out-Null
+            }
+            $addSolutionProject = {
+              param($parent, [string]$projectPath, [string[]]$platforms)
+              if ($doc.SelectSingleNode("//Project[@Path='$projectPath']") -ne $null) { return }
+              $projectNode = $doc.CreateElement('Project')
+              $projectNode.SetAttribute('Path', $projectPath)
+              foreach ($platform in $platforms) {
+                $projectPlatform = $doc.CreateElement('Platform')
+                switch ($platform) {
+                  'arm64' { $projectPlatform.SetAttribute('Solution', '*|arm64'); $projectPlatform.SetAttribute('Project', 'ARM64') }
+                  'x64'   { $projectPlatform.SetAttribute('Solution', '*|x64');   $projectPlatform.SetAttribute('Project', 'x64') }
+                  'x86'   { $projectPlatform.SetAttribute('Solution', '*|x86');   $projectPlatform.SetAttribute('Project', 'x86') }
+                }
+                $projectNode.AppendChild($projectPlatform) | Out-Null
+              }
+              $parent.AppendChild($projectNode) | Out-Null
+            }
+            & $addSolutionProject $libsFolder 'src/Wino.Mail.BackgroundSyncHost/Wino.Mail.BackgroundSyncHost.csproj' @('arm64','x64','x86')
+            & $addSolutionProject $testsFolder 'tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj' @('x64')
+            & $addSolutionProject $testsFolder 'tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj' @('x64')
+            $doc.Save((Resolve-Path -LiteralPath $solutionPath).Path)
+            git add -- $solutionPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage resolved feature project entries in WinoMail.slnx.' }
+            [void]$conflicts.Remove('WinoMail.slnx')
+            Write-Host 'Resolved WinoMail.slnx: restored main projects retained; only background host and feature test projects added.'
+          }
+
+          # The runtime feature's side of this hunk adds background-host activation and AppCloseBehavior routing.
+          if ($conflicts.Contains('src/Wino.Mail.WinUI/App.xaml.cs')) {
+            $appPath = 'src/Wino.Mail.WinUI/App.xaml.cs'
+            $appText = Get-Content -LiteralPath $appPath -Raw
+            $pattern = '(?s)<<<<<<< restored-main\r?\n.*?=======\r?\n(?<feature>.*?)>>>>>>> integration-feature-delta\r?\n?'
+            $match = [regex]::Match($appText, $pattern)
+            if (-not $match.Success) { throw 'Could not locate the App.xaml.cs conflict block to resolve.' }
+            $appText = $appText.Substring(0, $match.Index) + $match.Groups['feature'].Value + $appText.Substring($match.Index + $match.Length)
+            if ($appText -match '(?m)^(<<<<<<<|=======|>>>>>>>|\|\|\|\|\|\|\|)') { throw 'App.xaml.cs still contains merge markers after choosing the feature-side host activation block.' }
+            Set-Content -LiteralPath $appPath -Value $appText -NoNewline
+            git add -- $appPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage resolved App.xaml.cs.' }
+            [void]$conflicts.Remove($appPath)
+            Write-Host 'Resolved App.xaml.cs using the feature-side background host activation block.'
+          }
+
+          # Resolve the application project by preserving main's unified notification-host pipeline and adding only BackgroundSyncHost.
+          if ($conflicts.Contains('src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj')) {
+            $projectPath = 'src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj'
+            git checkout $env:PORT_MAIN_SHA -- $projectPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restore main Wino.Mail.WinUI.csproj before applying the background host target.' }
+            $projectText = Get-Content -LiteralPath $projectPath -Raw
+            $hostProjectReference = '<ProjectReference Include="..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj" ReferenceOutputAssembly="false" Private="false" />'
+            if ($projectText -notmatch 'Wino\.Mail\.BackgroundSyncHost\.csproj') {
+              $endProjectTag = $projectText.LastIndexOf('</Project>', [StringComparison]::Ordinal)
+              if ($endProjectTag -lt 0) { throw 'Could not find Wino.Mail.WinUI project end tag.' }
+              $referenceGroup = '  <ItemGroup>' + [Environment]::NewLine + '    ' + $hostProjectReference + [Environment]::NewLine + '  </ItemGroup>' + [Environment]::NewLine
+              $projectText = $projectText.Insert($endProjectTag, $referenceGroup)
+            }
+
+            if ($projectText -notmatch '<BackgroundSyncHostOutput>') {
+              $publishRootTag = '</NotificationHostPublishRoot>'
+              $publishRootEnd = $projectText.IndexOf($publishRootTag, [StringComparison]::Ordinal)
+              if ($publishRootEnd -lt 0) { throw 'Could not find NotificationHostPublishRoot in main Wino.Mail.WinUI.csproj.' }
+              $propertyEnd = $publishRootEnd + $publishRootTag.Length
+              $backgroundOutput = [Environment]::NewLine + '    <BackgroundSyncHostOutput>$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\publish\</BackgroundSyncHostOutput>'
+              $projectText = $projectText.Insert($propertyEnd, $backgroundOutput)
+            }
+
+            if ($projectText -notmatch 'Target Name="PublishBackgroundSyncHost"') {
+              $targetAnchor = '  <Target Name="PublishNotificationHost"'
+              $targetIndex = $projectText.IndexOf($targetAnchor, [StringComparison]::Ordinal)
+              if ($targetIndex -lt 0) { throw 'Could not find main PublishNotificationHost target.' }
+              $backgroundTarget = @'
+  <Target Name="PublishBackgroundSyncHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <MSBuild
+      Projects="$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.csproj"
+      Targets="Restore;Publish"
+      Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=true;PublishSingleFile=false;PublishTrimmed=false;PublishAot=false;WindowsAppSDKSelfContained=true;GenerateAppxPackageOnBuild=false;WindowsPackageType=None;PublishDir=$(BackgroundSyncHostOutput)"
+      RemoveProperties="GenerateAppxPackageOnBuild;AppxBundle;AppxBundlePlatforms;UapAppxPackageBuildMode;AppxPackageSigningEnabled;AppxPackageDir;WindowsPackageType" />
+    <Error Condition="!Exists('$(BackgroundSyncHostOutput)Wino.Mail.BackgroundSyncHost.exe')"
+           Text="BackgroundSyncHost publish did not produce Wino.Mail.BackgroundSyncHost.exe." />
+    <ItemGroup>
+      <BackgroundSyncHostContent Include="$(BackgroundSyncHostOutput)**\*" />
+      <Content Include="@(BackgroundSyncHostContent)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               Link="BackgroundSyncHost\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
+
+'@
+              $projectText = $projectText.Insert($targetIndex, $backgroundTarget)
+            }
+            Set-Content -LiteralPath $projectPath -Value $projectText -NoNewline
+            git add -- $projectPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage main-compatible BackgroundSyncHost packaging changes.' }
+            [void]$conflicts.Remove($projectPath)
+            Write-Host 'Resolved WinUI project by preserving main's unified host and adding only BackgroundSyncHost packaging support.'
+          }
+
+          # The BackgroundSyncHost needs three shared service implementations in the Windows platform assembly.
+          $platformProjectPath = 'src/Wino.Platform.Windows/Wino.Platform.Windows.csproj'
+          $platformText = Get-Content -LiteralPath $platformProjectPath -Raw
+          if ($platformText -notmatch 'Services\\ConfigurationService\.cs') {
+            $platformText = $platformText.Replace('</Project>', @'
+  <ItemGroup>
+    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+  </ItemGroup>
+</Project>
+'@)
+          }
+          if ($platformText -notmatch '<RuntimeIdentifiers>') {
+            $platformText = $platformText.Replace('<Platforms>x86;x64;arm64</Platforms>', '<Platforms>x86;x64;arm64</Platforms>' + [Environment]::NewLine + '    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>')
+          }
+          Set-Content -LiteralPath $platformProjectPath -Value $platformText -NoNewline
+          git add -- $platformProjectPath
+          if ($LASTEXITCODE -ne 0) { throw 'Could not stage platform project service links needed by BackgroundSyncHost.' }
+
+          # Keep main's notification application entries and add just the packaged BackgroundSyncHost entry.
+          $manifestPath = 'src/Wino.Mail.WinUI/Package.appxmanifest'
+          $manifestText = Get-Content -LiteralPath $manifestPath -Raw
+          if ($manifestText -notmatch '<Application Id="BackgroundSyncHost"') {
+            $sourceManifestText = (git show ($env:PORT_INTEGRATION_SHA + ':src/Wino.Mail.WinUI/Package.appxmanifest') | Out-String)
+            $backgroundAppMatch = [regex]::Match($sourceManifestText, '(?s)<Application Id="BackgroundSyncHost".*?</Application>')
+            if (-not $backgroundAppMatch.Success) { throw 'Could not find the feature BackgroundSyncHost application entry.' }
+            $appsClose = $manifestText.LastIndexOf('</Applications>', [StringComparison]::Ordinal)
+            if ($appsClose -lt 0) { throw 'Could not find Applications element in the main package manifest.' }
+            $manifestText = $manifestText.Insert($appsClose, [Environment]::NewLine + '    ' + $backgroundAppMatch.Value + [Environment]::NewLine + '  ')
+            Set-Content -LiteralPath $manifestPath -Value $manifestText -NoNewline
+            git add -- $manifestPath
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stage BackgroundSyncHost package manifest entry.' }
+          }
+
           if ($conflicts.Count -gt 0) {
-            "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### Three-way merge conflicts ($($conflicts.Count))" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             $conflicts | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             foreach ($conflictPath in $conflicts) {
               Write-Host "---- Conflict preview: $conflictPath ----"
