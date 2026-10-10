@@ -299,7 +299,7 @@ jobs:
             git add -- $projectPath
             if ($LASTEXITCODE -ne 0) { throw 'Could not stage main-compatible BackgroundSyncHost packaging changes.' }
             [void]$conflicts.Remove($projectPath)
-            Write-Host 'Resolved WinUI project by preserving main's unified host and adding only BackgroundSyncHost packaging support.'
+            Write-Host "Resolved WinUI project by preserving main's unified host and adding only BackgroundSyncHost packaging support."
           }
 
           # The BackgroundSyncHost needs three shared service implementations in the Windows platform assembly.
