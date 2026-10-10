@@ -8,9 +8,18 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.Identity.Client.Broker" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" />
     <ProjectReference Include="..\Wino.Core.Domain\Wino.Core.Domain.csproj" />
     <ProjectReference Include="..\Wino.Authentication\Wino.Authentication.csproj" />
+    <ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />
+    <ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+    <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\PreferencesService.cs" Link="Services\PreferencesService.cs" />
+    <Compile Include="..\Wino.Mail.WinUI\Services\ShellUserPresenceStateProvider.cs" Link="Services\ShellUserPresenceStateProvider.cs" />
   </ItemGroup>
 </Project>
