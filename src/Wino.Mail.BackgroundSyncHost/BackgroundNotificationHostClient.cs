@@ -58,7 +58,7 @@ internal sealed class BackgroundNotificationHostClient
     {
         await ShowAsync(application, payload, tag, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var applicationId = NotificationHostApplicationIds.GetToastTargetApplicationId(application);
+        var applicationId = NotificationHostApplicationIds.GetApplicationId(application);
         for (var attempt = 0; attempt < 10; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -76,5 +76,5 @@ internal sealed class BackgroundNotificationHostClient
     }
 
     private static string GetAppUserModelId(NotificationHostApplication application)
-        => $"{Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetToastTargetApplicationId(application)}";
+        => $"{Package.Current.Id.FamilyName}!{NotificationHostApplicationIds.GetApplicationId(application)}";
 }
