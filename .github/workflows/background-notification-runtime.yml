@@ -3,7 +3,7 @@ name: Background notification runtime smoke
 on:
   push:
     branches:
-      - integration/msix-release
+      - integration/msix-release-upstream-main
     paths:
       - 'src/Wino.Mail.BackgroundSyncHost/**'
       - 'src/Wino.Mail.WinUI/**'

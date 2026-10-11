@@ -8,184 +8,106 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/release/**'
-      - 'scripts/release/profiles/**'
       - 'release-assets/Beta/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
-      - '.github/workflows/publish-github-release.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
-  packages: read
 
 concurrency:
   group: publish-github-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  verify-and-release:
-    name: Verify Release, Native AOT, package and publish
+  publish:
+    name: Publish only the fully verified commit
     if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
     runs-on: windows-latest
-    timeout-minutes: 120
-    env:
-      NUGET_CONFIG_PATH: ${{ github.workspace }}\nuget.config
+    timeout-minutes: 150
     steps:
-      - name: Checkout
+      - name: Checkout exact commit
         uses: actions/checkout@v4
-
-      - name: Check installed .NET 10 SDK
-        shell: pwsh
-        run: |
-          $hasCompatibleSdk = @(dotnet --list-sdks | Where-Object {
-            if ($_ -match '^([0-9]+)\.([0-9]+)\.([0-9]+)\s') {
-              return ([int]$Matches[1] -eq 10 -and [int]$Matches[2] -eq 0 -and [int]$Matches[3] -ge 301)
-            }
-            return $false
-          }).Count -gt 0
-          "DOTNET_SDK_PRESENT=$($hasCompatibleSdk.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
-
-      - name: Setup .NET SDK
-        if: env.DOTNET_SDK_PRESENT != 'true'
-        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.301
+          ref: ${{ github.sha }}
 
-      - name: Read and validate package version
-        shell: pwsh
-        run: |
-          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
-          $version = [string]$manifest.Package.Identity.Version
-          if ($version -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw "Invalid four-part package version: $version" }
-          "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
-          "RELEASE_TAG=beta/v$version" >> $env:GITHUB_ENV
-          Write-Host "Release version: $version"
-
-      - name: Restore Release solution
-        shell: pwsh
-        run: |
-          dotnet restore WinoMail.slnx --configfile $env:NUGET_CONFIG_PATH -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { throw 'Release solution restore failed.' }
-
-      - name: Build Release solution
-        shell: pwsh
-        run: |
-          dotnet build WinoMail.slnx --configuration Release --no-restore /m:1 /p:Platform=x64 /p:UseNativeAot=false /p:EnableMsixTooling=false /p:GenerateAppxPackageOnBuild=false /p:AppxPackageSigningEnabled=false /p:RestoreConfigFile=$env:NUGET_CONFIG_PATH
-          if ($LASTEXITCODE -ne 0) { throw 'Release solution build failed.' }
-
-      - name: Run actual Release test projects
-        shell: pwsh
-        run: |
-          $projects = @(
-            'tests/Wino.Core.ML.Tests/Wino.Core.ML.Tests.csproj',
-            'tests/Wino.Core.Tests/Wino.Core.Tests.csproj',
-            'tests/Wino.Mail.Controls.Tests/Wino.Mail.Controls.Tests.csproj',
-            'tests/Wino.Mail.ViewModels.Tests/Wino.Mail.ViewModels.Tests.csproj',
-            'tests/Wino.NotificationHost.Tests/Wino.NotificationHost.Tests.csproj'
-          )
-          foreach ($project in $projects) {
-            dotnet test $project --configuration Release --no-restore /m:1 /p:Platform=x64 /p:UseNativeAot=false --logger "console;verbosity=minimal"
-            if ($LASTEXITCODE -ne 0) { throw "Release test project failed: $project" }
-          }
-
-      - name: Restore Native AOT targets
-        shell: pwsh
-        run: |
-          dotnet restore src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configfile $env:NUGET_CONFIG_PATH -r win-x64 -p:Platform=x64 -p:Configuration=Release -p:UseNativeAot=true
-          if ($LASTEXITCODE -ne 0) { throw 'Native AOT WinUI restore failed.' }
-          dotnet restore tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj --configfile $env:NUGET_CONFIG_PATH -r win-x64 -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { throw 'SQLite AOT smoke restore failed.' }
-
-      - name: Publish warning-clean Native AOT WinUI
-        shell: pwsh
-        run: |
-          dotnet publish src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj --configuration Release --no-restore -r win-x64 /m:1 /p:Platform=x64 /p:EnableMsixTooling=false /p:GenerateAppxPackageOnBuild=false /p:AppxPackageSigningEnabled=false /p:TreatWarningsAsErrors=true /p:TrimmerSingleWarn=false
-          if ($LASTEXITCODE -ne 0) { throw 'Native AOT WinUI publish failed.' }
-          $exe = Get-ChildItem src/Wino.Mail.WinUI/bin/Release -Recurse -Filter Wino.Mail.WinUI.exe | Select-Object -First 1
-          if (-not $exe) { throw 'Native AOT executable was not generated.' }
-          Write-Host "Native AOT executable: $($exe.FullName)"
-
-      - name: Publish and run SQLite Native AOT smoke
-        shell: pwsh
-        run: |
-          dotnet publish tests/Wino.Services.AotSmoke/Wino.Services.AotSmoke.csproj --configuration Release --no-restore -r win-x64 /p:Platform=x64 /p:TreatWarningsAsErrors=true /p:TrimmerSingleWarn=false
-          if ($LASTEXITCODE -ne 0) { throw 'SQLite Native AOT publish failed.' }
-          & tests/Wino.Services.AotSmoke/bin/x64/Release/net10.0/win-x64/publish/Wino.Services.AotSmoke.exe
-          if ($LASTEXITCODE -ne 0) { throw 'SQLite Native AOT smoke failed.' }
-
-      - name: Create temporary certificate for install/runtime validation
-        shell: pwsh
-        run: |
-          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
-          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $profile.Publisher -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(7)
-          if (-not $cert -or -not $cert.HasPrivateKey) { throw 'Could not create temporary signing certificate.' }
-          "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
-
-      - name: Build Beta MSIXBundle and install it
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
-          if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
-          $root = Join-Path (Join-Path $env:RUNNER_TEMP 'Wino Beta Test Releases') $env:PACKAGE_VERSION
-          $bundle = Join-Path (Join-Path $root 'Beta') "WinoMail_Beta_$env:PACKAGE_VERSION.msixbundle"
-          $certificate = Join-Path (Join-Path $root 'Beta') 'WinoMail_Beta_TestCertificate.cer'
-          if (-not (Test-Path $bundle -PathType Leaf) -or -not (Test-Path $certificate -PathType Leaf)) { throw 'Expected versioned Beta bundle or certificate is missing.' }
-          Import-Certificate -FilePath $certificate -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -ErrorAction Stop | Out-Null
-          Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
-          Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop | Out-Null
-          "BUNDLE_PATH=$bundle" >> $env:GITHUB_ENV
-          "CERTIFICATE_PATH=$certificate" >> $env:GITHUB_ENV
-
-      - name: Verify packaged BackgroundSyncHost and notification smoke
-        shell: pwsh
-        run: |
-          $package = Get-AppxPackage -Name 'WinoMail.Beta' -ErrorAction Stop
-          $hostPath = Join-Path $package.InstallLocation 'BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe'
-          if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw 'Packaged BackgroundSyncHost is missing.' }
-          $process = Start-Process -FilePath $hostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "Packaged BackgroundSyncHost notification smoke failed with exit code $($process.ExitCode)." }
-
-      - name: Stage Release assets
-        shell: pwsh
-        run: |
-          $stage = Join-Path $env:RUNNER_TEMP "WinoMail-GitHub-Release-$env:PACKAGE_VERSION"
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination $stage
-          Copy-Item -LiteralPath $env:CERTIFICATE_PATH -Destination $stage
-          @"
-          Wino Mail Beta $env:PACKAGE_VERSION
-          
-          This release was published only after Release build, test projects, Native AOT publish, SQLite AOT smoke, Beta MSIXBundle creation, package installation, and packaged BackgroundSyncHost notification smoke succeeded.
-          
-          **Important:** The attached certificate is an ephemeral CI test certificate. It is intended for validation and is not a trusted production signing certificate.
-          
-          Commit: $env:GITHUB_SHA
-          "@ | Set-Content -LiteralPath (Join-Path $stage 'RELEASE-NOTES.md') -Encoding utf8
-          "RELEASE_STAGE=$stage" >> $env:GITHUB_ENV
-
-      - name: Upload Release assets as workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: WinoMail-Beta-${{ env.PACKAGE_VERSION }}
-          path: ${{ env.RELEASE_STAGE }}/*
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Create or update versioned GitHub Release
+      - name: Wait for required workflows on this exact commit
+        id: gate
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          $tag = $env:RELEASE_TAG
-          $notes = Join-Path $env:RELEASE_STAGE 'RELEASE-NOTES.md'
-          $release = gh release view $tag --json tagName 2>$null
+          $deadline = (Get-Date).AddMinutes(120)
+          $required = @('Native AOT Compatibility', 'Background notification runtime smoke')
+          $matched = @{}
+          while ((Get-Date) -lt $deadline) {
+            $response = gh api "repos/$env:REPOSITORY/actions/runs?head_sha=$env:COMMIT_SHA&per_page=100"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not query Actions runs for the release commit.' }
+            $runs = ($response | ConvertFrom-Json).workflow_runs
+            foreach ($name in $required) {
+              $run = $runs | Where-Object { $_.name -eq $name -and $_.head_sha -eq $env:COMMIT_SHA } | Sort-Object created_at -Descending | Select-Object -First 1
+              if ($null -ne $run) { $matched[$name] = $run }
+            }
+            if ($matched.Count -eq 2 -and @($required | Where-Object { $matched[$_].status -ne 'completed' }).Count -eq 0) { break }
+            Start-Sleep -Seconds 20
+          }
+          if ($matched.Count -ne 2) { throw 'Both required workflows did not start for this exact commit; refusing to publish.' }
+          foreach ($name in $required) {
+            $run = $matched[$name]
+            Write-Host "$name run $($run.id): $($run.status)/$($run.conclusion), SHA $($run.head_sha)"
+            if ($run.status -ne 'completed' -or $run.conclusion -ne 'success' -or $run.head_sha -ne $env:COMMIT_SHA) {
+              throw "Required verification failed for '$name'; refusing to publish."
+            }
+          }
+          $runtimeRun = $matched['Background notification runtime smoke']
+          "RUNTIME_RUN_ID=$($runtimeRun.id)" >> $env:GITHUB_ENV
+
+      - name: Download the already-tested MSIXBundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Installable-Beta-MSIXBundle
+          path: ${{ runner.temp }}/verified-msix
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RUNTIME_RUN_ID }}
+
+      - name: Validate artifact and publish versioned Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
+          $version = [string]$manifest.Package.Identity.Version
+          if ($version -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw "Invalid package version: $version" }
+          $tag = "beta/v$version"
+          $assets = Join-Path $env:RUNNER_TEMP 'verified-msix'
+          $bundle = Get-ChildItem -LiteralPath $assets -Recurse -Filter "WinoMail_Beta_$version.msixbundle" | Select-Object -First 1
+          $certificate = Get-ChildItem -LiteralPath $assets -Recurse -Filter 'WinoMail_Beta_TestCertificate.cer' | Select-Object -First 1
+          if (-not $bundle -or -not $certificate) { Get-ChildItem -LiteralPath $assets -Recurse | Format-Table FullName; throw 'Verified bundle or matching test certificate missing from runtime workflow artifact.' }
+          $notes = Join-Path $env:RUNNER_TEMP 'RELEASE-NOTES.md'
+          @"
+          Wino Mail Beta $version
+
+          Published only after the Release build/tests/Native AOT/SQLite AOT workflow and the packaged Beta runtime smoke workflow both succeeded for commit $env:COMMIT_SHA.
+
+          **Signing:** this bundle is signed with an ephemeral CI test certificate, not a trusted production signing certificate. The attached certificate is required to install this test build and must not be treated as a production trust root.
+          
+          Verified runtime workflow run: $env:RUNTIME_RUN_ID
+          Commit: $env:COMMIT_SHA
+          "@ | Set-Content -LiteralPath $notes -Encoding utf8
+          $existing = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag (Join-Path $env:RELEASE_STAGE "WinoMail_Beta_$env:PACKAGE_VERSION.msixbundle") (Join-Path $env:RELEASE_STAGE 'WinoMail_Beta_TestCertificate.cer') --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Could not update existing Release assets.' }
-            gh release edit $tag --title "Wino Mail Beta $env:PACKAGE_VERSION" --notes-file $notes --prerelease
-            if ($LASTEXITCODE -ne 0) { throw 'Could not update existing Release metadata.' }
+            gh release upload $tag $bundle.FullName $certificate.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release assets.' }
+            gh release edit $tag --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release metadata.' }
           } else {
-            gh release create $tag (Join-Path $env:RELEASE_STAGE "WinoMail_Beta_$env:PACKAGE_VERSION.msixbundle") (Join-Path $env:RELEASE_STAGE 'WinoMail_Beta_TestCertificate.cer') --title "Wino Mail Beta $env:PACKAGE_VERSION" --notes-file $notes --prerelease
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create versioned GitHub Release.' }
+            gh release create $tag $bundle.FullName $certificate.FullName --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create versioned Release.' }
           }
