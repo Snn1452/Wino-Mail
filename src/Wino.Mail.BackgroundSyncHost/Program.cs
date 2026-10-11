@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.IO;
 using System.Reflection;
@@ -272,14 +273,122 @@ internal static class Program
             return 0;
         }
 
-        WriteStartupDiagnostic("LOOPS", "Starting automatic synchronization and calendar reminder loops.");
-        await Task.WhenAll(
-            provider.GetRequiredService<AutoSynchronizationService>().RunAsync(CancellationToken.None),
-            provider.GetRequiredService<CalendarReminderService>().RunAsync(CancellationToken.None))
-            .ConfigureAwait(false);
+        WriteStartupDiagnostic("LOOPS", "Starting automatic synchronization only while WinUI is closed.");
+        await RunBackgroundLoopsWhenUiIsClosedAsync(provider).ConfigureAwait(false);
 
         WriteStartupDiagnostic("EXIT", "Background synchronization host loops completed.");
         return 0;
+    }
+
+    private static async Task RunBackgroundLoopsWhenUiIsClosedAsync(IServiceProvider provider)
+    {
+        var preferences = provider.GetRequiredService<IPreferencesService>();
+        var synchronization = provider.GetRequiredService<AutoSynchronizationService>();
+        var calendarReminders = provider.GetRequiredService<CalendarReminderService>();
+        var waitingForUi = false;
+
+        while (true)
+        {
+            if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+            {
+                WriteStartupDiagnostic("EXIT", "AppCloseBehavior.Terminate was selected; background loops will stop.");
+                return;
+            }
+
+            if (IsWinUiProcessRunning())
+            {
+                if (!waitingForUi)
+                {
+                    WriteStartupDiagnostic(
+                        "IDLE",
+                        "WinUI is running; foreground ApplicationRuntime owns automatic synchronization.");
+                    waitingForUi = true;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                continue;
+            }
+
+            waitingForUi = false;
+            WriteStartupDiagnostic("LOOPS", "WinUI is closed; starting background synchronization and reminder loops.");
+
+            using var loopLifetime = new CancellationTokenSource();
+            var loops = Task.WhenAll(
+                synchronization.RunAsync(loopLifetime.Token),
+                calendarReminders.RunAsync(loopLifetime.Token));
+            var yieldedToUi = false;
+
+            while (!loops.IsCompleted)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+
+                if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+                {
+                    WriteStartupDiagnostic("YIELD", "AppCloseBehavior.Terminate was selected; stopping background loops.");
+                    loopLifetime.Cancel();
+                    break;
+                }
+
+                if (IsWinUiProcessRunning())
+                {
+                    WriteStartupDiagnostic("YIELD", "WinUI was activated; stopping background loops to avoid duplicate scheduling.");
+                    yieldedToUi = true;
+                    loopLifetime.Cancel();
+                    break;
+                }
+            }
+
+            if (!loopLifetime.IsCancellationRequested)
+            {
+                await loops.ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                await loops.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (loopLifetime.IsCancellationRequested)
+            {
+                WriteStartupDiagnostic("YIELD", $"Background loops stopped after host handoff: {ex.Message}");
+            }
+
+            if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+                return;
+
+            if (yieldedToUi)
+                waitingForUi = false;
+        }
+    }
+
+    private static bool IsWinUiProcessRunning()
+    {
+        Process[] processes;
+
+        try
+        {
+            processes = Process.GetProcessesByName("Wino.Mail.WinUI");
+        }
+        catch (Exception ex)
+        {
+            // Prefer pausing the background scheduler over risking two active schedulers.
+            WriteStartupDiagnostic("PROCESS", $"Could not inspect WinUI process state; keeping host loops idle. {ex.Message}");
+            return true;
+        }
+
+        try
+        {
+            return processes.Any(process =>
+            {
+                try { return !process.HasExited; }
+                catch { return true; }
+            });
+        }
+        finally
+        {
+            foreach (var process in processes)
+                process.Dispose();
+        }
     }
 
     private static void ConfigureApplicationPaths(IServiceProvider provider)
