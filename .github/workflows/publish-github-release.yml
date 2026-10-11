@@ -3,7 +3,7 @@ name: Publish verified GitHub Release
 on:
   push:
     branches:
-      - main
+      - integration/msix-release-upstream-main
     paths:
       - 'src/**'
       - 'tests/**'
@@ -26,7 +26,7 @@ concurrency:
 jobs:
   verify-and-release:
     name: Verify Release, Native AOT, package and publish
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
     runs-on: windows-latest
     timeout-minutes: 120
     env:
