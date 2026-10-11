@@ -18,6 +18,7 @@ using Wino.NotificationHost.Contracts;
 using Wino.Mail.WinUI.Services;
 using Wino.Services;
 using Wino.Platform.Windows;
+using Wino.Platform.Windows.Services;
 
 namespace Wino.Mail.BackgroundSyncHost;
 
@@ -157,6 +158,7 @@ internal static class Program
         // Keep the host's service graph independent from WinUI presentation services while
         // preserving the same Windows token stores and packaged resource roots.
         services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
+        services.AddSingleton<ISmimeCertificateService, SmimeCertificateService>();
         services.AddSingleton<IAccountCredentialPersistence, WindowsAccountCredentialPersistence>();
         services.AddSingleton<IGoogleTokenStore, WindowsGoogleTokenStore>();
         services.AddSingleton<IOutlookAuthenticationHost>(provider =>
