@@ -167,7 +167,11 @@ internal static class Program
                 provider.GetRequiredService<IAuthenticatorConfig>()));
         services.AddSingleton<IExternalLauncher, BackgroundExternalLauncher>();
         services.AddSingleton<IPlatformCapabilities>(_ =>
-            new Wino.Core.Domain.Models.Platform.PlatformCapabilities(MicrosoftStore: true));
+            new Wino.Core.Domain.Models.Platform.PlatformCapabilities(
+                Smime: true,
+                Notifications: true,
+                NotificationActions: true,
+                MicrosoftStore: true));
         services.AddSingleton<IApplicationResourceResolver>(provider =>
             new FileSystemApplicationResourceResolver(
                 Package.Current.InstalledLocation.Path,
