@@ -152,7 +152,15 @@ internal static class Program
         services.RegisterSharedServices();
         services.RegisterCoreServices();
 
-        services.AddSingleton<INativeAppService, BackgroundNativeAppService>();
+        // These Windows services preserve account secrets and resolve resources from the
+        // installed package without depending on the WinUI presentation layer.
+        services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
+        services.AddSingleton<IAccountCredentialPersistence, WindowsAccountCredentialPersistence>();
+        services.AddSingleton<IApplicationResourceResolver>(provider =>
+            new FileSystemApplicationResourceResolver(
+                Package.Current.InstalledLocation.Path,
+                provider.GetRequiredService<IApplicationConfiguration>()));
+
         services.AddSingleton<IMicrosoftStoreService, BackgroundMicrosoftStoreService>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
         services.AddSingleton<IExternalBrowserAuthenticationPresenter, HeadlessExternalBrowserAuthenticationPresenter>();
