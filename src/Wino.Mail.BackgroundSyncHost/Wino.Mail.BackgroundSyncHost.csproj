@@ -26,6 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Wino.Mail.WinUI\Services\ConfigurationService.cs" Link="Services\ConfigurationService.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Wino.Core\Wino.Core.csproj" />
     <ProjectReference Include="..\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />
     <ProjectReference Include="..\Wino.Platform.Windows\Wino.Platform.Windows.csproj" />

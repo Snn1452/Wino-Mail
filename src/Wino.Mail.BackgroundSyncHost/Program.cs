@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Wino.Authentication;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Wino.Core;
@@ -152,10 +153,18 @@ internal static class Program
         services.RegisterSharedServices();
         services.RegisterCoreServices();
 
-        // These Windows services preserve account secrets and resolve resources from the
-        // installed package without depending on the WinUI presentation layer.
+        // Keep the host's service graph independent from WinUI presentation services while
+        // preserving the same Windows token stores and packaged resource roots.
         services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
         services.AddSingleton<IAccountCredentialPersistence, WindowsAccountCredentialPersistence>();
+        services.AddSingleton<IGoogleTokenStore, WindowsGoogleTokenStore>();
+        services.AddSingleton<IOutlookAuthenticationHost>(provider =>
+            new WindowsOutlookAuthenticationHost(
+                provider.GetRequiredService<IApplicationConfiguration>(),
+                provider.GetRequiredService<IAuthenticatorConfig>()));
+        services.AddSingleton<IExternalLauncher, BackgroundExternalLauncher>();
+        services.AddSingleton<IPlatformCapabilities>(_ =>
+            new Wino.Core.Domain.Models.Platform.PlatformCapabilities(MicrosoftStore: true));
         services.AddSingleton<IApplicationResourceResolver>(provider =>
             new FileSystemApplicationResourceResolver(
                 Package.Current.InstalledLocation.Path,
