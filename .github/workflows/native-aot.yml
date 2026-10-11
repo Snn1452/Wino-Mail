@@ -16,7 +16,6 @@ on:
       - 'WinoMail.slnx'
       - 'Directory.*'
       - '.github/workflows/native-aot.yml'
-  pull_request:
   workflow_dispatch:
 
 permissions:
