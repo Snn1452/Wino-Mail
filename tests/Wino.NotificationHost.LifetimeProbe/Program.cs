@@ -36,7 +36,7 @@ else
 {
     // Returning from the host closes the owning job and terminates any still-running child.
     await Task.Delay(100);
-    return 2;
+    Environment.ExitCode = 2;
 }
 
 internal sealed class KillOnCloseJob : IDisposable
