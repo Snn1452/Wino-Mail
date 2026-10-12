@@ -56,7 +56,7 @@ public sealed class ReleaseIdentityTests
             .ToArray();
 
         startupTasks.Should().ContainSingle();
-        var startupTask = startupTasks[0].Element(ns + "StartupTask");
+        var startupTask = startupTasks[0].Elements().SingleOrDefault(element => element.Name.LocalName == "StartupTask");
         startupTask.Should().NotBeNull();
         startupTask!.Attribute("TaskId")!.Value.Should().Be("WinoBackgroundSyncStartupId");
 
@@ -64,7 +64,8 @@ public sealed class ReleaseIdentityTests
             .Should()
             .ContainSingle(application => (string?)application.Attribute("Id") == "BackgroundSyncHost");
 
-        document.Descendants(ns + "StartupTask")
+        document.Descendants()
+            .Where(element => element.Name.LocalName == "StartupTask")
             .Should()
             .NotContain(task => (string?)task.Attribute("TaskId") == "WinoStartupId");
     }
