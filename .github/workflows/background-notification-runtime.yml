@@ -8,7 +8,6 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/release/**'
-      - 'release-assets/Beta/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
       - 'global.json'
@@ -54,7 +53,7 @@ jobs:
       - name: Read Beta package identity
         shell: pwsh
         run: |
-          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
+          $profile = Get-Content -LiteralPath 'scripts/release/windows/profiles/Beta.json' -Raw | ConvertFrom-Json
           if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
           "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
           "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
@@ -70,7 +69,7 @@ jobs:
       - name: Build installable Beta MSIXBundle
         shell: pwsh
         run: |
-          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
+          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\scripts\release\Assets\Beta
           if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
           $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)

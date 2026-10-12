@@ -7,7 +7,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Messaging;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Models.Calendar;
-using Wino.Messaging.Client.Calendar;
 using Wino.Calendar.ViewModels.Data;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
@@ -17,7 +16,7 @@ namespace Wino.Calendar.ViewModels;
 
 public partial class CalendarPreferenceSettingsPageViewModel : CalendarSettingsSectionViewModelBase
 {
-    public IReadOnlyList<CalendarEventDisplayModeOption> EventDisplayModeOptions { get; } = (CalendarEventDisplayModeOption[])
+    public CalendarEventDisplayModeOption[] EventDisplayModeOptions { get; } =
     [
         new(CalendarEventDisplayMode.Stacked, Translator.CalendarSettings_OverlappingEvents_Stacked, Translator.CalendarSettings_Overlap_StackedDescription),
         new(CalendarEventDisplayMode.Overlapped, Translator.CalendarSettings_Overlap_Cascade, Translator.CalendarSettings_Overlap_CascadeDescription),
@@ -29,7 +28,7 @@ public partial class CalendarPreferenceSettingsPageViewModel : CalendarSettingsS
     [NotifyPropertyChangedFor(nameof(OverlapPreviewItems))]
     public partial CalendarEventDisplayModeOption SelectedEventDisplayModeOption { get; set; }
 
-    public IReadOnlyList<CalendarOverlapPreviewItem> OverlapPreviewItems
+    public CalendarOverlapPreviewItem[] OverlapPreviewItems
     {
         get
         {
@@ -55,7 +54,6 @@ public partial class CalendarPreferenceSettingsPageViewModel : CalendarSettingsS
             return;
 
         PreferencesService.CalendarEventDisplayMode = value.Mode;
-        Messenger.Send(new CalendarSettingsUpdatedMessage());
     }
 
     [ObservableProperty]

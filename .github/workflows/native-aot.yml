@@ -8,7 +8,6 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/release/**'
-      - 'release-assets/Beta/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
       - 'global.json'

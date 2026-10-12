@@ -56,7 +56,8 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     IRecipient<RefreshUnreadCountsMessage>,
     IRecipient<IntelligenceMetadataChanged>,
     IRecipient<IntelligenceVisibilityChanged>,
-    IRecipient<LanguageChanged>
+    IRecipient<LanguageChanged>,
+    IRecipient<PreferenceChangedMessage>
 {
     private Guid? trackingSynchronizationId = null;
     private int completedTrackingSynchronizationCount = 0;
@@ -378,14 +379,6 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private void UpdateAccountNicknamePositionForItems()
         => MailCollection.UpdateAccountNicknamePosition(CurrentAccountNicknamePosition);
 
-    public override void OnNavigatedTo(NavigationMode mode, object parameters)
-    {
-        base.OnNavigatedTo(mode, parameters);
-
-        PreferencesService.PreferenceChanged -= PreferencesServiceChanged;
-        PreferencesService.PreferenceChanged += PreferencesServiceChanged;
-    }
-
     public override async void OnNavigatedFrom(NavigationMode mode, object parameters)
         => await DeactivateAsync(mode, parameters);
 
@@ -393,7 +386,6 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     {
         base.OnNavigatedFrom(mode, parameters);
 
-        PreferencesService.PreferenceChanged -= PreferencesServiceChanged;
         CancelPendingMarkAsRead();
         CancelActiveMailLoad();
         CompletePendingFolderNavigation(false);
@@ -708,7 +700,10 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         OnPropertyChanged(nameof(IsFolderEmpty));
     }
 
-    private async void PreferencesServiceChanged(object sender, string propertyName)
+    public void Receive(PreferenceChangedMessage message)
+        => _ = ExecuteUIThreadAsync(() => ApplyPreferenceChangeAsync(message.PropertyName));
+
+    private async Task ApplyPreferenceChangeAsync(string propertyName)
     {
         if (propertyName is nameof(IPreferencesService.MarkAsPreference) or nameof(IPreferencesService.MarkAsDelay))
         {
@@ -767,11 +762,8 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         if (propertyName != nameof(IPreferencesService.IsShowEmptyJunkFolderEnabled))
             return;
 
-        await ExecuteUIThread(() =>
-        {
-            OnPropertyChanged(nameof(IsEmptyFolderButtonVisible));
-            EmptyFolderCommand.NotifyCanExecuteChanged();
-        });
+        OnPropertyChanged(nameof(IsEmptyFolderButtonVisible));
+        EmptyFolderCommand.NotifyCanExecuteChanged();
     }
 
     private void UpdateBarMessage(InfoBarMessageType severity, string title, string message)
@@ -2945,8 +2937,9 @@ public partial class MailListPageViewModel : MailBaseViewModel,
                 return false;
 
             // Selection belongs to the outgoing page, so it is cleared together with the swap
-            // rather than ahead of the query.
-            Messenger.Send(new ClearMailSelectionsRequested());
+            // rather than ahead of the query. The awaits above leave the UI thread, and the
+            // recipient drives the native list, so the request is sent from the UI thread.
+            await ExecuteUIThread(() => Messenger.Send(new ClearMailSelectionsRequested()));
 
             context.Trace?.Mark(MailListLoadStage.StorePublishStarted);
             await MailCollection.ResetAsync(
@@ -3443,6 +3436,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         Messenger.Register<IntelligenceMetadataChanged>(this);
         Messenger.Register<IntelligenceVisibilityChanged>(this);
         Messenger.Register<LanguageChanged>(this);
+        Messenger.Register<PreferenceChangedMessage>(this);
     }
 
     protected override void UnregisterRecipients()
@@ -3462,6 +3456,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         Messenger.Unregister<IntelligenceMetadataChanged>(this);
         Messenger.Unregister<IntelligenceVisibilityChanged>(this);
         Messenger.Unregister<LanguageChanged>(this);
+        Messenger.Unregister<PreferenceChangedMessage>(this);
     }
 
     public async void Receive(MailOperationRequested message)

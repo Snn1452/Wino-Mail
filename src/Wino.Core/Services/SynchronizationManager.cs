@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -976,9 +976,10 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
+
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
 
         if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
         {
@@ -1523,7 +1524,10 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         Exception exception)
     {
         var firstIssue = issues?.FirstOrDefault();
-        var issueCategory = firstIssue?.Category ?? SynchronizerErrorCategory.Unknown;
+        var issueCategory = firstIssue?.Category
+                            ?? (exception is AuthenticationAttentionException
+                                ? SynchronizerErrorCategory.Authentication
+                                : SynchronizerErrorCategory.Unknown);
         var exceptionType = firstIssue?.ExceptionType
                             ?? exception?.GetType().Name
                             ?? "Unknown";
@@ -1828,7 +1832,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(SynchronizationLockRoot);
-        var lockPath = Path.Combine(SynchronizationLockRoot, $"{accountId:N}.lock");
+        var lockPath = Path.Combine(SynchronizationLockRoot, accountId.ToString("N") + ".lock");
 
         while (true)
         {

@@ -35,15 +35,13 @@ public sealed record MailFilterValueChoiceOption(string Value, string DisplayNam
 
 public partial class MailFilterConditionEditorItem : ObservableObject
 {
-    private static readonly IReadOnlyList<MailFilterValueChoiceOption> BooleanChoices =
-    (MailFilterValueChoiceOption[])
+    private static readonly MailFilterValueChoiceOption[] BooleanChoices =
     [
         new(bool.TrueString, Translator.Buttons_Yes),
         new(bool.FalseString, Translator.Buttons_No)
     ];
 
-    private static readonly IReadOnlyList<MailFilterValueChoiceOption> ImportanceChoices =
-    (MailFilterValueChoiceOption[])
+    private static readonly MailFilterValueChoiceOption[] ImportanceChoices =
     [
         new(nameof(MailImportance.Low), Translator.MailFilterImportance_Low),
         new(nameof(MailImportance.Normal), Translator.MailFilterImportance_Normal),
@@ -72,23 +70,23 @@ public partial class MailFilterConditionEditorItem : ObservableObject
     [ObservableProperty]
     public partial bool ShowConjunction { get; set; }
 
-    public IReadOnlyList<MailFilterConditionFieldOption> FieldOptions { get; init; }
-    public IReadOnlyList<MailFilterConditionOperatorOption> OperatorOptions { get; init; }
+    public MailFilterConditionFieldOption[] FieldOptions { get; init; }
+    public MailFilterConditionOperatorOption[] OperatorOptions { get; init; }
 
     public bool IsChoiceField => IsChoice(SelectedField?.Value);
     public bool IsTextField => !IsChoiceField;
 
-    public IReadOnlyList<MailFilterValueChoiceOption> ChoiceOptions => SelectedField?.Value switch
+    public MailFilterValueChoiceOption[] ChoiceOptions => SelectedField?.Value switch
     {
         MailFilterConditionField.HasAttachments => BooleanChoices,
         MailFilterConditionField.Importance => ImportanceChoices,
         _ => []
     };
 
-    public IReadOnlyList<MailFilterConditionOperatorOption> AvailableOperators
+    public MailFilterConditionOperatorOption[] AvailableOperators
         => IsChoiceField
             ? OperatorOptions?.Where(option => option.Value is MailFilterConditionOperator.Equals
-                or MailFilterConditionOperator.NotEquals).ToList() ?? []
+                or MailFilterConditionOperator.NotEquals).ToArray() ?? []
             : OperatorOptions ?? [];
 
     private static bool IsChoice(MailFilterConditionField? field)
@@ -142,8 +140,8 @@ public partial class MailFilterActionEditorItem : ObservableObject
     public bool NeedsTargetFolder => SelectedAction?.Value == MailFilterActionType.Move;
     public bool IsDestructive => SelectedAction?.Value == MailFilterActionType.HardDelete;
 
-    public IReadOnlyList<MailFilterActionOption> ActionOptions { get; init; }
-    public IReadOnlyList<MailFilterFolderOption> FolderOptions { get; init; }
+    public MailFilterActionOption[] ActionOptions { get; init; }
+    public ObservableCollection<MailFilterFolderOption> FolderOptions { get; init; }
 }
 
 public partial class MailFilterEditorPageViewModel(
@@ -196,6 +194,9 @@ public partial class MailFilterEditorPageViewModel(
     public ObservableCollection<MailFilterConditionEditorItem> Conditions { get; } = [];
     public ObservableCollection<MailFilterActionEditorItem> Actions { get; } = [];
     public ObservableCollection<MailFilterFolderOption> Folders { get; } = [];
+
+    // Archive, Junk, Inbox and Trash actions resolve their target even when the user hid that folder.
+    private List<MailFilterFolderOption> _specialFolderTargets = [];
     public bool CanChangeManagementType => _editingFilter == null;
     public bool IsWinoManaged => SelectedManagementType?.Value == MailFilterManagementType.WinoLocal;
     public bool IsProviderSelected => SelectedManagementType?.Value == MailFilterManagementType.Provider;
@@ -220,8 +221,7 @@ public partial class MailFilterEditorPageViewModel(
         new(MailFilterMatchMode.All, Translator.MailFilterEditor_MatchAll),
         new(MailFilterMatchMode.Any, Translator.MailFilterEditor_MatchAny)
     ];
-    public IReadOnlyList<MailFilterConditionFieldOption> ConditionFields { get; } =
-    (MailFilterConditionFieldOption[])
+    public MailFilterConditionFieldOption[] ConditionFields { get; } =
     [
         new(MailFilterConditionField.FromAddress, Translator.MailFilterField_FromAddress),
         new(MailFilterConditionField.FromName, Translator.MailFilterField_FromName),
@@ -230,8 +230,7 @@ public partial class MailFilterEditorPageViewModel(
         new(MailFilterConditionField.HasAttachments, Translator.MailFilterField_HasAttachments),
         new(MailFilterConditionField.Importance, Translator.MailFilterField_Importance)
     ];
-    public IReadOnlyList<MailFilterConditionOperatorOption> ConditionOperators { get; } =
-    (MailFilterConditionOperatorOption[])
+    public MailFilterConditionOperatorOption[] ConditionOperators { get; } =
     [
         new(MailFilterConditionOperator.Equals, Translator.MailFilterOperator_Equals),
         new(MailFilterConditionOperator.NotEquals, Translator.MailFilterOperator_NotEquals),
@@ -240,8 +239,7 @@ public partial class MailFilterEditorPageViewModel(
         new(MailFilterConditionOperator.StartsWith, Translator.MailFilterOperator_StartsWith),
         new(MailFilterConditionOperator.EndsWith, Translator.MailFilterOperator_EndsWith)
     ];
-    public IReadOnlyList<MailFilterActionOption> ActionTypes { get; } =
-    (MailFilterActionOption[])
+    public MailFilterActionOption[] ActionTypes { get; } =
     [
         new(MailFilterActionType.MarkRead, Translator.MailFilterAction_MarkRead),
         new(MailFilterActionType.MarkUnread, Translator.MailFilterAction_MarkUnread),
@@ -270,14 +268,8 @@ public partial class MailFilterEditorPageViewModel(
             return;
         await ExecuteUIThread(() => Account = account);
 
-        var folders = (await _folderService.GetFoldersAsync(Account.Id).ConfigureAwait(false))
-            .Where(folder => folder.IsMoveTarget && !string.IsNullOrWhiteSpace(folder.RemoteFolderId))
-            .OrderBy(folder => folder.FolderName)
-            .Select(folder => new MailFilterFolderOption(
-                folder.RemoteFolderId,
-                folder.FolderName,
-                folder.SpecialFolderType))
-            .ToList();
+        var allFolders = ToFolderOptions(await _folderService.GetFoldersAsync(Account.Id).ConfigureAwait(false));
+        var folders = ToFolderOptions(await _folderService.GetVisibleFoldersAsync(Account.Id).ConfigureAwait(false));
         var supportsProvider = _providerService.SupportsProviderFilters(account)
             && await _providerService.IsProviderFiltersEnabledAsync(account.Id).ConfigureAwait(false);
         var managementTypes = new List<MailFilterManagementOption>
@@ -299,12 +291,22 @@ public partial class MailFilterEditorPageViewModel(
             source = await _mailFilterService.GetFilterAsync(context.DuplicateFilterId.Value).ConfigureAwait(false);
         }
 
+        // A filter that already uses a folder the user hid keeps it, so saving cannot silently retarget it.
+        var offeredFolderIds = (source?.Actions ?? [])
+            .Select(action => action.TargetRemoteFolderId)
+            .Append(source?.SourceRemoteFolderId)
+            .Concat(folders.Select(folder => folder.RemoteFolderId))
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        folders = allFolders.Where(folder => offeredFolderIds.Contains(folder.RemoteFolderId)).ToList();
+
         await ExecuteUIThread(() =>
         {
             OnPropertyChanged(nameof(CanChangeManagementType));
             ManagementTypes = managementTypes;
             OnPropertyChanged(nameof(ManagementTypes));
             OnPropertyChanged(nameof(IsProviderAvailable));
+            _specialFolderTargets = allFolders;
             Folders.Clear();
             foreach (var folder in folders)
                 Folders.Add(folder);
@@ -682,8 +684,18 @@ public partial class MailFilterEditorPageViewModel(
         };
         return specialFolderType == SpecialFolderType.Other
             ? null
-            : Folders.FirstOrDefault(folder => folder.SpecialFolderType == specialFolderType)?.RemoteFolderId;
+            : _specialFolderTargets.FirstOrDefault(folder => folder.SpecialFolderType == specialFolderType)?.RemoteFolderId;
     }
+
+    private static List<MailFilterFolderOption> ToFolderOptions(IEnumerable<MailItemFolder> folders)
+        => folders
+            .Where(folder => folder.IsMoveTarget && !string.IsNullOrWhiteSpace(folder.RemoteFolderId))
+            .OrderBy(folder => folder.FolderName)
+            .Select(folder => new MailFilterFolderOption(
+                folder.RemoteFolderId,
+                folder.FolderName,
+                folder.SpecialFolderType))
+            .ToList();
 
     private static bool RequiresTargetFolder(MailFilterActionType action)
         => action is MailFilterActionType.Move

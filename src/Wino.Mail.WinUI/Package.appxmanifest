@@ -23,7 +23,7 @@
   <Identity
     Name="58272BurakKSE.WinoMailPreview"
     Publisher="CN=51FBDAF3-E212-4149-89A2-A2636B3BC911"
-    Version="2.2.1.0" />
+    Version="2.2.2.0" />
 
   <mp:PhoneIdentity PhoneProductId="7b7e90e9-cc55-4409-9769-99b4b5ed6e9b" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -64,7 +64,12 @@
       </uap:VisualElements>
 
 		<Extensions>
-
+			<uap5:Extension Category="windows.startupTask">
+				<uap5:StartupTask
+					TaskId="WinoStartupId"
+					Enabled="true"
+					DisplayName="Wino Mail" />
+			</uap5:Extension>
 
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
@@ -238,7 +243,6 @@
         </com:Extension>
       </Extensions>
     </Application>
-    
     <Application Id="BackgroundSyncHost"
       Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
       EntryPoint="Windows.FullTrustApplication">
@@ -257,7 +261,7 @@
           Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
           EntryPoint="Windows.FullTrustApplication">
           <uap5:StartupTask
-            TaskId="WinoStartupId"
+            TaskId="WinoBackgroundSyncStartupId"
             Enabled="true"
             DisplayName="Wino Startup Service" />
         </uap5:Extension>
