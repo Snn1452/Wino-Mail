@@ -127,6 +127,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release assets.' }
             gh release edit $tag --title "Wino Mail Beta $version" --notes-file $notes --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release metadata.' }
+
+            # A same-version Release may already exist from an earlier verified commit.
+            # Keep its Git tag aligned with the newly verified bundle source commit.
+            # force=false permits only a fast-forward; never rewrite a divergent tag.
+            $tagRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha
+            if ($LASTEXITCODE -ne 0) { throw "Could not read existing Release tag '$tag'; refusing to leave unverified tag provenance." }
+            if ($tagRef -ne $env:COMMIT_SHA) {
+              gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" -f "sha=$env:COMMIT_SHA" -F force=false
+              if ($LASTEXITCODE -ne 0) { throw "Could not fast-forward existing Release tag '$tag' to verified commit $env:COMMIT_SHA." }
+              $updatedTagSha = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha
+              if ($LASTEXITCODE -ne 0 -or $updatedTagSha -ne $env:COMMIT_SHA) { throw "Release tag '$tag' did not resolve to verified commit $env:COMMIT_SHA after update." }
+            }
           } else {
             gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create versioned Release.' }
