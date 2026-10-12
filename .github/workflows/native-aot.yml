@@ -5,18 +5,15 @@ on:
     branches:
       - integration/msix-release-upstream-main
     paths:
-      - 'src/Wino.Mail.BackgroundSyncHost/**'
-      - 'src/Wino.Mail.WinUI/**'
-      - 'src/Wino.Platform.Windows/**'
-      - 'src/Wino.Services/**'
-      - 'src/Wino.Core/**'
-      - 'src/Wino.Core.Domain/**'
-      - 'tests/Wino.Services.AotSmoke/**'
-      - 'tests/scripts/Build-Beta-TestBundle.ps1'
-      - 'WinoMail.slnx'
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/release/**'
+      - 'release-assets/Beta/**'
       - 'Directory.*'
-      - '.github/workflows/native-aot.yml'
-      - '.github/workflows/publish-github-release.yml'
+      - 'WinoMail.slnx'
+      - 'global.json'
+      - 'nuget.config'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:

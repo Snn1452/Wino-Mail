@@ -11,6 +11,8 @@ on:
       - 'release-assets/Beta/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
+      - 'global.json'
+      - 'nuget.config'
       - '.github/workflows/**'
   workflow_dispatch:
 
@@ -20,7 +22,7 @@ permissions:
 
 concurrency:
   group: publish-github-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -94,6 +96,19 @@ jobs:
           $bundle = Get-ChildItem -LiteralPath $assets -Recurse -Filter "WinoMail_Beta_$version.msixbundle" | Select-Object -First 1
           $certificate = Get-ChildItem -LiteralPath $assets -Recurse -Filter 'WinoMail_Beta_TestCertificate.cer' | Select-Object -First 1
           if (-not $bundle -or -not $certificate) { Get-ChildItem -LiteralPath $assets -Recurse | Format-Table FullName; throw 'Verified bundle or matching test certificate missing from runtime workflow artifact.' }
+          $metadataFile = Get-ChildItem -LiteralPath $assets -Recurse -Filter 'artifact-metadata.json' | Select-Object -First 1
+          if (-not $metadataFile) { throw 'Artifact provenance metadata is missing; refusing to publish.' }
+          $artifactMetadata = Get-Content -LiteralPath $metadataFile.FullName -Raw | ConvertFrom-Json
+          if ([int]$artifactMetadata.SchemaVersion -ne 1) { throw 'Unsupported artifact provenance metadata schema.' }
+          if ([string]$artifactMetadata.CommitSha -cne $env:COMMIT_SHA) { throw "Artifact commit mismatch: expected $env:COMMIT_SHA, got $($artifactMetadata.CommitSha)." }
+          if ([long]$artifactMetadata.RuntimeRunId -ne [long]$env:RUNTIME_RUN_ID) { throw "Artifact runtime run mismatch: expected $env:RUNTIME_RUN_ID, got $($artifactMetadata.RuntimeRunId)." }
+          if ([string]$artifactMetadata.PackageVersion -cne $version) { throw "Artifact version mismatch: manifest is $version, artifact is $($artifactMetadata.PackageVersion)." }
+          if ([string]$artifactMetadata.BundleFile -cne $bundle.Name) { throw "Artifact bundle filename mismatch: metadata says $($artifactMetadata.BundleFile), found $($bundle.Name)." }
+          if ([string]$artifactMetadata.TestCertificateFile -cne $certificate.Name) { throw 'Artifact test certificate filename does not match provenance metadata.' }
+          $bundleHash = (Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $certificateHash = (Get-FileHash -LiteralPath $certificate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($bundleHash -cne ([string]$artifactMetadata.BundleSha256).ToLowerInvariant()) { throw 'MSIXBundle SHA-256 does not match runtime workflow provenance.' }
+          if ($certificateHash -cne ([string]$artifactMetadata.TestCertificateSha256).ToLowerInvariant()) { throw 'Test certificate SHA-256 does not match runtime workflow provenance.' }
           $notes = Join-Path $env:RUNNER_TEMP 'RELEASE-NOTES.md'
           @"
           Wino Mail Beta $version
@@ -104,6 +119,8 @@ jobs:
           
           Verified runtime workflow run: $env:RUNTIME_RUN_ID
           Commit: $env:COMMIT_SHA
+          MSIXBundle SHA-256: $bundleHash
+          Test certificate SHA-256: $certificateHash
           "@ | Set-Content -LiteralPath $notes -Encoding utf8
           $existing = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
@@ -112,6 +129,6 @@ jobs:
             gh release edit $tag --title "Wino Mail Beta $version" --notes-file $notes --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release metadata.' }
           } else {
-            gh release create $tag $bundle.FullName $certificate.FullName --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+            gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create versioned Release.' }
           }
