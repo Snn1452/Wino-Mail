@@ -16,6 +16,7 @@ on:
       - 'WinoMail.slnx'
       - 'Directory.*'
       - '.github/workflows/native-aot.yml'
+      - '.github/workflows/publish-github-release.yml'
   workflow_dispatch:
 
 permissions:
