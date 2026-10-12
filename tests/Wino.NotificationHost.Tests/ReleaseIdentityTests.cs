@@ -42,6 +42,33 @@ public sealed class ReleaseIdentityTests
         wrongPublisher.Should().Throw<InvalidDataException>();
     }
 
+    [Fact]
+    public void PackageManifestHasOneBackgroundStartupTaskAndKeepsUiOutOfStartupTaskList()
+    {
+        var root = FindRepository();
+        var manifestPath = Path.Combine(root, "src/Wino.Mail.WinUI/Package.appxmanifest");
+        var document = System.Xml.Linq.XDocument.Load(manifestPath);
+        var ns = document.Root!.Name.Namespace;
+
+        var startupTasks = document
+            .Descendants()
+            .Where(element => (string?)element.Attribute("Category") == "windows.startupTask")
+            .ToArray();
+
+        startupTasks.Should().ContainSingle();
+        var startupTask = startupTasks[0].Element(ns + "StartupTask");
+        startupTask.Should().NotBeNull();
+        startupTask!.Attribute("TaskId")!.Value.Should().Be("WinoBackgroundSyncStartupId");
+
+        document.Descendants(ns + "Application")
+            .Should()
+            .ContainSingle(application => (string?)application.Attribute("Id") == "BackgroundSyncHost");
+
+        document.Descendants(ns + "StartupTask")
+            .Should()
+            .NotContain(task => (string?)task.Attribute("TaskId") == "WinoStartupId");
+    }
+
     private static string FindRepository()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
