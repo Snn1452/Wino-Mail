@@ -18,6 +18,7 @@ on:
       - 'WinoMail.slnx'
       - 'tests/scripts/Build-Beta-TestBundle.ps1'
       - '.github/workflows/background-notification-runtime.yml'
+      - '.github/workflows/publish-github-release.yml'
   workflow_dispatch:
 
 concurrency:
