@@ -162,11 +162,17 @@ jobs:
 
           # Exercise the real process detector while WinUI is alive. This mode exits before
           # database initialization or scheduler startup, and fails if the UI process is absent.
-          $diagnosticPath = Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'
-          $diagnosticStartLength = if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
-            (Get-Content -LiteralPath $diagnosticPath -Raw).Length
-          } else {
-            0
+          $diagnosticPaths = @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          ) | Select-Object -Unique
+          $diagnosticStartLengths = @{}
+          foreach ($path in $diagnosticPaths) {
+            $diagnosticStartLengths[$path] = if (Test-Path -LiteralPath $path -PathType Leaf) {
+              (Get-Content -LiteralPath $path -Raw).Length
+            } else {
+              0
+            }
           }
 
           $gateSmokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--background-loop-gate-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
@@ -174,16 +180,18 @@ jobs:
             throw "Background loop gate smoke failed while WinUI was running with exit code $($gateSmokeProcess.ExitCode)."
           }
 
-          if (-not (Test-Path -LiteralPath $diagnosticPath -PathType Leaf)) {
-            throw 'Background loop gate smoke produced no startup diagnostic log.'
+          $newDiagnosticText = foreach ($path in $diagnosticPaths) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+              $text = Get-Content -LiteralPath $path -Raw
+              $startLength = [int]$diagnosticStartLengths[$path]
+              if ($text.Length -ge $startLength) { $text.Substring($startLength) } else { $text }
+            }
           }
-
-          $diagnosticText = Get-Content -LiteralPath $diagnosticPath -Raw
-          $newDiagnosticText = $diagnosticText.Substring([Math]::Min($diagnosticStartLength, $diagnosticText.Length))
+          $newDiagnosticText = $newDiagnosticText -join [Environment]::NewLine
           if ($newDiagnosticText -notmatch '\[SMOKE\] WinUI process detected; automatic synchronization loops correctly remain inactive\.') {
-            throw 'Background loop gate smoke did not confirm that WinUI was detected and the scheduler remained inactive.'
+            throw "Background loop gate smoke did not confirm WinUI detection. New diagnostic output: $newDiagnosticText"
           }
-          if ($newDiagnosticText -match '\[LOOPS\] WinUI is closed; starting background synchronization and reminder loops\.') {
+          if ($newDiagnosticText -match '\[LOOPS\] Starting automatic synchronization only while WinUI is closed\.') {
             throw 'Background loop gate smoke unexpectedly entered the background synchronization loops while WinUI was running.'
           }
 
