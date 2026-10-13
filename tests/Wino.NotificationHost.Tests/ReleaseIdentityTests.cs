@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Wino.Mail.BackgroundSyncHost;
 using Wino.NotificationHost.Contracts;
 using Xunit;
 
@@ -40,6 +41,28 @@ public sealed class ReleaseIdentityTests
         var wrongPublisher = () => ReleaseIdentity.Load(path, "WinoMail.Beta", "CN=other", "family");
         wrongName.Should().Throw<InvalidDataException>();
         wrongPublisher.Should().Throw<InvalidDataException>();
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public void AutomaticSynchronizationStartsOnlyWhenUiIsClosedAndNotTerminating(
+        bool isWinUiProcessRunning,
+        bool terminateRequested,
+        bool expected)
+    {
+        BackgroundSyncLoopPolicy
+            .ShouldStartLoops(isWinUiProcessRunning, terminateRequested)
+            .Should()
+            .Be(expected);
+    }
+
+    [Fact]
+    public void ActiveBackgroundSynchronizationYieldsWhenWinUiStarts()
+    {
+        BackgroundSyncLoopPolicy.ShouldYieldToUi(isWinUiProcessRunning: true).Should().BeTrue();
+        BackgroundSyncLoopPolicy.ShouldYieldToUi(isWinUiProcessRunning: false).Should().BeFalse();
     }
 
     [Fact]
