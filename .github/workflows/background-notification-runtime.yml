@@ -176,9 +176,6 @@ jobs:
           }
 
           $gateSmokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--background-loop-gate-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
-          if ($gateSmokeProcess.ExitCode -ne 0) {
-            throw "Background loop gate smoke failed while WinUI was running with exit code $($gateSmokeProcess.ExitCode)."
-          }
 
           $newDiagnosticText = foreach ($path in $diagnosticPaths) {
             if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -197,6 +194,9 @@ jobs:
           }
           if ($newDiagnosticText) {
             Write-Host "Background loop gate diagnostics: $newDiagnosticText"
+          }
+          if ($gateSmokeProcess.ExitCode -ne 0) {
+            throw "Background loop gate smoke failed while WinUI was running with exit code $($gateSmokeProcess.ExitCode). Diagnostics: $newDiagnosticText"
           }
 
           Write-Host 'Verified: WinUI is running and the background synchronization loops remain inactive.'
