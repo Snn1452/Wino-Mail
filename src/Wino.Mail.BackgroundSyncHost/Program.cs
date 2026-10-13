@@ -219,8 +219,16 @@ internal static class Program
 
         if (isBackgroundLoopGateSmokeTest)
         {
-            var uiIsRunning = IsWinUiProcessRunning();
-            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(uiIsRunning, terminateRequested: false))
+            var uiIsRunning = TryIsWinUiProcessRunning();
+            if (uiIsRunning is null)
+            {
+                WriteStartupDiagnostic(
+                    "FAIL",
+                    "Background-loop gate smoke test could not inspect WinUI process state.");
+                return 3;
+            }
+
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(uiIsRunning.Value, terminateRequested: false))
             {
                 WriteStartupDiagnostic(
                     "SMOKE",
@@ -401,6 +409,9 @@ internal static class Program
     }
 
     private static bool IsWinUiProcessRunning()
+        => TryIsWinUiProcessRunning() ?? true;
+
+    private static bool? TryIsWinUiProcessRunning()
     {
         Process[] processes;
 
@@ -410,9 +421,9 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            // Prefer pausing the background scheduler over risking two active schedulers.
+            // Production must fail closed and keep the scheduler idle if process inspection fails.
             WriteStartupDiagnostic("PROCESS", $"Could not inspect WinUI process state; keeping host loops idle. {ex.Message}");
-            return true;
+            return null;
         }
 
         try
