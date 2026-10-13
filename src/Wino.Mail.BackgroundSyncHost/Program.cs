@@ -204,6 +204,23 @@ internal static class Program
         WriteStartupDiagnostic("LOGGING", "Configuring structured logging.");
         ConfigureLogging(provider);
 
+        if (isBackgroundLoopGateSmokeTest)
+        {
+            var uiIsRunning = IsWinUiProcessRunning();
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(uiIsRunning, terminateRequested: false))
+            {
+                WriteStartupDiagnostic(
+                    "SMOKE",
+                    "WinUI process detected; automatic synchronization loops correctly remain inactive.");
+                return 0;
+            }
+
+            WriteStartupDiagnostic(
+                "FAIL",
+                "Background-loop gate smoke test requires WinUI to be running, but no WinUI process was detected.");
+            return 2;
+        }
+
         if (isNotificationSmokeTest)
         {
             var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
