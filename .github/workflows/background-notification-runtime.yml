@@ -164,7 +164,7 @@ jobs:
           # database initialization or scheduler startup, and fails if the UI process is absent.
           $diagnosticPath = Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'
           $diagnosticStartLength = if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
-            (Get-Item -LiteralPath $diagnosticPath).Length
+            (Get-Content -LiteralPath $diagnosticPath -Raw).Length
           } else {
             0
           }
