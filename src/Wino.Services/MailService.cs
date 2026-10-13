@@ -2187,7 +2187,8 @@ public class MailService : BaseDatabaseService, IMailService
             return false;
 
         var id = mailCopy.Id ?? string.Empty;
-        var messageId = MailHeaderExtensions.NormalizeMessageId(mailCopy.MessageId) ?? string.Empty;
+        var storedMessageId = mailCopy.MessageId?.Trim() ?? string.Empty;
+        var messageId = MailHeaderExtensions.NormalizeMessageId(storedMessageId) ?? string.Empty;
 
         if (keysInBatch != null)
         {
@@ -2201,11 +2202,12 @@ public class MailService : BaseDatabaseService, IMailService
             "SELECT COUNT(*) FROM MailCopy " +
             "INNER JOIN MailItemFolder ON MailCopy.FolderId = MailItemFolder.Id " +
             "WHERE MailItemFolder.MailAccountId = ? AND MailCopy.IsDraft = 0 " +
-            "AND (MailCopy.Id = ? OR (? <> '' AND MailCopy.MessageId = ?))",
+            "AND (MailCopy.Id = ? OR (? <> '' AND (MailCopy.MessageId = ? OR MailCopy.MessageId = ?)))",
             accountId,
             id,
             messageId,
-            messageId).ConfigureAwait(false);
+            messageId,
+            storedMessageId).ConfigureAwait(false);
 
         return existingCount == 0;
     }

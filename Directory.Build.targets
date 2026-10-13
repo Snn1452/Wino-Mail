@@ -19,6 +19,26 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <Nullable>annotations</Nullable>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(TargetFramework)' != 'netstandard2.0' and '$(IsTestProject)' != 'true' and !$(TargetFramework.Contains('-macos'))">
+    <!-- Preserve the fork's Release Native AOT compatibility gate on top of the upstream platform split. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(TargetFramework)' == 'netstandard2.0'">
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <!-- Platform build policy. The shared Release gate above applies to every platform. -->
   <Import Project="build/Wino.Windows.targets" Condition="'$(WinoTargetPlatform)' == 'Windows'" />
   <Import Project="build/Wino.MacOS.targets" Condition="'$(WinoTargetPlatform)' == 'MacOS' or $(TargetFramework.Contains('-macos'))" />
