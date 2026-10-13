@@ -160,6 +160,35 @@ jobs:
 
           if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
 
+          # Exercise the real process detector while WinUI is alive. This mode exits before
+          # database initialization or scheduler startup, and fails if the UI process is absent.
+          $diagnosticPath = Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'
+          $diagnosticStartLength = if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+            (Get-Item -LiteralPath $diagnosticPath).Length
+          } else {
+            0
+          }
+
+          $gateSmokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--background-loop-gate-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+          if ($gateSmokeProcess.ExitCode -ne 0) {
+            throw "Background loop gate smoke failed while WinUI was running with exit code $($gateSmokeProcess.ExitCode)."
+          }
+
+          if (-not (Test-Path -LiteralPath $diagnosticPath -PathType Leaf)) {
+            throw 'Background loop gate smoke produced no startup diagnostic log.'
+          }
+
+          $diagnosticText = Get-Content -LiteralPath $diagnosticPath -Raw
+          $newDiagnosticText = $diagnosticText.Substring([Math]::Min($diagnosticStartLength, $diagnosticText.Length))
+          if ($newDiagnosticText -notmatch '\[SMOKE\] WinUI process detected; automatic synchronization loops correctly remain inactive\.') {
+            throw 'Background loop gate smoke did not confirm that WinUI was detected and the scheduler remained inactive.'
+          }
+          if ($newDiagnosticText -match '\[LOOPS\] WinUI is closed; starting background synchronization and reminder loops\.') {
+            throw 'Background loop gate smoke unexpectedly entered the background synchronization loops while WinUI was running.'
+          }
+
+          Write-Host 'Verified: WinUI is running and the background synchronization loops remain inactive.'
+
           $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
           $smokeExitCode = $smokeProcess.ExitCode
 
