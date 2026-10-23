@@ -148,6 +148,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         TitleBarSearchBox.HorizontalAlignment = isCompact ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
     }
 
+    [DynamicWindowsRuntimeCast(typeof(OverlappedPresenter))]
     private void ConfigureStartupLayout()
     {
         // Every newly created application window starts maximized.
