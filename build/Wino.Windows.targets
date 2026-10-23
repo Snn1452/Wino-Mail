@@ -86,4 +86,21 @@
       </PackagingOutputs>
     </ItemGroup>
   </Target>
+  <!-- BackgroundSyncHost and Windows adapter are build/package helpers, not standalone AOT apps. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Wino.Mail.BackgroundSyncHost' or '$(MSBuildProjectName)' == 'Wino.Platform.Windows'">
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <!-- Only the WinUI front-end owns MSIX packaging. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Wino.Mail.WinUI'">
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <AppxBundle>Never</AppxBundle>
+    <WindowsPackageType>None</WindowsPackageType>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+  </PropertyGroup>
 </Project>
