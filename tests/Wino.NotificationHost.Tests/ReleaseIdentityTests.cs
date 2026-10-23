@@ -81,16 +81,24 @@ public sealed class ReleaseIdentityTests
         startupTasks.Should().ContainSingle();
         var startupTask = startupTasks[0].Elements().SingleOrDefault(element => element.Name.LocalName == "StartupTask");
         startupTask.Should().NotBeNull();
-        startupTask!.Attribute("TaskId")!.Value.Should().Be("WinoStartupId");
+        var confirmedStartupTask = startupTask!;
+        var startupTaskId = confirmedStartupTask.Attribute("TaskId")!.Value;
+        startupTaskId.Should().Be("WinoStartupId");
 
-        var startupOwner = startupTask.Ancestors().Single(element => element.Name.LocalName == "Application");
+        var activationSourcePath = Path.Combine(root, "src/Wino.Mail.WinUI/Activation/SessionStartActivation.cs");
+        File.ReadAllText(activationSourcePath)
+            .Should()
+            .Contain($"private const string StartupTaskId = \"{startupTaskId}\";");
+
+        var startupOwner = confirmedStartupTask.Ancestors().Single(element => element.Name.LocalName == "Application");
         ((string?)startupOwner.Attribute("Id")).Should().Be("App");
 
         var backgroundSyncHost = document.Descendants(ns + "Application")
             .SingleOrDefault(application => (string?)application.Attribute("Id") == "BackgroundSyncHost");
         backgroundSyncHost.Should().NotBeNull();
-        backgroundSyncHost!.Descendants().Should().NotContain(element => element.Name.LocalName == "StartupTask");
-        backgroundSyncHost.Descendants().Should().Contain(element => element.Name.LocalName == "FullTrustProcess");
+        var confirmedBackgroundSyncHost = backgroundSyncHost!;
+        confirmedBackgroundSyncHost.Descendants().Should().NotContain(element => element.Name.LocalName == "StartupTask");
+        confirmedBackgroundSyncHost.Descendants().Should().Contain(element => element.Name.LocalName == "FullTrustProcess");
 
         document.Descendants()
             .Should()
