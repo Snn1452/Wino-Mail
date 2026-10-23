@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -94,6 +94,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         MinWidth = 420;
         MinHeight = 420;
         ConfigureTitleBar();
+        ConfigureStartupLayout();
         UpdateShellTitles();
         UpdateWinoAccountButtonVisibility();
         ApplyTitleBarSearchHost();
@@ -145,6 +146,20 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         TitleBarSearchBox.MinWidth = isCompact ? 0 : 210;
         TitleBarSearchBox.MaxWidth = isCompact ? 48 : 390;
         TitleBarSearchBox.HorizontalAlignment = isCompact ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+    }
+
+    [DynamicWindowsRuntimeCast(typeof(OverlappedPresenter))]
+    private void ConfigureStartupLayout()
+    {
+        // Every newly created application window starts maximized.
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.Maximize();
+        }
+
+        // The navigation pane is intentionally collapsed at startup rather than restoring its
+        // persisted open state. The user can still open/close it normally after launch.
+        PreferencesService.IsNavigationPaneOpened = false;
     }
 
     private void ConfigureTitleBar()
@@ -628,14 +643,24 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             if (!await PrepareMailModeForCloseAsync())
                 return;
 
+            if (app != null && !await app.StartBackgroundSyncHostIfNeededAsync().ConfigureAwait(true))
+                return;
+
             if (app?.TryPrepareForBackgroundShellWindowClose(closeBehavior) != true)
                 return;
 
             PrepareForClose();
 
-            // PrepareForClose removes this handler and permits the real close. The managed
-            // app and tray keep running, but this HWND and its complete XAML tree do not.
+            // PrepareForClose removes this handler and permits the real close.
+            // Tray mode keeps the WinUI process alive through the background lifetime window.
+            // No-tray mode must terminate the WinUI process after the shell HWND is closed;
+            // otherwise AppInstance keeps redirecting future launches to an invisible process.
             Close();
+
+            if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+            {
+                app?.ExitApplication();
+            }
         }
         finally
         {
