@@ -53,6 +53,8 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
     }
     
     private const int ContactPageSize = 50;
+    public static readonly TimeSpan SearchDebounce = TimeSpan.FromMilliseconds(150);
+    public const int SearchLimit = 200;
     private readonly IContactQueryService _contactService;
     private readonly IAccountService _accountService;
     private readonly ISynchronizationManager _synchronizationManager;
@@ -188,10 +190,10 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
         Contacts.CollectionChanged += ContactsCollectionChanged;
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters, false);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters, bool awaitReadiness = true)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters, bool awaitReadiness = true)
     {
         base.OnNavigatedTo(mode, parameters);
         _isPageActive = true;
@@ -771,7 +773,7 @@ public partial class ContactsPageViewModel : MailBaseViewModel,
             LastSuccessfulSyncUtc = source.LastSuccessfulSyncUtc
         };
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
         _isPageActive = false;

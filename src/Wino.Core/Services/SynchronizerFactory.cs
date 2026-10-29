@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 using Wino.Core.Domain.Entities.Shared;
+using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Integration.Processors;
@@ -206,6 +207,11 @@ public class SynchronizerFactory : ISynchronizerFactory
         finally { gate.Release(); }
     }
 
+    /// <summary>
+    /// Desktop IMAP never goes through the relay, so the local IDLE client is what makes it instant. It runs in both
+    /// sync methods, as it did before the relay existed; the timer stays the safety net. The sync coordinator reads
+    /// its state to decide which accounts the timer may skip.
+    /// </summary>
     private IWinoSynchronizerBase CreateAndCache(MailAccount account)
     {
         var synchronizer = CreateIntegratorWithDefaultProcessor(account);
@@ -247,7 +253,7 @@ public class SynchronizerFactory : ISynchronizerFactory
         finally { gate.Release(); }
     }
 
-    private static async Task ApplyAttentionStateAsync(IWinoSynchronizerBase synchronizer, MailAccount current)
+    private async Task ApplyAttentionStateAsync(IWinoSynchronizerBase synchronizer, MailAccount current)
     {
         var cached = synchronizer.Account;
         if (cached == null || cached.AttentionReason == current.AttentionReason) return;

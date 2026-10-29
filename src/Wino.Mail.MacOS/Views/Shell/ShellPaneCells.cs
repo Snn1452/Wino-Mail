@@ -14,11 +14,12 @@ using Wino.Mail.Controls.AppKit.Shell;
 using Wino.Mail.Controls.Core.AccountIcon;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Core.Domain.Presentation;
 
 namespace Wino.Mail.MacOS.Views.Shell;
 
 /// <summary>Services the pane cells need from the shell.</summary>
-internal sealed record ShellPaneContext(Func<MailAccount, IAccountIconInfo?> AccountIcon, Func<DayOfWeek> FirstDayOfWeek);
+internal sealed record ShellPaneContext(Func<MailAccount, IAccountIconInfo?> AccountIcon, Func<DayOfWeek> FirstDayOfWeek, Func<bool> CompactAccounts);
 
 /// <summary>
 /// The general pane row, configured per menu item type to match the Windows templates: New item,
@@ -28,7 +29,7 @@ internal sealed record ShellPaneContext(Func<MailAccount, IAccountIconInfo?> Acc
 internal sealed class ShellPaneCell : NSTableCellView
 {
     public const string ReuseIdentifier = "WinoShellPaneCell";
-    private const double AccountIconSize = 28;
+    private const double AccountIconSize = 22;
     // Leading insets from the cell edge (the pane edge on root rows). The selection pipe ends at
     // x = 7, so avatars sit 5pt and 16pt glyphs 9pt beside it, as in the Windows NavigationView.
     private const int AvatarInset = 12;
@@ -61,6 +62,7 @@ internal sealed class ShellPaneCell : NSTableCellView
 
     public ShellPaneCell(ShellPaneContext context)
     {
+        WinoLiveObjects.Track(this);
         _context = context;
         Identifier = ReuseIdentifier;
 
@@ -75,7 +77,7 @@ internal sealed class ShellPaneCell : NSTableCellView
         _check.Title = string.Empty;
         _check.ControlSize = NSControlSize.Small;
         _check.TranslatesAutoresizingMaskIntoConstraints = false;
-        _check.Activated += CheckActivated;
+        _check.OnActivated(this, static cell => cell.CheckActivated(cell._check, EventArgs.Empty));
         foreach (var view in new NSView[] { _glyph, _accountIcon, _dot, _check })
         {
             _leadingBox.AddSubview(view);
@@ -118,9 +120,9 @@ internal sealed class ShellPaneCell : NSTableCellView
 
         _attention = IconButton(WinoIconGlyph.Warning, 18, 28, Translator.Info_AccountAttentionRequiredAction, Translator.Info_AccountAttentionRequiredClickableMessage);
         _attention.ContentTintColor = WinoStyle.Caution;
-        _attention.Activated += (_, _) => { if (_item is { } item) AttentionClicked?.Invoke(item); };
+        _attention.OnActivated(this, static cell => { if (cell._item is { } item) cell.AttentionClicked?.Invoke(item); });
         _action = IconButton(WinoIconGlyph.Folder, 16, 30, Translator.ToDoPage_NewGroup, Translator.ToDoPage_NewGroup);
-        _action.Activated += (_, _) => { if (_item is { } item) ActionClicked?.Invoke(item); };
+        _action.OnActivated(this, static cell => { if (cell._item is { } item) cell.ActionClicked?.Invoke(item); });
         _chevron.WidthAnchor.ConstraintEqualTo(12).Active = true;
 
         _row = WinoLayout.HStack(12, _leadingBox, text, _attention, _pill, _action, _chevron);
@@ -168,7 +170,8 @@ internal sealed class ShellPaneCell : NSTableCellView
         _item = item;
         ObserveParameter(null);
         Reset();
-        bool enabled = ShellPaneRows.IsEnabled(item);
+        ToolTip = null;
+        bool enabled = ShellMenuItemRules.IsEnabled(item);
         AlphaValue = enabled ? 1 : 0.45f;
         _chevron.Hidden = !hasChildren;
         _chevron.Icon = item.IsExpanded ? WinoIconGlyph.ChevronDown : WinoIconGlyph.ChevronRight;
@@ -198,46 +201,47 @@ internal sealed class ShellPaneCell : NSTableCellView
                 _glyph.PointSize = 20;
                 _glyph.Icon = WinoIconGlyph.PeopleLink;
                 _glyph.Tint = null;
-                SetTitle(merged.MergedAccountName, merged.IsChildSelected || bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(merged.MergedAccountName, merged.IsChildSelected || bold ? WinoStyle.BodyMedium : WinoStyle.Body);
                 SetSubtitle(merged.IsSynchronizationProgressVisible && !string.IsNullOrWhiteSpace(merged.SynchronizationStatus)
                     ? merged.SynchronizationStatus
                     : merged.MergedAccountCount + Translator.MenuMergedAccountItemAccountsSuffix);
                 SetSync(merged.IsSynchronizationProgressVisible, merged.IsProgressIndeterminate, merged.SynchronizationProgressValue);
                 _pill.Count = merged.UnreadItemCount;
                 break;
-            case IAccountNavigationMenuItem account when ShellPaneRows.IsAccountRow(account):
+            case IAccountNavigationMenuItem account when ShellMenuItemRules.IsAccountRow(account):
                 Leading(AccountIconSize);
                 _accountIcon.Hidden = false;
                 _accountIcon.Account = account.Account is { } mailAccount ? _context.AccountIcon(mailAccount) : null;
-                SetTitle(account.AccountName, account.IsSelected ? WinoStyle.BodyStrong : WinoStyle.Body);
-                SetSubtitle(account.AccountAddress);
+                SetTitle(account.AccountName, WinoStyle.Body);
+                SetSubtitle(_context.CompactAccounts() ? null : account.AccountAddress);
+                ToolTip = account.AccountAddress;
                 SetSync(account.IsSynchronizationProgressVisible, account.IsProgressIndeterminate, account.SynchronizationProgressValue);
                 _pill.Count = account.UnreadItemCount;
                 _attention.Hidden = !account.IsAttentionRequired;
                 break;
             case MailCategoryMenuItem category:
                 GlyphRow(WinoIconGlyph.Tag, 16, WinoStyle.FromHexString(category.BackgroundColorHex) ?? WinoStyle.FromHexString(category.TextColorHex));
-                SetTitle(category.FolderName, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(category.FolderName, WinoStyle.Body);
                 _pill.Count = category.ShowUnreadCount ? category.UnreadItemCount : 0;
                 break;
             case MergedMailCategoryMenuItem mergedCategory:
                 GlyphRow(WinoIconGlyph.Tag, 16, WinoStyle.FromHexString(mergedCategory.TextColorHex));
-                SetTitle(mergedCategory.FolderName, bold ? WinoStyle.BodyStrong : WinoStyle.Body, WinoStyle.FromHexString(mergedCategory.TextColorHex));
+                SetTitle(mergedCategory.FolderName, WinoStyle.Body, WinoStyle.FromHexString(mergedCategory.TextColorHex));
                 _pill.Count = mergedCategory.UnreadItemCount;
                 break;
             case MergedAccountMoreFolderMenuItem:
                 GlyphRow(WinoIconGlyph.SpecialFolderMore, 16, null);
-                SetTitle(Translator.More, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(Translator.More, WinoStyle.Body);
                 break;
             case FolderMenuItem { HasTextColor: true } coloured:
-                GlyphRow(ShellPaneRows.FolderGlyph(coloured.SpecialFolderType), 16, null);
-                SetTitle(coloured.FolderName, bold ? WinoStyle.BodyStrong : WinoStyle.Body, WinoStyle.FromHexString(coloured.Parameter?.TextColorHex),
+                GlyphRow(SpecialFolderGlyphs.GetGlyph(coloured.SpecialFolderType), 16, null);
+                SetTitle(coloured.FolderName, WinoStyle.Body, WinoStyle.FromHexString(coloured.Parameter?.TextColorHex),
                     WinoStyle.FromHexString(coloured.Parameter?.BackgroundColorHex));
                 _pill.Count = coloured.ShowUnreadCount ? coloured.UnreadItemCount : 0;
                 break;
             case IBaseFolderMenuItem folder:
-                GlyphRow(ShellPaneRows.FolderGlyph(folder.SpecialFolderType), 16, null);
-                SetTitle(folder.FolderName, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                GlyphRow(SpecialFolderGlyphs.GetGlyph(folder.SpecialFolderType), 16, null);
+                SetTitle(folder.FolderName, WinoStyle.Body);
                 _pill.Count = folder.ShowUnreadCount ? folder.UnreadItemCount : 0;
                 break;
             case UngroupedCalendarMenuItem calendar:
@@ -260,7 +264,7 @@ internal sealed class ShellPaneCell : NSTableCellView
                 break;
             case ContactFilterViewModel { IsCategory: true } categoryFilter:
                 GlyphRow(WinoIconGlyph.Tag, 16, WinoStyle.FromHexString(categoryFilter.CategoryColorHex));
-                SetTitle(categoryFilter.Name, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(categoryFilter.Name, WinoStyle.Body);
                 _pill.Count = categoryFilter.Count;
                 break;
             case ContactFilterViewModel filter:
@@ -279,22 +283,22 @@ internal sealed class ShellPaneCell : NSTableCellView
                     _glyph.Glyph = filter.Glyph ?? string.Empty;
                     _glyph.Tint = null;
                 }
-                SetTitle(filter.Name, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(filter.Name, WinoStyle.Body);
                 _pill.Count = filter.Count;
                 break;
             case MyDayTaskMenuItem myDay:
                 GlyphRow(WinoIconGlyph.WeatherSunny, 16, WinoStyle.Accent);
-                SetTitle(Translator.ToDoPage_MyDay, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(Translator.ToDoPage_MyDay, WinoStyle.Body);
                 _pill.Count = myDay.Count;
                 break;
             case PlannedTaskMenuItem planned:
                 GlyphRow(WinoIconGlyph.Calendar, 16, null);
-                SetTitle(Translator.ToDoPage_Planned, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(Translator.ToDoPage_Planned, WinoStyle.Body);
                 _pill.Count = planned.Count;
                 break;
             case ImportantTaskMenuItem important:
                 GlyphRow(WinoIconGlyph.Star, 16, null);
-                SetTitle(Translator.ToDoPage_Important, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(Translator.ToDoPage_Important, WinoStyle.Body);
                 _pill.Count = important.Count;
                 break;
             case AccountTaskListGroupMenuItem group:
@@ -303,7 +307,7 @@ internal sealed class ShellPaneCell : NSTableCellView
                 break;
             case AccountTaskListMenuItem list:
                 GlyphRow(WinoIconGlyph.Dot, 20, WinoStyle.FromHexString(list.ColorHex));
-                SetTitle(list.Title, bold ? WinoStyle.BodyStrong : WinoStyle.Body);
+                SetTitle(list.Title, WinoStyle.Body);
                 _pill.Count = list.Count;
                 break;
             case RateMenuItem:
@@ -318,6 +322,14 @@ internal sealed class ShellPaneCell : NSTableCellView
                 GlyphRow(WinoIconGlyph.Folder, 16, null);
                 SetTitle(item.ToString() ?? string.Empty, WinoStyle.Body);
                 break;
+        }
+
+        // The selected folder and the active account read as selected through a semibold accent title.
+        // A title on a coloured chip keeps its own colour so it stays readable.
+        if (selected || ShellMenuItemRules.ShowsIndicator(item))
+        {
+            _title.Font = NSFont.SystemFontOfSize(_title.Font.PointSize, NSFontWeight.Semibold);
+            if (_titleChip.Fill is null) _title.TextColor = WinoStyle.Accent;
         }
         AccessibilityLabel = _pill.Hidden ? _title.StringValue : $"{_title.StringValue}, {_pill.AccessibilityLabel}";
     }
@@ -414,7 +426,12 @@ internal sealed class ShellPaneCell : NSTableCellView
     }
 
     /// <summary>True when the point (in cell coordinates) is over the trailing chevron area.</summary>
-    public bool IsInChevronArea(CGPoint point) => !_chevron.Hidden && point.X >= Bounds.Width - 34;
+    public bool IsInChevronArea(CGPoint point)
+    {
+        if (_chevron.Hidden) return false;
+        var chevron = ConvertRectFromView(_chevron.Bounds, _chevron);
+        return point.X >= chevron.X - 12;
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -596,7 +613,7 @@ internal sealed class ShellCalendarGroupCell : NSTableCellView
         _check.AllowsMixedState = true;
         _check.ControlSize = NSControlSize.Small;
         _check.TranslatesAutoresizingMaskIntoConstraints = false;
-        _check.Activated += (_, _) => { if (_group is { } group && !_applying) group.IsCheckedState = _check.State == NSCellStateValue.On; };
+        _check.OnActivated(this, static cell => { if (cell._group is { } group && !cell._applying) group.IsCheckedState = cell._check.State == NSCellStateValue.On; });
         WinoLayout.Size(_dot, 12, 12);
         // Two lines (name, then address or the sync status while syncing) centred on the checkbox
         // and colour dot; the sync bar hangs below them so it never shifts the text.

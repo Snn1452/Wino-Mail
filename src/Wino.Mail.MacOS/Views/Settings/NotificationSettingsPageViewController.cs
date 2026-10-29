@@ -3,24 +3,27 @@ using Foundation;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Notifications;
 using Wino.Core.ViewModels;
 using Wino.Core.ViewModels.Data;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Mail.Controls.AppKit.Settings;
 using Wino.Mail.MacOS.Infrastructure;
+using Wino.Mail.ViewModels.Data;
 using Wino.Platform.MacOS.Services;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
 
 namespace Wino.Mail.MacOS.Views.Settings;
 
 /// <summary>
-/// Notifications: snooze, quiet hours, mail, calendar and task sections, per-account overrides and
+/// Notifications: status bars, instant push (the sync method), snooze, quiet hours, mail, calendar and task sections, per-account overrides and
 /// reset (Windows NotificationSettingsPage). Sounds are macOS alert sounds stored in Mac-only keys
-/// (<see cref="MacNotificationSounds"/>), each with a Play preview; Windows' sound values are never written.
+/// (the ViewModel's sound provider), each with a Play preview; Windows' sound values are never written.
 /// "Snooze while presenting" uses <see cref="MacUserPresenceStateProvider"/>'s full-display window check.
 /// </summary>
-public sealed class NotificationSettingsPageViewController(NotificationSettingsPageViewModel viewModel, IMailDialogService dialogs, MacNotificationSounds sounds,
-    IDispatcher dispatcher, IWinoLogger logger)
+public sealed class NotificationSettingsPageViewController(NotificationSettingsPageViewModel viewModel, IMailDialogService dialogs,
+    IPictureStorageService pictures, IDispatcher dispatcher, IWinoLogger logger)
     : SettingsPageViewController<NotificationSettingsPageViewModel>(viewModel, dispatcher, logger)
 {
     private readonly NSStackView _accounts = WinoLayout.VStack(8);
@@ -34,7 +37,20 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
         var vm = ViewModel;
         var p = vm.PreferencesService;
 
-        // Snooze hero.
+        // Page status, above everything: held notifications, then macOS Focus (which never says when it ends).
+        var snoozed = InfoBar(WinoInfoBarSeverity.Informational, null, null);
+        Bind.Bind(vm, nameof(vm.SnoozeSummaryText), s => s.SnoozeSummaryText, text => snoozed.Message = text);
+        Bind.Visible(snoozed, vm, nameof(vm.IsSnoozed), s => s.IsSnoozed);
+        Add(snoozed);
+
+        var quietTime = InfoBar(WinoInfoBarSeverity.Informational, null, Translator.NotificationSettings_DoNotDisturbOn);
+        Bind.Visible(quietTime, vm, nameof(vm.IsSystemQuietTimeActive), s => s.IsSystemQuietTimeActive);
+        Add(quietTime);
+
+        if (vm.IsPushRelaySectionVisible)
+            AddInstantPush();
+
+        // Snooze: a regular card. While notifications are held, the status shows at the top of the page instead.
         var snoozeSwitch = new WinoLabeledSwitch();
         WinoAccessibility.Label(snoozeSwitch.Switch, Translator.NotificationSettings_SnoozeAll);
         Bind.Bind(vm, nameof(vm.IsSnoozed), s => s.IsSnoozed, value => snoozeSwitch.IsOn = value);
@@ -46,15 +62,10 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
         });
         var presets = Bind.PopUp<NotificationSettingsPageViewModel, SnoozePresetOption>(vm, s => s.SnoozePresets, option => option.DisplayText,
             nameof(vm.SelectedSnoozePreset), s => s.SelectedSnoozePreset, (s, v) => s.StartSnoozeCommand.Execute(v.Value), width: 170);
-        var hero = Card(Translator.NotificationSettings_Hero_Title, null, WinoIconGlyph.AlertOff, Row(presets, snoozeSwitch));
-        Bind.Bind(vm, nameof(vm.SnoozeSummaryText), s => s.SnoozeSummaryText, text => hero.Description = text);
-        var state = Card(string.Empty, null, WinoIconGlyph.None);
-        Bind.Bind(vm, nameof(vm.SnoozeStateText), s => s.SnoozeStateText, text => { state.Header = text ?? string.Empty; state.Hidden = string.IsNullOrEmpty(text); });
-        AddGroup(null, hero, state);
-
-        var quietTime = InfoBar(WinoInfoBarSeverity.Informational, null, Translator.NotificationSettings_DoNotDisturbOn);
-        Bind.Visible(quietTime, vm, nameof(vm.IsSystemQuietTimeActive), s => s.IsSystemQuietTimeActive);
-        Add(quietTime);
+        // The duration sits under the text: beside the switch it leaves the text column too narrow.
+        var snooze = Card(Translator.NotificationSettings_Snooze_Title, Translator.NotificationSettings_Snooze_ActiveDescription, WinoIconGlyph.AlertOff, snoozeSwitch);
+        snooze.BottomContent = WinoLayout.VStack(0, presets);
+        AddGroup(null, snooze);
 
         // Quiet hours.
         bool QuietOn(IPreferencesService s) => s.AreQuietHoursEnabled;
@@ -76,8 +87,10 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             Bind.Enabled(Card(Translator.NotificationSettings_QuietHours_From_Title, Translator.NotificationSettings_QuietHours_From_Description, WinoIconGlyph.None, hours), p, nameof(p.AreQuietHoursEnabled), QuietOn),
             Bind.Enabled(Card(Translator.NotificationSettings_QuietHours_Days_Title, Translator.NotificationSettings_QuietHours_Days_Description, WinoIconGlyph.None, days), p, nameof(p.AreQuietHoursEnabled), QuietOn),
             // Presenting is detected by MacUserPresenceStateProvider (a full-display window in front).
-            Card(Translator.NotificationSettings_QuietHours_Presenting_Title, Translator.NotificationSettings_QuietHours_Presenting_Description, WinoIconGlyph.None,
-                Bind.Switch(p, nameof(p.SnoozeWhilePresenting), s => s.SnoozeWhilePresenting, (s, v) => s.SnoozeWhilePresenting = v, Translator.NotificationSettings_QuietHours_Presenting_Title)));
+            vm.IsSnoozeWhilePresentingAvailable
+                ? Card(Translator.NotificationSettings_QuietHours_Presenting_Title, Translator.NotificationSettings_QuietHours_Presenting_Description, WinoIconGlyph.None,
+                    Bind.Switch(p, nameof(p.SnoozeWhilePresenting), s => s.SnoozeWhilePresenting, (s, v) => s.SnoozeWhilePresenting = v, Translator.NotificationSettings_QuietHours_Presenting_Title))
+                : null);
         Bind.Bind(vm, nameof(vm.QuietHoursSummary), s => s.QuietHoursSummary, text => quiet.HeaderCard.Description = text);
 
         // Mail.
@@ -92,7 +105,7 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             Card(Translator.NotificationSettings_Mail_SecondAction_Title, Translator.NotificationSettings_Mail_SecondAction_Description, WinoIconGlyph.None,
                 OptionPopUp(vm, s => s.MailActionOptions, nameof(vm.SelectedSecondAction), s => s.SelectedSecondAction, (s, v) => s.SelectedSecondAction = v)),
             Card(Translator.NotificationSound_Title, Translator.NotificationSound_Description, WinoIconGlyph.None,
-                TypeSoundPicker(MacNotificationSoundKind.Mail)));
+                TypeSoundPicker(NotificationSoundKind.Mail)));
         Bind.Bind(vm, nameof(vm.MailSummary), s => s.MailSummary, text => mail.HeaderCard.Description = text);
 
         // Calendar.
@@ -103,7 +116,7 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             Card(Translator.CalendarSettings_DefaultSnoozeDuration_Header, Translator.CalendarSettings_DefaultSnoozeDuration_Description, WinoIconGlyph.None,
                 Bind.PopUp(vm, vm.CalendarSnoozeOptions, nameof(vm.SelectedCalendarSnoozeIndex), s => s.SelectedCalendarSnoozeIndex, (s, v) => s.SelectedCalendarSnoozeIndex = v, 170)),
             Card(Translator.NotificationSound_Title, Translator.NotificationSound_Description, WinoIconGlyph.None,
-                TypeSoundPicker(MacNotificationSoundKind.Calendar)));
+                TypeSoundPicker(NotificationSoundKind.Calendar)));
         Bind.Bind(vm, nameof(vm.CalendarSummary), s => s.CalendarSummary, text => calendar.HeaderCard.Description = text);
 
         // Tasks.
@@ -114,7 +127,7 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             Card(Translator.NotificationSettings_Tasks_Snooze_Title, Translator.NotificationSettings_Tasks_Snooze_Description, WinoIconGlyph.None,
                 Bind.PopUp(vm, vm.TaskSnoozeOptions, nameof(vm.SelectedTaskSnoozeIndex), s => s.SelectedTaskSnoozeIndex, (s, v) => s.SelectedTaskSnoozeIndex = v, 170)),
             Card(Translator.NotificationSound_Title, Translator.NotificationSound_Description, WinoIconGlyph.None,
-                TypeSoundPicker(MacNotificationSoundKind.Task)));
+                TypeSoundPicker(NotificationSoundKind.Task)));
         Bind.Bind(vm, nameof(vm.TaskSummary), s => s.TaskSummary, text => tasks.HeaderCard.Description = text);
 
         AddGroup(null, quiet, mail, calendar, tasks);
@@ -129,6 +142,40 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
 
         AddGroup(null, Card(Translator.NotificationSettings_Reset_Title, Translator.NotificationSettings_Reset_Description, WinoIconGlyph.ArrowReset,
             Bind.Button(Translator.NotificationSettings_Reset_Title, ResetAsync)));
+    }
+
+    /// <summary>
+    /// The app-wide sync method: instant push (on) or timer-based synchronization (off). Normal operation needs no
+    /// status line, so the card shows messages only when something needs attention (Windows NotificationSettingsPage).
+    /// </summary>
+    private void AddInstantPush()
+    {
+        var vm = ViewModel;
+        NSView? toggle = null;
+        if (vm.IsPushRelayToggleVisible)
+            toggle = Bind.Enabled(
+                Bind.Switch(vm, nameof(vm.IsPushRelayEnabled), s => s.IsPushRelayEnabled, (s, v) => s.IsPushRelayEnabled = v, Translator.NotificationSettings_RealtimePush_Title),
+                vm, nameof(vm.IsPushRelayToggleEnabled), s => s.IsPushRelayToggleEnabled);
+        AddGroup(null, Card(Translator.NotificationSettings_RealtimePush_Title, Translator.NotificationSettings_RealtimePush_Description, WinoIconGlyph.Flash, toggle));
+
+        var signIn = InfoBar(WinoInfoBarSeverity.Informational, null, Translator.NotificationSettings_PushRelay_SignInRequired);
+        Bind.Visible(signIn, vm, nameof(vm.IsPushRelaySignInRequired), s => s.IsPushRelaySignInRequired);
+        Add(signIn);
+
+        Add(TextInfoBar(nameof(vm.PushRelayProblemText), s => s.PushRelayProblemText));
+        Add(TextInfoBar(nameof(vm.PushRelayMailboxWarningText), s => s.PushRelayMailboxWarningText));
+    }
+
+    /// <summary>A warning bar that shows a view model text and hides while it is empty.</summary>
+    private WinoInfoBar TextInfoBar(string property, Func<NotificationSettingsPageViewModel, string?> read)
+    {
+        var bar = InfoBar(WinoInfoBarSeverity.Warning, null, null);
+        Bind.Bind(ViewModel, property, read, text =>
+        {
+            bar.Message = text;
+            bar.Hidden = string.IsNullOrEmpty(text);
+        });
+        return bar;
     }
 
     protected override Task InitializeAsync(Core.Domain.Models.Navigation.NavigationMode mode, object? parameter)
@@ -150,11 +197,8 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
     {
         try
         {
-            if (await dialogs.ShowConfirmationDialogAsync(Translator.NotificationSettings_Reset_ConfirmMessage,
-                    Translator.NotificationSettings_Reset_ConfirmTitle, Translator.NotificationSettings_Reset_Title))
+            if (await ViewModel.ConfirmResetAsync(dialogs))
             {
-                await ViewModel.ResetAsync();
-                sounds.ResetAll(ViewModel.Accounts.Select(account => account.AccountId));
                 await Dispatcher.ExecuteOnUIThread(() =>
                 {
                     foreach (var refresh in _soundRefreshers.Concat(_accountSoundRefreshers)) refresh();
@@ -193,12 +237,11 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
 
     #region Sounds
 
-    private NSView TypeSoundPicker(MacNotificationSoundKind kind)
-        => SoundPicker(() => sounds.Resolve(kind), value => sounds.SetStored(kind, value), _soundRefreshers);
+    private NSView TypeSoundPicker(NotificationSoundKind kind)
+        => SoundPicker(() => ViewModel.GetSound(kind), value => ViewModel.SetSound(kind, value), _soundRefreshers);
 
     private NSView AccountSoundPicker(AccountNotificationSettingsViewModel account)
-        => SoundPicker(() => account.Account.Preferences is { } preferences ? sounds.ResolveAccount(preferences) : MacNotificationSounds.DefaultSound,
-            value => sounds.SetStoredForAccount(account.AccountId, value), _accountSoundRefreshers);
+        => SoundPicker(() => ViewModel.GetAccountSound(account.AccountId), value => ViewModel.SetAccountSound(account.AccountId, value), _accountSoundRefreshers);
 
     /// <summary>
     /// A pop-up of Default, None and the macOS alert sounds, with an icon-only Play button. Choosing a sound
@@ -206,8 +249,11 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
     /// </summary>
     private NSView SoundPicker(Func<string> read, Action<string> write, List<Action> refreshers)
     {
-        var values = new List<string?> { MacNotificationSounds.DefaultSound, MacNotificationSounds.NoSound, null };
-        values.AddRange(MacNotificationSounds.SystemSounds);
+        var choices = ViewModel.SoundChoices;
+        var values = new List<string?>();
+        foreach (var choice in choices.Where(choice => choice.IsDefaultOrNone)) values.Add(choice.Id);
+        values.Add(null);
+        foreach (var choice in choices.Where(choice => !choice.IsDefaultOrNone)) values.Add(choice.Id);
         var popUp = new NSPopUpButton { PullsDown = false, TranslatesAutoresizingMaskIntoConstraints = false };
         popUp.Menu!.AutoEnablesItems = false;
         foreach (var value in values)
@@ -234,7 +280,7 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             try
             {
                 write(value);
-                MacNotificationSounds.Play(value);
+                _ = ViewModel.PlaySoundAsync(value);
             }
             catch (Exception exception) { ReportError(exception); }
         };
@@ -248,16 +294,12 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             TranslatesAutoresizingMaskIntoConstraints = false
         };
         WinoAccessibility.Label(play, Translator.NotificationSound_Play);
-        play.Activated += (_, _) => MacNotificationSounds.Play(read());
+        play.Activated += (_, _) => _ = ViewModel.PlaySoundAsync(read());
         return Row(popUp, play);
     }
 
-    private static string SoundTitle(string value) => value switch
-    {
-        MacNotificationSounds.DefaultSound => Translator.NotificationSound_Default,
-        MacNotificationSounds.NoSound => Translator.ContactsShellMac_NotificationSoundNone,
-        _ => value
-    };
+    private string SoundTitle(string id)
+        => ViewModel.SoundChoices.FirstOrDefault(choice => string.Equals(choice.Id, id, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? id;
 
     #endregion
 
@@ -274,8 +316,10 @@ public sealed class NotificationSettingsPageViewController(NotificationSettingsP
             bool Overrides(AccountNotificationSettingsViewModel a) => a.AreOverrideFieldsEnabled;
             bool Enabled(AccountNotificationSettingsViewModel a) => a.AreNotificationsEnabled;
             var sources = new[] { Translator.NotificationSettings_Account_UseDefaults, Translator.NotificationSettings_Account_Customise };
-            var expander = new WinoSettingsExpander(account.Account.Name ?? string.Empty, account.AccountAddress, WinoIconGlyph.Person,
+            var expander = new WinoSettingsExpander(account.Account.Name ?? string.Empty, account.AccountAddress, WinoIconGlyph.None,
                 rows.Switch(account, nameof(account.AreNotificationsEnabled), Enabled, (a, v) => a.AreNotificationsEnabled = v, account.Account.Name));
+            // The account's picture or provider logo, as on the account details and unread badge pages.
+            expander.HeaderCard.LeadingView = new WinoAccountIconView(28) { Account = MailAccountIconInfoFactory.Create(account.Account, pictures) };
             rows.Bind(account, nameof(account.StatusText), a => a.StatusText, text => expander.HeaderCard.Description = string.IsNullOrEmpty(text) ? account.AccountAddress : text);
             expander.Add(rows.Enabled(new WinoSettingsCard(Translator.NotificationSettings_Account_Source_Title, Translator.NotificationSettings_Account_Source_Description, WinoIconGlyph.None,
                 rows.PopUp(account, sources, nameof(account.HasCustomNotificationSettings), a => a.HasCustomNotificationSettings ? 1 : 0, (a, v) => a.HasCustomNotificationSettings = v == 1, 170)),

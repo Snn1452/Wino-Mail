@@ -3,28 +3,61 @@ using CoreGraphics;
 using Foundation;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Models.Reader;
 using Wino.Mail.MacOS.Infrastructure;
 using Wino.Presentation.AppKit;
 
 namespace Wino.Mail.MacOS.Views.Shell;
 
 /// <summary>
-/// The unified window toolbar in the Windows title bar order: sidebar toggle and tracking
-/// separator, synchronization, the window title and subtitle (native), a centred search field,
-/// then Daily briefing, What's New and the Wino account. Mail actions live in the reader command
-/// bar and the Message menu, as on Windows. Every glyph comes from the WinoIcons font.
+/// The unified window toolbar: sidebar toggle, synchronization (navigational, so it precedes the
+/// title), the window title and subtitle (native), the mail actions in three groups (reply, file,
+/// mark) while a mail page is current, then the search field, Daily briefing, What's New and the
+/// Wino account at the trailing edge. The Message menu runs the same commands. Every glyph comes
+/// from the WinoIcons font.
 /// </summary>
 internal sealed class ShellToolbar : NSToolbarDelegate
 {
     private const string ToggleSidebarId = "wino.toggleSidebar";
-    private const string SidebarSeparatorId = "wino.sidebarSeparator";
     private const string SyncId = "wino.sync";
     private const string SearchId = "wino.search";
     private const string BriefingId = "wino.briefing";
     private const string WhatsNewId = "wino.whatsNew";
     private const string AccountId = "wino.account";
+    private const string CommandIdPrefix = "wino.command.";
 
-    private readonly NSSplitView _splitView;
+    /// <summary>The mail actions in toolbar order, grouped by the spaces in <see cref="Identifiers"/>.</summary>
+    private static readonly (ShellCommand Command, WinoIconGlyph Glyph, Func<string> Title)[] Commands =
+    [
+        (ShellCommand.Reply, WinoIconGlyph.Reply, () => Translator.MailOperation_Reply),
+        (ShellCommand.ReplyAll, WinoIconGlyph.ReplyAll, () => Translator.MailOperation_ReplyAll),
+        (ShellCommand.Forward, WinoIconGlyph.Forward, () => Translator.MailOperation_Forward),
+        (ShellCommand.Archive, WinoIconGlyph.Archive, () => Translator.MailOperation_Archive),
+        (ShellCommand.Delete, WinoIconGlyph.Delete, () => Translator.MailOperation_Delete),
+        (ShellCommand.Move, WinoIconGlyph.Move, () => Translator.MailOperation_Move),
+        (ShellCommand.Flag, WinoIconGlyph.Flag, () => Translator.MailOperation_Flag),
+        (ShellCommand.ToggleRead, WinoIconGlyph.MarkRead, () => Translator.MailOperation_MarkAsRead)
+    ];
+
+    private readonly Func<bool> _hasCommandTarget;
+    private readonly Func<ShellCommand, bool> _canExecute;
+    private readonly Func<ShellCommand, bool> _isActive;
+    private readonly Action<ShellCommand, NSView> _execute;
+    private readonly Dictionary<ShellCommand, NSToolbarItem> _commandItems = new();
+    private bool _navigationalSpaceAdded;
+    private NSToolbar? _toolbar;
+
+    /// <summary>The three command groups (reply, file, mark); the reader layout setting orders and hides members.</summary>
+    private static readonly ShellCommand[][] CommandGroups =
+    [
+        [ShellCommand.Reply, ShellCommand.ReplyAll, ShellCommand.Forward],
+        [ShellCommand.Archive, ShellCommand.Delete, ShellCommand.Move],
+        [ShellCommand.Flag, ShellCommand.ToggleRead]
+    ];
+
+    private ShellCommand[][] _visibleGroups = CommandGroups;
+    private bool _showsCommandLabels;
+
     private readonly Func<IShellSearchTarget?> _searchTarget;
     private readonly Action _toggleSidebar;
     private readonly Action _synchronize;
@@ -35,6 +68,8 @@ internal sealed class ShellToolbar : NSToolbarDelegate
     private NSToolbarItem? _syncItem;
     private NSButton? _syncButton;
     private NSProgressIndicator? _syncProgress;
+    private WinoSurfaceView? _relayFallbackDot;
+    private bool _relayFallbackActive;
     private NSSearchToolbarItem? _searchItem;
     private NSToolbarItem? _briefingItem;
     private NSButton? _briefingButton;
@@ -47,10 +82,14 @@ internal sealed class ShellToolbar : NSToolbarDelegate
     private bool _whatsNewVisible;
     private bool _accountHidden;
 
-    public ShellToolbar(NSSplitView splitView, Func<IShellSearchTarget?> searchTarget, Action toggleSidebar, Action synchronize,
-        Action<NSView> briefing, Action whatsNew, Action<NSView> account, Action<Exception> error)
+    public ShellToolbar(Func<IShellSearchTarget?> searchTarget, Action toggleSidebar, Action synchronize,
+        Action<NSView> briefing, Action whatsNew, Action<NSView> account, Action<Exception> error,
+        Func<bool> showsCommands, Func<ShellCommand, bool> canExecute, Func<ShellCommand, bool> isActive, Action<ShellCommand, NSView> execute)
     {
-        _splitView = splitView;
+        _hasCommandTarget = showsCommands;
+        _canExecute = canExecute;
+        _isActive = isActive;
+        _execute = execute;
         _searchTarget = searchTarget;
         _toggleSidebar = toggleSidebar;
         _synchronize = synchronize;
@@ -67,24 +106,113 @@ internal sealed class ShellToolbar : NSToolbarDelegate
             Delegate = this,
             DisplayMode = NSToolbarDisplayMode.Icon,
             AllowsUserCustomization = false,
-            AutosavesConfiguration = false,
-            CenteredItemIdentifier = SearchId
+            AutosavesConfiguration = false
         };
+        _toolbar = toolbar;
         return toolbar;
     }
 
-    private static string[] Identifiers() =>
+    private static readonly string[] LeadingIdentifiers =
     [
         ToggleSidebarId,
-        SidebarSeparatorId,
+        // Adjacent buttons share one glass capsule; the space gives sync a capsule of its own.
+        NSToolbar.NSToolbarSpaceItemIdentifier,
         SyncId,
+        NSToolbar.NSToolbarFlexibleSpaceItemIdentifier
+    ];
+
+    private static readonly string[] TrailingIdentifiers =
+    [
         NSToolbar.NSToolbarFlexibleSpaceItemIdentifier,
         SearchId,
-        NSToolbar.NSToolbarFlexibleSpaceItemIdentifier,
         BriefingId,
         WhatsNewId,
         AccountId
     ];
+
+    private string[] Identifiers() => [.. LeadingIdentifiers, .. CommandIdentifiers(), .. TrailingIdentifiers];
+
+    /// <summary>The visible command groups in the configured order, a space between groups.</summary>
+    private string[] CommandIdentifiers()
+    {
+        var ids = new List<string>();
+        foreach (var group in _visibleGroups)
+        {
+            if (group.Length == 0) continue;
+            if (ids.Count > 0) ids.Add(NSToolbar.NSToolbarSpaceItemIdentifier);
+            ids.AddRange(group.Select(CommandId));
+        }
+        return ids.ToArray();
+    }
+
+    private static string CommandId(ShellCommand command) => CommandIdPrefix + command;
+
+    /// <summary>
+    /// Applies the reader action layout (Settings › Reader & Composer › Reader actions): each group keeps
+    /// its members in the configured order and drops the hidden ones. Move has no layout entry and stays.
+    /// </summary>
+    public void SetCommandLayout(IEnumerable<ReaderCommandLayoutEntry> entries)
+    {
+        var order = new Dictionary<ShellCommand, int>();
+        var hidden = new HashSet<ShellCommand>();
+        int position = 0;
+        foreach (var entry in entries)
+        {
+            if (ToShellCommand(entry.Action) is not { } command) continue;
+            order[command] = position++;
+            if (!entry.IsVisible) hidden.Add(command);
+        }
+        var groups = CommandGroups
+            .Select(group => group.Where(command => !hidden.Contains(command))
+                .OrderBy(command => order.TryGetValue(command, out var index) ? index : int.MaxValue)
+                .ToArray())
+            .ToArray();
+        if (groups.Select(group => string.Join(',', group)).SequenceEqual(_visibleGroups.Select(group => string.Join(',', group)))) return;
+        _visibleGroups = groups;
+        RebuildCommandItems();
+    }
+
+    private static ShellCommand? ToShellCommand(ReaderCommandAction action) => action switch
+    {
+        ReaderCommandAction.Reply => ShellCommand.Reply,
+        ReaderCommandAction.ReplyAll => ShellCommand.ReplyAll,
+        ReaderCommandAction.Forward => ShellCommand.Forward,
+        ReaderCommandAction.Archive => ShellCommand.Archive,
+        ReaderCommandAction.Delete => ShellCommand.Delete,
+        ReaderCommandAction.Flag => ShellCommand.Flag,
+        ReaderCommandAction.ReadState => ShellCommand.ToggleRead,
+        _ => null
+    };
+
+    /// <summary>Replaces the command items between the leading and trailing groups with the current layout.</summary>
+    private void RebuildCommandItems()
+    {
+        if (_toolbar is null) return;
+        var items = _toolbar.Items;
+        for (int index = items.Length - 1; index >= LeadingIdentifiers.Length; index--)
+        {
+            var id = items[index].Identifier;
+            if (id.StartsWith(CommandIdPrefix, StringComparison.Ordinal) || id == NSToolbar.NSToolbarSpaceItemIdentifier)
+                _toolbar.RemoveItem(index);
+        }
+        _commandItems.Clear();
+        int insertAt = LeadingIdentifiers.Length;
+        foreach (var id in CommandIdentifiers()) _toolbar.InsertItem(id, insertAt++);
+    }
+
+    /// <summary>
+    /// The space before sync must be navigational too, or AppKit moves it after the window title
+    /// and the sync button joins the sidebar toggle's capsule. The later spaces separate the command groups.
+    /// </summary>
+    public override void WillAddItem(NSNotification notification)
+    {
+        if (_navigationalSpaceAdded) return;
+        if (notification.UserInfo?["item"] is NSToolbarItem { Identifier: var identifier } item && identifier == NSToolbar.NSToolbarSpaceItemIdentifier)
+        {
+            item.Navigational = true;
+            _navigationalSpaceAdded = true;
+        }
+    }
 
     public override string[] DefaultItemIdentifiers(NSToolbar toolbar) => Identifiers();
     public override string[] AllowedItemIdentifiers(NSToolbar toolbar) => Identifiers();
@@ -98,8 +226,6 @@ internal sealed class ShellToolbar : NSToolbarDelegate
                 toggle.ToolTip = $"{Translator.MacOSMenu_ToggleSidebar} (⌃⌘S)";
                 toggle.Navigational = true;
                 return toggle;
-            case SidebarSeparatorId:
-                return NSTrackingSeparatorToolbarItem.GetTrackingSeparatorToolbar(SidebarSeparatorId, _splitView, 0);
             case SyncId:
                 return _syncItem = CreateSyncItem();
             case SearchId:
@@ -110,6 +236,8 @@ internal sealed class ShellToolbar : NSToolbarDelegate
                 _whatsNewItem = Button(WhatsNewId, WinoIconGlyph.Announcement, Translator.WhatsNew_ShellButtonTooltip, () => _whatsNew());
                 _whatsNewItem.Hidden = !_whatsNewVisible;
                 return _whatsNewItem;
+            case var id when id.StartsWith(CommandIdPrefix, StringComparison.Ordinal):
+                return CreateCommandItem(id);
             case AccountId:
                 _accountItem = Button(AccountId, WinoIconGlyph.Person, Translator.WinoAccount_Titlebar_SignedOutTitle, null);
                 var view = (NSButton)_accountItem.View!;
@@ -139,6 +267,60 @@ internal sealed class ShellToolbar : NSToolbarDelegate
         return item;
     }
 
+    private NSToolbarItem CreateCommandItem(string id)
+    {
+        var entry = Commands.First(entry => CommandId(entry.Command) == id);
+        var title = entry.Title();
+        var item = Button(id, entry.Glyph, title, null);
+        var button = (NSButton)item.View!;
+        button.Title = title;
+        button.Font = NSFont.SystemFontOfSize(NSFont.SystemFontSize);
+        button.Activated += (_, _) => Safe(() => _execute(entry.Command, button));
+        _commandItems[entry.Command] = item;
+        ApplyCommandLabel(button);
+        ApplyCommandState(entry.Command, item);
+        return item;
+    }
+
+    /// <summary>Settings › Reader actions › "Show action labels": the mail action buttons show their title beside the glyph.</summary>
+    public void SetCommandLabels(bool visible)
+    {
+        if (_showsCommandLabels == visible) return;
+        _showsCommandLabels = visible;
+        foreach (var item in _commandItems.Values)
+            if (item.View is NSButton button) ApplyCommandLabel(button);
+    }
+
+    private void ApplyCommandLabel(NSButton button)
+        => button.ImagePosition = _showsCommandLabels ? NSCellImagePosition.ImageLeading : NSCellImagePosition.ImageOnly;
+
+    private void ApplyCommandState(ShellCommand command, NSToolbarItem item)
+    {
+        item.Hidden = !_hasCommandTarget();
+        if (item.View is not NSButton button) return;
+        button.Enabled = _canExecute(command);
+        if (ToggledAppearance(command, _isActive(command)) is not var (glyph, title) || item.Label == title) return;
+        button.Image = WinoIcons.Image(glyph, 17, null, title);
+        button.Title = title;
+        button.ToolTip = title;
+        WinoAccessibility.Label(button, title);
+        item.Label = title;
+        item.PaletteLabel = title;
+        item.ToolTip = title;
+    }
+
+    /// <summary>Flag and ToggleRead show the action they will run: Clear flag on a flagged selection, Mark as unread on a read one.</summary>
+    private static (WinoIconGlyph Glyph, string Title)? ToggledAppearance(ShellCommand command, bool active) => command switch
+    {
+        ShellCommand.Flag => active ? (WinoIconGlyph.ClearFlag, Translator.MailOperation_ClearFlag) : (WinoIconGlyph.Flag, Translator.MailOperation_Flag),
+        ShellCommand.ToggleRead => active ? (WinoIconGlyph.MarkUnread, Translator.MailOperation_MarkAsUnread) : (WinoIconGlyph.MarkRead, Translator.MailOperation_MarkAsRead),
+        _ => null
+    };
+
+    /// <summary>Debug: each command item's label, enabled and hidden state.</summary>
+    internal string DumpCommands() => string.Join(" | ", _commandItems.Select(pair =>
+        $"{pair.Key}='{pair.Value.Label}' enabled={(pair.Value.View as NSButton)?.Enabled} hidden={pair.Value.Hidden}"));
+
     private void Safe(Action action)
     {
         try { action(); }
@@ -158,9 +340,15 @@ internal sealed class ShellToolbar : NSToolbarDelegate
             IsDisplayedWhenStopped = false,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
+        // Relay health: a red dot on the sync button only while relay-based sync runs on the 5 minute fallback timer.
+        _relayFallbackDot = new WinoSurfaceView { CornerRadius = 3, Fill = NSColor.SystemRed, Hidden = !_relayFallbackActive };
+        _relayFallbackDot.ToolTip = Translator.Relay_FallbackFlyoutMessage;
+        WinoAccessibility.Label(_relayFallbackDot, Translator.Relay_FallbackIndicatorAutomationName);
+        WinoLayout.Size(_relayFallbackDot, 6, 6);
         var container = new NSView { TranslatesAutoresizingMaskIntoConstraints = false };
         container.AddSubview(_syncButton);
         container.AddSubview(_syncProgress);
+        container.AddSubview(_relayFallbackDot);
         NSLayoutConstraint.ActivateConstraints(
         [
             _syncButton.LeadingAnchor.ConstraintEqualTo(container.LeadingAnchor),
@@ -168,10 +356,23 @@ internal sealed class ShellToolbar : NSToolbarDelegate
             _syncButton.TopAnchor.ConstraintEqualTo(container.TopAnchor),
             _syncButton.BottomAnchor.ConstraintEqualTo(container.BottomAnchor),
             _syncProgress.CenterXAnchor.ConstraintEqualTo(_syncButton.CenterXAnchor),
-            _syncProgress.CenterYAnchor.ConstraintEqualTo(_syncButton.CenterYAnchor)
+            _syncProgress.CenterYAnchor.ConstraintEqualTo(_syncButton.CenterYAnchor),
+            _relayFallbackDot.TrailingAnchor.ConstraintEqualTo(_syncButton.TrailingAnchor, -5),
+            _relayFallbackDot.TopAnchor.ConstraintEqualTo(_syncButton.TopAnchor, 4)
         ]);
         item.View = container;
+        // Navigational items sit before the window title, so the title follows the sync button.
+        item.Navigational = true;
         return item;
+    }
+
+    /// <summary>Shows the relay fallback dot. Silent while live updates flow.</summary>
+    public void SetRelayFallbackActive(bool active)
+    {
+        _relayFallbackActive = active;
+        if (_relayFallbackDot is not null) _relayFallbackDot.Hidden = !active;
+        if (_syncButton is not null)
+            _syncButton.ToolTip = active ? $"{Translator.Relay_FallbackFlyoutTitle}. {Translator.Relay_FallbackFlyoutMessage}" : "Synchronize";
     }
 
     private NSToolbarItem CreateBriefingItem()
@@ -180,21 +381,16 @@ internal sealed class ShellToolbar : NSToolbarDelegate
         _briefingButton = (NSButton)item.View!;
         _briefingButton.SetButtonType(NSButtonType.PushOnPushOff);
         _briefingButton.Activated += (_, _) => Safe(() => _briefing(_briefingButton));
+        // The dot sits inside the button itself: wrapping the button in a container stops the
+        // toolbar from styling it like its siblings, and the bezel then fills the wrong shape.
         _briefingDot = new WinoSurfaceView { CornerRadius = 3, Fill = WinoStyle.Accent, Hidden = true };
         WinoLayout.Size(_briefingDot, 6, 6);
-        var container = new NSView { TranslatesAutoresizingMaskIntoConstraints = false };
-        container.AddSubview(_briefingButton);
-        container.AddSubview(_briefingDot);
+        _briefingButton.AddSubview(_briefingDot);
         NSLayoutConstraint.ActivateConstraints(
         [
-            _briefingButton.LeadingAnchor.ConstraintEqualTo(container.LeadingAnchor),
-            _briefingButton.TrailingAnchor.ConstraintEqualTo(container.TrailingAnchor),
-            _briefingButton.TopAnchor.ConstraintEqualTo(container.TopAnchor),
-            _briefingButton.BottomAnchor.ConstraintEqualTo(container.BottomAnchor),
             _briefingDot.TrailingAnchor.ConstraintEqualTo(_briefingButton.TrailingAnchor, -5),
             _briefingDot.TopAnchor.ConstraintEqualTo(_briefingButton.TopAnchor, 4)
         ]);
-        item.View = container;
         item.Hidden = !_briefingVisible;
         ApplyBriefing();
         return item;
@@ -206,7 +402,7 @@ internal sealed class ShellToolbar : NSToolbarDelegate
         {
             Label = Translator.SearchBarPlaceholder,
             PaletteLabel = Translator.SearchBarPlaceholder,
-            PreferredWidthForSearchField = 390,
+            PreferredWidthForSearchField = 240,
             ResignsFirstResponderWithCancel = true
         };
         var field = item.SearchField;
@@ -264,6 +460,7 @@ internal sealed class ShellToolbar : NSToolbarDelegate
     /// <summary>Re-reads search support from the current content page.</summary>
     public void Revalidate()
     {
+        foreach (var (command, item) in _commandItems) ApplyCommandState(command, item);
         if (_searchItem?.SearchField is not { } field) return;
         var target = _searchTarget();
         field.Enabled = target is not null;

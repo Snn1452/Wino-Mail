@@ -6,17 +6,61 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.UI.ViewManagement;
 using Wino.Calendar.ViewModels.Data;
 using Wino.Calendar.ViewModels.Messages;
+using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
+using Wino.Helpers;
 using Wino.Mail.WinUI;
+using Wino.Mail.WinUI.Helpers;
 namespace Wino.Calendar.Controls;
 
 public sealed partial class CalendarItemControl : UserControl
 {
+    // Height tiers, from the XAML text metrics: the text panel starts 3 px down, a 13 px
+    // SemiBold title line is 18 px tall, an 11 px detail line 15 px, and lines are 2 px apart.
+    // Thresholds are fixed pixels; at text scaling above 100% the text can still clip.
+    private const double TextTopMargin = 3d;
+    private const double TitleLineHeight = 18d;
+    private const double DetailLineHeight = 15d;
+    private const double LineSpacing = 2d;
+    private const double BottomSlack = 1d;
+
+    private const double CompactTierMinHeight = 14d;
+
+    private const double SingleLineTierMinHeight = TextTopMargin + TitleLineHeight;
+
+    private const double TwoLineTierMinHeight = TextTopMargin + (TitleLineHeight * 2d) + BottomSlack;
+
+    private const double TimeTierMinHeight = TextTopMargin + (TitleLineHeight * 2d) + LineSpacing + DetailLineHeight + BottomSlack;
+
+    private const double FullTierMinHeight = TimeTierMinHeight + LineSpacing + DetailLineHeight;
+
+    private const double AttributeIconsMinWidth = 48d;
+
     [CommunityToolkit.WinUI.GeneratedDependencyProperty]
     public partial bool ProtectTitle { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial bool IsDragDisabled { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial Brush? TileBackground { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial Brush? TileAccent { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial Brush? TileHover { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial Brush? TileTextBrush { get; set; }
+
+    [CommunityToolkit.WinUI.GeneratedDependencyProperty]
+    public partial Brush? TileOutline { get; set; }
 
     private readonly IContextMenuItemService _contextMenuItemService;
 #if DEBUG
@@ -67,6 +111,7 @@ public sealed partial class CalendarItemControl : UserControl
             if (e.OldValue is CalendarItemViewModel previous) previous.PropertyChanged -= control.OnEventPropertyChanged;
             if (control.IsLoaded && e.NewValue is CalendarItemViewModel current) current.PropertyChanged += control.OnEventPropertyChanged;
             control.UpdateVisualStates();
+            control.ApplyTileAppearance();
             FrameworkElementAutomationPeer.FromElement(control)?.InvalidatePeer();
         }
     }
@@ -76,6 +121,7 @@ public sealed partial class CalendarItemControl : UserControl
         if (CalendarItem is null) return;
         CalendarItem.PropertyChanged -= OnEventPropertyChanged;
         CalendarItem.PropertyChanged += OnEventPropertyChanged;
+        ApplyTileAppearance();
     }
 
     private void OnControlUnloaded(object sender, RoutedEventArgs args)
@@ -84,7 +130,83 @@ public sealed partial class CalendarItemControl : UserControl
     }
 
     private void OnEventPropertyChanged(object? sender, PropertyChangedEventArgs args)
-        => FrameworkElementAutomationPeer.FromElement(this)?.InvalidatePeer();
+    {
+        if (args.PropertyName is nameof(CalendarItemViewModel.DisplayColorHex)
+            or nameof(CalendarItemViewModel.ShowAs)
+            or nameof(CalendarItemViewModel.IsCancelled)
+            or nameof(CalendarItemViewModel.NeedsResponse)
+            or nameof(CalendarItemViewModel.IsPast))
+        {
+            ApplyTileAppearance();
+        }
+
+        FrameworkElementAutomationPeer.FromElement(this)?.InvalidatePeer();
+    }
+
+    private void OnControlActualThemeChanged(FrameworkElement sender, object args) => ApplyTileAppearance();
+
+    private void MainGridPointerEntered(object sender, PointerRoutedEventArgs e) => VisualStateManager.GoToState(this, "PointerOver", true);
+
+    private void MainGridPointerLeft(object sender, PointerRoutedEventArgs e) => VisualStateManager.GoToState(this, "PointerNormal", true);
+
+    private void BarHostSizeChanged(object sender, SizeChangedEventArgs e) => DashedBar.Y2 = e.NewSize.Height;
+
+    /// <summary>
+    /// Applies the calendar-colour brushes and the show-as, response and past states. A contrast theme
+    /// replaces every calendar colour with system colours, so calendar identity is only in the name.
+    /// </summary>
+    private void ApplyTileAppearance()
+    {
+        var item = CalendarItem;
+        if (item is null) return;
+
+        var isGhost = item.IsMultiDayEvent && !IsCustomEventArea;
+        var isFree = item.ShowAs == CalendarItemShowAs.Free;
+        var isTentative = item.ShowAs == CalendarItemShowAs.Tentative;
+        var hasNoWash = isFree || item.IsCancelled;
+        var isContrastTheme = ContrastThemeHelper.IsActive;
+
+        if (isContrastTheme)
+        {
+            var windowText = new SolidColorBrush(ContrastThemeHelper.GetSystemColor(UIElementType.WindowText));
+
+            TileAccent = windowText;
+            TileTextBrush = windowText;
+            TileOutline = windowText;
+            TileHover = null;
+            TileBackground = isGhost || hasNoWash ? null : new SolidColorBrush(ContrastThemeHelper.GetSystemColor(UIElementType.Window));
+        }
+        else
+        {
+            var colors = CalendarTileColors.Get(item.DisplayColorHex, ActualTheme == ElementTheme.Dark);
+            var accent = new SolidColorBrush(colors.Accent);
+            var text = new SolidColorBrush(colors.Text);
+
+            TileAccent = accent;
+            TileHover = accent;
+            TileTextBrush = text;
+            TileOutline = item.NeedsResponse ? text
+                : item.IsCancelled ? new SolidColorBrush(colors.NeutralOutline)
+                : isFree ? new SolidColorBrush(colors.FreeOutline)
+                : isTentative ? new SolidColorBrush(colors.TentativeOutline)
+                : null;
+            TileBackground = isGhost ? new SolidColorBrush(colors.Ghost)
+                : hasNoWash ? null
+                : item.NeedsResponse || item.IsPast ? new SolidColorBrush(colors.PastWash)
+                : new SolidColorBrush(colors.Wash);
+        }
+
+        var outlineState = isGhost ? "NoOutline"
+            : item.NeedsResponse ? "DashedOutline"
+            : isContrastTheme || hasNoWash || isTentative ? "SolidOutline"
+            : "NoOutline";
+        var barState = isGhost ? "SolidBarState" : isFree ? "HollowBarState" : isTentative ? "DashedBarState" : "SolidBarState";
+        var emphasisState = isGhost ? "NormalEmphasis" : item.IsCancelled ? "CancelledEmphasis" : item.IsPast ? "PastEmphasis" : "NormalEmphasis";
+
+        VisualStateManager.GoToState(this, outlineState, false);
+        VisualStateManager.GoToState(this, barState, false);
+        VisualStateManager.GoToState(this, emphasisState, false);
+    }
 
     private void UpdateVisualStates()
     {
@@ -92,7 +214,7 @@ public sealed partial class CalendarItemControl : UserControl
 
         if (CalendarItem.IsAllDayEvent)
         {
-            VisualStateManager.GoToState(this, "AllDayEvent", true);
+            VisualStateManager.GoToState(this, IsCustomEventArea ? "CustomAreaMultiDayEvent" : "AllDayEvent", true);
         }
         else if (CalendarItem.IsMultiDayEvent)
         {
@@ -106,15 +228,21 @@ public sealed partial class CalendarItemControl : UserControl
                 VisualStateManager.GoToState(this, "MultiDayEvent", true);
             }
         }
+        else if (IsCustomEventArea)
+        {
+            VisualStateManager.GoToState(this, "MonthEvent", true);
+        }
         else
         {
             VisualStateManager.GoToState(this, "RegularEvent", true);
         }
+
+        UpdateSizeStates(ActualWidth, ActualHeight);
     }
 
     private void ControlDragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        if (CalendarItem?.CanDragDrop != true)
+        if (IsDragDisabled || CalendarItem?.CanDragDrop != true)
         {
             args.Cancel = true;
             IsDragging = false;
@@ -132,12 +260,34 @@ public sealed partial class CalendarItemControl : UserControl
         IsDragging = true;
     }
 
-    private void ControlSizeChanged(object sender, SizeChangedEventArgs e)
+    private void ControlSizeChanged(object sender, SizeChangedEventArgs e) => UpdateSizeStates(e.NewSize.Width, e.NewSize.Height);
+
+    /// <summary>Presenters are recycled without a size change, so this also runs when the item changes.</summary>
+    private void UpdateSizeStates(double width, double height)
     {
-        EventDetailsPanel.Visibility = !IsCustomEventArea && CalendarItem?.IsAllDayEvent == false &&
-            CalendarItem?.IsMultiDayEvent == false && e.NewSize.Height >= 52
-            ? Visibility.Visible : Visibility.Collapsed;
+        if (width <= 0d || height <= 0d)
+        {
+            return;
+        }
+
+        var isSingleLineOnly = IsCustomEventArea || ProtectTitle || CalendarItem is null || CalendarItem.IsAllDayEvent || CalendarItem.IsMultiDayEvent;
+        var heightState = height switch
+        {
+            < CompactTierMinHeight => "HiddenTextHeight",
+            < SingleLineTierMinHeight => "CompactHeight",
+            _ when isSingleLineOnly || height < TwoLineTierMinHeight => "SingleLineHeight",
+            < TimeTierMinHeight => "TwoLineHeight",
+            < FullTierMinHeight => "TwoLineWithTimeHeight",
+            _ => "FullHeight"
+        };
+
+        VisualStateManager.GoToState(this, heightState, false);
+        VisualStateManager.GoToState(this, width < AttributeIconsMinWidth ? "NarrowWidth" : "RegularWidth", false);
     }
+
+    partial void OnProtectTitleChanged(bool newValue) => UpdateSizeStates(ActualWidth, ActualHeight);
+
+    public static bool CanDragItem(bool canDragDrop, bool isDragDisabled) => canDragDrop && !isDragDisabled;
 
     private void ControlDropped(UIElement sender, DropCompletedEventArgs args) => IsDragging = false;
 

@@ -5,10 +5,10 @@ using Wino.Presentation.AppKit;
 namespace Wino.Mail.Controls.AppKit.Shell;
 
 /// <summary>
-/// Row background for the shell pane. Selection is the Windows NavigationViewItem look: a subtle
-/// rounded fill inset from the pane edges and a 3pt accent pipe on the left, never the blue
-/// source-list highlight. <see cref="ShowsIndicator"/> draws the pipe alone, which is how the
-/// active account is marked while a folder below it holds the selection.
+/// Row background for the shell pane: the source-list look, a subtle rounded fill inset from the
+/// pane edges, with a lighter fill on hover. <see cref="ShowsIndicator"/> marks the active account
+/// while a folder below it holds the selection; the cell shows it through its title weight, so the
+/// row itself draws nothing for it.
 /// </summary>
 public sealed class WinoShellRowView : NSTableRowView
 {
@@ -18,6 +18,7 @@ public sealed class WinoShellRowView : NSTableRowView
     private bool _showsIndicator;
     private bool _highlightable = true;
     private bool _isDropTarget;
+    private bool _hovered;
 
     /// <summary>Draws the accent pipe even while the row is not selected.</summary>
     public bool ShowsIndicator
@@ -43,6 +44,33 @@ public sealed class WinoShellRowView : NSTableRowView
         set { if (_isDropTarget == value) return; _isDropTarget = value; NeedsDisplay = true; }
     }
 
+    /// <summary>True while the pointer is over the row; the pane draws a lighter fill than the selection.</summary>
+    public bool IsHovered
+    {
+        get => _hovered;
+        set { if (_hovered == value) return; _hovered = value; NeedsDisplay = true; }
+    }
+
+    private NSTrackingArea? _tracking;
+
+    /// <summary>One InVisibleRect area follows the bounds by itself; it is added once rather than rebuilt per scroll.</summary>
+    public override void UpdateTrackingAreas()
+    {
+        base.UpdateTrackingAreas();
+        if (_tracking is not null) return;
+        _tracking = new NSTrackingArea(Bounds, NSTrackingAreaOptions.MouseEnteredAndExited | NSTrackingAreaOptions.ActiveInKeyWindow | NSTrackingAreaOptions.InVisibleRect, this, null);
+        AddTrackingArea(_tracking);
+    }
+
+    public override void MouseEntered(NSEvent theEvent) => IsHovered = true;
+    public override void MouseExited(NSEvent theEvent) => IsHovered = false;
+
+    public override void PrepareForReuse()
+    {
+        base.PrepareForReuse();
+        IsHovered = false;
+    }
+
     /// <summary>Cells keep their own colours; nothing is inverted on selection.</summary>
     public override NSBackgroundStyle InteriorBackgroundStyle => NSBackgroundStyle.Normal;
 
@@ -50,16 +78,23 @@ public sealed class WinoShellRowView : NSTableRowView
     {
         if (!_highlightable) return;
         var rect = new CGRect(Bounds.X + HorizontalInset, Bounds.Y + 0.5, Bounds.Width - HorizontalInset * 2, Bounds.Height - 1);
-        WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.06), WinoStyle.Hex(0xFFFFFF, 0.10)).SetFill();
+        // The selected title is semibold accent text, so the fill is a tint of the same accent rather than neutral grey.
+        WinoStyle.Accent.ColorWithAlphaComponent(WinoIcons.IsDark(EffectiveAppearance) ? 0.10f : 0.08f).SetFill();
         NSBezierPath.FromRoundedRect(rect, (nfloat)CornerRadius, (nfloat)CornerRadius).Fill();
-        DrawIndicator();
     }
 
     public override void DrawBackground(CGRect dirtyRect)
     {
         base.DrawBackground(dirtyRect);
-        if (!Selected && _showsIndicator) DrawIndicator();
+        if (!Selected && _hovered && _highlightable && !_isDropTarget) DrawHover();
         if (_isDropTarget) DrawDropTarget();
+    }
+
+    private void DrawHover()
+    {
+        var rect = new CGRect(Bounds.X + HorizontalInset, Bounds.Y + 0.5, Bounds.Width - HorizontalInset * 2, Bounds.Height - 1);
+        WinoStyle.RowHoverFill.SetFill();
+        NSBezierPath.FromRoundedRect(rect, (nfloat)CornerRadius, (nfloat)CornerRadius).Fill();
     }
 
     private void DrawDropTarget()
@@ -75,14 +110,6 @@ public sealed class WinoShellRowView : NSTableRowView
 
     /// <summary>The pane draws its own drop highlight (<see cref="IsDropTarget"/>).</summary>
     public override void DrawDraggingDestinationFeedback(CGRect dirtyRect) { }
-
-    private void DrawIndicator()
-    {
-        var inset = Math.Min(11, Bounds.Height / 4);
-        var rect = new CGRect(Bounds.X + 4, Bounds.Y + inset, 3, Bounds.Height - inset * 2);
-        WinoStyle.Accent.SetFill();
-        NSBezierPath.FromRoundedRect(rect, 1.5f, 1.5f).Fill();
-    }
 
     public override void ViewDidChangeEffectiveAppearance()
     {

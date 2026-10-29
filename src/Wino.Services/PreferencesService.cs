@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -181,6 +182,12 @@ public partial class PreferencesService(IConfigurationService configurationServi
         set => SetPropertyAndSave(nameof(IsShowActionLabelsEnabled), value);
     }
 
+    public string ReaderCommandLayout
+    {
+        get => _configurationService.Get(nameof(ReaderCommandLayout), string.Empty);
+        set => SetPropertyAndSave(nameof(ReaderCommandLayout), value);
+    }
+
     public bool IsShowSenderPicturesEnabled
     {
         get => _configurationService.Get(nameof(IsShowSenderPicturesEnabled), true);
@@ -221,6 +228,18 @@ public partial class PreferencesService(IConfigurationService configurationServi
     {
         get => _configurationService.Get(nameof(RenderImages), true);
         set => SetPropertyAndSave(nameof(RenderImages), value);
+    }
+
+    public MailContentTheme ReaderContentTheme
+    {
+        get => GetDefinedEnum(nameof(ReaderContentTheme), MailContentTheme.FollowApplication);
+        set => SetPropertyAndSave(nameof(ReaderContentTheme), GetDefinedValue(value, MailContentTheme.FollowApplication));
+    }
+
+    public MailDarkModeMethod ReaderDarkModeMethod
+    {
+        get => GetDefinedEnum(nameof(ReaderDarkModeMethod), MailDarkModeMethod.Adaptive);
+        set => SetPropertyAndSave(nameof(ReaderDarkModeMethod), GetDefinedValue(value, MailDarkModeMethod.Adaptive));
     }
 
     public TimeFormatPreference MailTimeFormatPreference
@@ -642,7 +661,7 @@ public partial class PreferencesService(IConfigurationService configurationServi
 
     public int CalendarSyncIntervalMinutes
     {
-        get => _configurationService.Get(nameof(CalendarSyncIntervalMinutes), 5);
+        get => _configurationService.Get(nameof(CalendarSyncIntervalMinutes), Constants.DefaultCalendarSyncIntervalMinutes);
         set => SetPropertyAndSave(nameof(CalendarSyncIntervalMinutes), Math.Max(1, value));
     }
 
@@ -660,9 +679,17 @@ public partial class PreferencesService(IConfigurationService configurationServi
 
     public int EmailSyncIntervalMinutes
     {
-        get => _configurationService.Get(nameof(EmailSyncIntervalMinutes), 3);
+        get => _configurationService.Get(nameof(EmailSyncIntervalMinutes), Constants.DefaultEmailSyncIntervalMinutes);
         set => SetPropertyAndSave(nameof(EmailSyncIntervalMinutes), value);
     }
+
+    public SyncMethod SyncMethod
+    {
+        get => GetDefinedEnum(nameof(SyncMethod), SyncMethod.Relay);
+        set => SetPropertyAndSave(nameof(SyncMethod), value);
+    }
+
+    public bool IsSyncMethodConfigured => _configurationService.Contains(nameof(SyncMethod));
 
     public bool IsUndoSendingDraftsEnabled
     {
@@ -688,10 +715,48 @@ public partial class PreferencesService(IConfigurationService configurationServi
         set => SetPropertyAndSave(nameof(UndoDeletingMailsIntervalInSeconds), Math.Clamp(value, 1, 10));
     }
 
-    public bool IsAppModeTaskbarIconSwitchDisabled
+    public IReadOnlyCollection<WinoApplicationMode> HiddenApplicationModes
     {
-        get => _configurationService.Get(nameof(IsAppModeTaskbarIconSwitchDisabled), false);
-        set => SetPropertyAndSave(nameof(IsAppModeTaskbarIconSwitchDisabled), value);
+        get
+        {
+            var modes = new HashSet<WinoApplicationMode>();
+            var stored = _configurationService.Get(nameof(HiddenApplicationModes), string.Empty);
+
+            if (string.IsNullOrEmpty(stored))
+                return modes;
+
+            foreach (var part in stored.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (Enum.TryParse<WinoApplicationMode>(part, out var mode) &&
+                    Enum.IsDefined(mode) &&
+                    mode != WinoApplicationMode.Settings)
+                {
+                    modes.Add(mode);
+                }
+            }
+
+            return modes;
+        }
+        set
+        {
+            var names = (value ?? Array.Empty<WinoApplicationMode>())
+                .Where(mode => mode != WinoApplicationMode.Settings)
+                .Distinct()
+                .Select(mode => mode.ToString());
+
+            SetPropertyAndSave(nameof(HiddenApplicationModes), string.Join(',', names));
+        }
+    }
+
+    public void SetApplicationModeHidden(WinoApplicationMode mode, bool isHidden)
+    {
+        var modes = new HashSet<WinoApplicationMode>(HiddenApplicationModes);
+        var changed = isHidden ? modes.Add(mode) : modes.Remove(mode);
+
+        if (changed)
+        {
+            HiddenApplicationModes = modes;
+        }
     }
 
     public bool IsStoreUpdateNotificationsEnabled
@@ -806,16 +871,31 @@ public partial class PreferencesService(IConfigurationService configurationServi
         set => SetPropertyAndSave(nameof(AreQuietHoursEnabled), value);
     }
 
+    // The Windows time pickers bind two-way to these, and a picker writes the value back when the binding pushes it in.
+    // Raising a change for that echo pushes it in again, which recursed until the stack overflowed (Reset on the
+    // notifications page). An unchanged value is therefore not saved or announced.
     public TimeSpan QuietHoursStart
     {
         get => _configurationService.Get(nameof(QuietHoursStart), new TimeSpan(18, 30, 0));
-        set => SetPropertyAndSave(nameof(QuietHoursStart), value);
+        set
+        {
+            if (_configurationService.Contains(nameof(QuietHoursStart)) && QuietHoursStart == value)
+                return;
+
+            SetPropertyAndSave(nameof(QuietHoursStart), value);
+        }
     }
 
     public TimeSpan QuietHoursEnd
     {
         get => _configurationService.Get(nameof(QuietHoursEnd), new TimeSpan(8, 0, 0));
-        set => SetPropertyAndSave(nameof(QuietHoursEnd), value);
+        set
+        {
+            if (_configurationService.Contains(nameof(QuietHoursEnd)) && QuietHoursEnd == value)
+                return;
+
+            SetPropertyAndSave(nameof(QuietHoursEnd), value);
+        }
     }
 
     public QuietHoursDays QuietHoursDays

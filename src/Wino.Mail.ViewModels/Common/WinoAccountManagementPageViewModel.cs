@@ -437,10 +437,10 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         _preferencesService.AiSummarizeLanguageCode = value.Code;
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeAsync(mode, parameters);
 
-    public async Task InitializeAsync(NavigationMode mode, object parameters)
+    public async Task InitializeAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
         var forceProfileRefresh = parameters is WinoAccountManagementActivationReason.CheckoutCompleted;
@@ -645,7 +645,10 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     }
 
     private bool CanPurchaseAddOn(WinoAddOnItemViewModel? addOn)
-        => addOn != null && !addOn.IsPurchased && !addOn.IsLoading && !IsCheckoutInProgress;
+        => IsPurchaseAvailable && addOn != null && !addOn.IsPurchased && !addOn.IsLoading && !IsCheckoutInProgress;
+
+    /// <summary>The platform sells add-ons (<see cref="IPlatformCapabilities.Purchases"/>); the Buy buttons are hidden otherwise.</summary>
+    public bool IsPurchaseAvailable => _platformCapabilities.Purchases;
 
     private bool IsAppStoreAvailable => _platformCapabilities.AppleAppStore && _appStorePurchases?.IsAvailable == true;
 

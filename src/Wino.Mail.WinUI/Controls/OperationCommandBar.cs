@@ -61,8 +61,15 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
     [GeneratedDependencyProperty]
     public partial bool IsReaderViewEnabled { get; set; }
 
+    /// <summary>
+    /// Overrides the action labels preference, for previews of unsaved settings.
+    /// </summary>
+    [GeneratedDependencyProperty]
+    public partial bool? ShowActionLabels { get; set; }
+
     public event EventHandler<bool>? AIActionsEnabledChanged;
     public event EventHandler? PopOutClicked;
+    public event EventHandler<bool>? EditorThemeToggled;
 
     public OperationCommandBar()
     {
@@ -113,6 +120,11 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
     }
 
     partial void OnIsReaderViewToggleVisibleChanged(bool newValue)
+    {
+        QueueCommandRefresh();
+    }
+
+    partial void OnShowActionLabelsChanged(bool? newValue)
     {
         QueueCommandRefresh();
     }
@@ -199,17 +211,20 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
             PrimaryCommands.Add(CreateAIActionsToggleButton());
         }
 
-        if (IsPopOutButtonVisible)
+        // A reader layout places these itself; without one they keep their fixed places.
+        var hasBuiltInPlacement = HasBuiltInPlacement();
+
+        if (!hasBuiltInPlacement && IsPopOutButtonVisible)
         {
             PrimaryCommands.Add(CreatePopOutButton());
         }
 
-        if (IsEditorThemeToggleVisible)
+        if (!hasBuiltInPlacement && IsEditorThemeToggleVisible)
         {
             PrimaryCommands.Add(CreateThemeToggleButton());
         }
 
-        if (IsReaderViewToggleVisible)
+        if (!hasBuiltInPlacement && IsReaderViewToggleVisible)
         {
             SecondaryCommands.Add(CreateReaderViewToggleButton());
         }
@@ -252,7 +267,7 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
             .Append(IsEditorThemeToggleVisible).Append('|')
             .Append(IsReaderViewToggleVisible).Append('|')
             .Append(IsEditorThemeDark).Append('|')
-            .Append(_preferencesService?.IsShowActionLabelsEnabled == true).Append('|');
+            .Append(AreActionLabelsVisible()).Append('|');
 
         foreach (var item in MenuItems ?? [])
         {
@@ -297,9 +312,38 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
         }
     }
 
+    private bool HasBuiltInPlacement()
+    {
+        foreach (var item in MenuItems ?? [])
+        {
+            if (item is ReaderBuiltInMenuItem)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private ICommandBarElement? CreateBuiltInCommandElement(ReaderBuiltInMenuItem item)
+    {
+        return item.Operation switch
+        {
+            ReaderCommandAction.PopOut when IsPopOutButtonVisible => CreatePopOutButton(),
+            ReaderCommandAction.EditorTheme when IsEditorThemeToggleVisible => CreateThemeToggleButton(),
+            ReaderCommandAction.ReaderView when IsReaderViewToggleVisible => CreateReaderViewToggleButton(),
+            _ => null
+        };
+    }
+
     [DynamicWindowsRuntimeCast(typeof(AppBarButton))]
     private ICommandBarElement? CreateCommandElement(IMenuOperation item)
     {
+        if (item is ReaderBuiltInMenuItem builtInItem)
+        {
+            return CreateBuiltInCommandElement(builtInItem);
+        }
+
         if (item is MailOperationMenuItem mailOperation && mailOperation.Operation == MailOperation.Seperator)
         {
             return LoadCommandBarElementTemplate(SeparatorTemplateKey, new SeparatorCommandBarItemViewModel());
@@ -458,6 +502,7 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
     private void ThemeButton_Click(object sender, RoutedEventArgs e)
     {
         IsEditorThemeDark = !IsEditorThemeDark;
+        EditorThemeToggled?.Invoke(this, IsEditorThemeDark);
     }
 
     private void PopOutButton_Click(object sender, RoutedEventArgs e)
@@ -522,10 +567,13 @@ public sealed partial class OperationCommandBar : CommandBar, IRecipient<Languag
 
     private CommandBarLabelPosition GetOperationLabelPosition(string label)
     {
-        return string.IsNullOrWhiteSpace(label) || _preferencesService == null || !_preferencesService.IsShowActionLabelsEnabled
+        return string.IsNullOrWhiteSpace(label) || !AreActionLabelsVisible()
             ? CommandBarLabelPosition.Collapsed
             : CommandBarLabelPosition.Default;
     }
+
+    private bool AreActionLabelsVisible()
+        => ShowActionLabels ?? _preferencesService?.IsShowActionLabelsEnabled == true;
 
     private void UpdateOverflowButtonVisibility()
     {

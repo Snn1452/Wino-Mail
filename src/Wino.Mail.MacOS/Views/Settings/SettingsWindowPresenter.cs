@@ -42,9 +42,7 @@ public sealed class SettingsWindowPresenter : ISettingsWindowPresenter, IRecipie
         _dispatcher = dispatcher;
         _logger = logger;
         _registry = registry;
-        SettingsPageCatalog.IsSmimeAvailable = services.GetService<IPlatformCapabilities>()?.Smime ?? false;
         var entitlement = services.GetService<IWinoAccountIntelligenceSnapshotService>();
-        SettingsPageCatalog.CanAccessIntelligence = () => entitlement?.CurrentEntitlement?.CanAccessSurfaces ?? false;
         _lastCanAccessIntelligence = entitlement?.CurrentEntitlement?.CanAccessSurfaces ?? false;
         WeakReferenceMessenger.Default.Register<LanguageChanged>(this);
         WeakReferenceMessenger.Default.Register<WinoIntelligenceEntitlementChanged>(this);
@@ -333,7 +331,7 @@ public sealed class SettingsWindowPresenter : ISettingsWindowPresenter, IRecipie
             return new SettingsPlaceholderViewController(page);
         try
         {
-            return (NSViewController)_services.GetRequiredService(type);
+            return (NSViewController)Infrastructure.PageScopes.Resolve(_services, type);
         }
         catch (Exception exception)
         {

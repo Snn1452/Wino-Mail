@@ -54,13 +54,21 @@ public interface ISynchronizationManager
 
     /// <summary>
     /// Queues a mail action request to the corresponding account's synchronizer with optional synchronization triggering.
+    /// Pass <paramref name="allowUndo"/> false when no window can offer undo, so the request is not held in a grace period.
     /// </summary>
-    Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization);
+    Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization, bool allowUndo = true);
 
     /// <summary>
     /// Queues a grouped action that may contain requests for multiple accounts.
     /// </summary>
     Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization);
+
+    /// <summary>
+    /// Raised with the account id after change requests were added to that account's synchronizer queue
+    /// (after any undo delay), on the queuing thread. Mobile heads use it to schedule a flush that survives
+    /// the app leaving the foreground (<see cref="IApplicationRuntime.FlushQueuedRequestsAsync"/>).
+    /// </summary>
+    event EventHandler<Guid> RequestsQueued;
 
     /// <summary>
     /// Cancels the latest undoable queued action for the given account.

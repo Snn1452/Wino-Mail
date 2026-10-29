@@ -3,13 +3,17 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Settings;
 using Wino.Core.Domain.Models.Navigation;
+using Wino.Core.Domain.Models.Notifications;
+using Wino.Core.Domain.Models.PushRelay;
 using Wino.Core.Domain.Translations;
 using Wino.Core.ViewModels.Data;
 using CommunityToolkit.Mvvm.Messaging;
@@ -58,6 +62,14 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
     private readonly ICalendarService _calendarService;
     private readonly INotificationPolicyService _notificationPolicyService;
     private readonly IUserPresenceStateProvider _userPresenceStateProvider;
+    private readonly IPushRelayRegistrationService _pushRelay;
+    private readonly IPlatformCapabilities _capabilities;
+    private readonly IRelayIntroductionService? _introduction;
+    private readonly ISyncCoordinator? _syncCoordinator;
+    private readonly INotificationSoundProvider? _soundProvider;
+    private Dictionary<Guid, string> _accountNames = [];
+    private bool _isApplyingPushRelaySnapshot;
+    private bool _isSubscribedToPushRelay;
 
     private bool _isLoaded;
     private bool _isUpdatingSelection;
@@ -67,9 +79,19 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
         IAccountService accountService,
         ICalendarService calendarService,
         INotificationPolicyService notificationPolicyService,
-        IUserPresenceStateProvider userPresenceStateProvider)
+        IUserPresenceStateProvider userPresenceStateProvider,
+        IPushRelayRegistrationService pushRelay,
+        IPlatformCapabilities capabilities,
+        IRelayIntroductionService? introduction = null,
+        ISyncCoordinator? syncCoordinator = null,
+        INotificationSoundProvider? soundProvider = null)
     {
         PreferencesService = preferencesService;
+        _soundProvider = soundProvider;
+        _pushRelay = pushRelay;
+        _capabilities = capabilities;
+        _introduction = introduction;
+        _syncCoordinator = syncCoordinator;
         _accountService = accountService;
         _calendarService = calendarService;
         _notificationPolicyService = notificationPolicyService;
@@ -133,6 +155,7 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
         }
 
         BuildQuietHoursDays();
+        ApplyPushRelaySnapshot(_pushRelay.Snapshot);
     }
 
     public IPreferencesService PreferencesService { get; }
@@ -189,8 +212,9 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
     {
         get
         {
+            // Unsnoozed, the card explains what snooze is for; snoozed, it says until when.
             if (!IsSnoozed)
-                return Translator.NotificationSettings_Hero_Active;
+                return Translator.NotificationSettings_Snooze_ActiveDescription;
 
             return SnoozedUntil is { } until
                 ? string.Format(Translator.NotificationSettings_Hero_SnoozedUntilFormat, FormatTime(until))
@@ -277,15 +301,283 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
 
     #endregion
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    #region Live notifications
+
+    /// <summary>Holding notifications while presenting needs presentation detection (desktop).</summary>
+    public bool IsSnoozeWhilePresentingAvailable => SettingAvailability.IsAvailable(PlatformSetting.SnoozeWhilePresenting, _capabilities);
+
+    /// <summary>The live notifications card exists on platforms that can use the relay.</summary>
+    public bool IsPushRelaySectionVisible => _capabilities.RemoteNotifications || IsPushRelayToggleVisible;
+
+    /// <summary>Opt-in platforms (macOS, Windows) show a switch; iOS is always on while signed in.</summary>
+    /// <summary>Desktop: the switch is the app-wide sync method (relay-based on, timer-based off).</summary>
+    public bool IsPushRelayToggleVisible => SettingAvailability.IsAvailable(PlatformSetting.SyncMethod, _capabilities);
+
+    /// <summary>The switch state on opt-in platforms; on iOS it mirrors whether the relay is active.</summary>
+    [ObservableProperty]
+    public partial bool IsPushRelayEnabled { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsPushRelayToggleEnabled { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsPushRelaySignInRequired { get; set; }
+
+    [ObservableProperty]
+    public partial string PushRelayStatusText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The status line only when something needs attention (service down, mailbox limit, an error). Empty while push
+    /// notifications work normally, are turned off, or wait for sign-in (which has its own message).
+    /// </summary>
+    [ObservableProperty]
+    public partial string PushRelayProblemText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The instant push card's description. Desktop explains its switch; mobile has no switch (push is always on), so it
+    /// shows how many mailboxes are watched, and nothing while a bar under the card already says what needs attention.
+    /// </summary>
+    [ObservableProperty]
+    public partial string InstantPushDescription { get; set; } = string.Empty;
+
+    /// <summary>Accounts the relay can no longer sign in to; empty when there are none.</summary>
+    [ObservableProperty]
+    public partial string PushRelayMailboxWarningText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsPushTestVisible { get; set; }
+
+    /// <summary>The outcome of the last test notification request; empty until one is sent.</summary>
+    [ObservableProperty]
+    public partial string PushRelayTestResultText { get; set; } = string.Empty;
+
+    public PushRelayAvailability PushRelayAvailability => _pushRelay.Snapshot.Availability;
+
+    /// <summary>
+    /// Set by the Windows page: shows the privacy policy and returns true when it was accepted. Only consulted when
+    /// <see cref="IRelayIntroductionService.IsPolicyAcceptanceRequired"/> says the recorded version is missing or old.
+    /// </summary>
+    public Func<Task<bool>>? PolicyAcceptanceHandler { get; set; }
+
+    partial void OnIsPushRelayEnabledChanged(bool value)
+    {
+        if (_isApplyingPushRelaySnapshot || !IsPushRelayToggleVisible || value == _pushRelay.IsUserOptedIn)
+            return;
+
+        _ = SetPushRelayOptInAsync(value);
+    }
+
+    private async Task SetPushRelayOptInAsync(bool enabled)
+    {
+        try
+        {
+            if (enabled && _introduction is { IsPolicyAcceptanceRequired: true })
+            {
+                // Heads without a policy dialog (unreleased apps whose store listing carries the policy) accept implicitly.
+                var accepted = PolicyAcceptanceHandler is not { } handler || await handler().ConfigureAwait(false);
+                if (!accepted)
+                {
+                    await ExecuteUIThread(() =>
+                    {
+                        _isApplyingPushRelaySnapshot = true;
+                        IsPushRelayEnabled = false;
+                        _isApplyingPushRelaySnapshot = false;
+                    });
+                    return;
+                }
+
+                _introduction.AcceptPolicy();
+            }
+
+            await _pushRelay.SetUserOptInAsync(enabled);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Serilog.Log.Warning(ex, "Changing the live notification setting failed.");
+        }
+
+        await ExecuteUIThread(() => ApplyPushRelaySnapshot(_pushRelay.Snapshot));
+    }
+
+    /// <summary>The relay accepts one test per minute; the button rests for that long after a send.</summary>
+    internal static readonly TimeSpan PushTestCooldown = TimeSpan.FromMinutes(1);
+
+    private bool _isPushTestCoolingDown;
+
+    private bool CanSendPushTest() => !_isPushTestCoolingDown;
+
+    [RelayCommand(CanExecute = nameof(CanSendPushTest))]
+    private async Task SendPushTestAsync()
+    {
+        PushRelayTestResultText = string.Empty;
+        var result = await _pushRelay.SendPushTestAsync(CancellationToken.None);
+        var text = result switch
+        {
+            PushRelayPushTestResult.Queued => Translator.NotificationSettings_PushRelay_TestQueued,
+            PushRelayPushTestResult.NoPushToken => Translator.NotificationSettings_PushRelay_TestNoToken,
+            PushRelayPushTestResult.RateLimited => Translator.NotificationSettings_PushRelay_TestRateLimited,
+            PushRelayPushTestResult.NotRegistered => Translator.NotificationSettings_PushRelay_TestNotRegistered,
+            _ => Translator.NotificationSettings_PushRelay_TestFailed
+        };
+
+        await ExecuteUIThread(() => PushRelayTestResultText = text);
+
+        if (result is PushRelayPushTestResult.Queued or PushRelayPushTestResult.RateLimited)
+            _ = CoolDownPushTestAsync();
+    }
+
+    private async Task CoolDownPushTestAsync()
+    {
+        await ExecuteUIThread(() =>
+        {
+            _isPushTestCoolingDown = true;
+            SendPushTestCommand.NotifyCanExecuteChanged();
+        });
+
+        await Task.Delay(PushTestCooldown);
+
+        await ExecuteUIThread(() =>
+        {
+            _isPushTestCoolingDown = false;
+            SendPushTestCommand.NotifyCanExecuteChanged();
+        });
+    }
+
+    private void PushRelaySnapshotChanged(object? sender, PushRelayRegistrationSnapshot snapshot)
+        => _ = ExecuteUIThread(() => ApplyPushRelaySnapshot(snapshot));
+
+    /// <summary>Maps the relay registration state onto the bound members. Runs on the UI thread.</summary>
+    public void ApplyPushRelaySnapshot(PushRelayRegistrationSnapshot snapshot)
+    {
+        _isApplyingPushRelaySnapshot = true;
+        try
+        {
+            var availability = snapshot.Availability;
+            IsPushRelayEnabled = IsPushRelayToggleVisible ? snapshot.IsUserOptedIn : availability == PushRelayAvailability.Enabled;
+            // Signed out, the switch can still be turned off, but not on.
+            IsPushRelayToggleEnabled = availability is not (PushRelayAvailability.UnsupportedPlatform or PushRelayAvailability.SignInRequired)
+                || (availability == PushRelayAvailability.SignInRequired && snapshot.IsUserOptedIn);
+            IsPushRelaySignInRequired = availability == PushRelayAvailability.SignInRequired;
+            IsPushTestVisible = _capabilities.RemoteNotifications && availability == PushRelayAvailability.Enabled && snapshot.DeviceId is not null;
+            PushRelayStatusText = GetPushRelayStatusText(snapshot);
+            PushRelayProblemText = GetPushRelayProblemText(snapshot);
+            PushRelayMailboxWarningText = GetPushRelayMailboxWarningText(snapshot);
+            InstantPushDescription = IsPushRelayToggleVisible
+                ? Translator.NotificationSettings_RealtimePush_Description
+                : IsPushRelaySignInRequired || !string.IsNullOrEmpty(PushRelayProblemText) ? string.Empty : PushRelayStatusText;
+            OnPropertyChanged(nameof(PushRelayAvailability));
+        }
+        finally
+        {
+            _isApplyingPushRelaySnapshot = false;
+        }
+    }
+
+    private static string GetPushRelayStatusText(PushRelayRegistrationSnapshot snapshot) => snapshot.Availability switch
+    {
+        PushRelayAvailability.UnsupportedPlatform or PushRelayAvailability.RejectedByRelay => Translator.NotificationSettings_PushRelay_PlatformUnsupported,
+        PushRelayAvailability.SignInRequired => Translator.NotificationSettings_PushRelay_SignInRequired,
+        PushRelayAvailability.DisabledByUser => Translator.NotificationSettings_PushRelay_Off,
+        PushRelayAvailability.ServiceUnavailable => Translator.NotificationSettings_PushRelay_ServiceUnavailable,
+        _ when snapshot.Mailboxes.Any(x => !x.IsWatched && x.LastErrorCode == PushRelayErrorCodes.MailboxLimitReached)
+            => Translator.NotificationSettings_PushRelay_LimitReached,
+        _ when snapshot.DeviceId is null && snapshot.LastErrorCode is { } error
+            => string.Format(Translator.NotificationSettings_PushRelay_ErrorFormat, error),
+        _ => string.Format(Translator.NotificationSettings_PushRelay_RegisteredFormat,
+            snapshot.Mailboxes.Count(x => x.IsWatched), snapshot.MailboxLimit)
+    };
+
+    private static string GetPushRelayProblemText(PushRelayRegistrationSnapshot snapshot) => snapshot.Availability switch
+    {
+        PushRelayAvailability.RejectedByRelay => Translator.NotificationSettings_PushRelay_PlatformUnsupported,
+        PushRelayAvailability.ServiceUnavailable => Translator.NotificationSettings_PushRelay_ServiceUnavailable,
+        PushRelayAvailability.UnsupportedPlatform or PushRelayAvailability.SignInRequired or PushRelayAvailability.DisabledByUser => string.Empty,
+        _ when snapshot.Mailboxes.Any(x => !x.IsWatched && x.LastErrorCode == PushRelayErrorCodes.MailboxLimitReached)
+            => Translator.NotificationSettings_PushRelay_LimitReached,
+        _ when snapshot.DeviceId is null && snapshot.LastErrorCode is { } error
+            => string.Format(Translator.NotificationSettings_PushRelay_ErrorFormat, error),
+        _ => string.Empty
+    };
+
+    private string GetPushRelayMailboxWarningText(PushRelayRegistrationSnapshot snapshot)
+    {
+        if (snapshot.Availability != PushRelayAvailability.Enabled)
+            return string.Empty;
+
+        var names = snapshot.Mailboxes
+            .Where(x => x.NeedsReauthentication)
+            .Select(x => _accountNames.TryGetValue(x.AccountId, out var name) ? name : null)
+            .OfType<string>()
+            .ToList();
+
+        return names.Count == 0
+            ? string.Empty
+            : string.Format(Translator.NotificationSettings_PushRelay_Mailbox_NeedsReauth, string.Join(", ", names));
+    }
+
+    private void SubscribeToPushRelay()
+    {
+        if (_isSubscribedToPushRelay)
+            return;
+
+        _pushRelay.SnapshotChanged += PushRelaySnapshotChanged;
+        _isSubscribedToPushRelay = true;
+    }
+
+    private void UnsubscribeFromPushRelay()
+    {
+        if (!_isSubscribedToPushRelay)
+            return;
+
+        _pushRelay.SnapshotChanged -= PushRelaySnapshotChanged;
+        _isSubscribedToPushRelay = false;
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Opened from the upgrade introduction: switch instant push on through the toggle, so the privacy policy shows when
+    /// it has not been accepted. Declining the policy turns the toggle back off. Nothing happens when push is already on,
+    /// when the toggle is unavailable (for example, before Wino Account sign-in), or when the policy is already accepted.
+    /// </summary>
+    private void OfferInstantPushIfRequested(object? parameters)
+    {
+        if (parameters is not NotificationSettingsNavigationContext { OfferInstantPush: true })
+            return;
+
+        if (!IsPushRelayToggleVisible || !IsPushRelayToggleEnabled || IsPushRelayEnabled)
+            return;
+
+        if (_introduction is not { IsPolicyAcceptanceRequired: true })
+            return;
+
+        IsPushRelayEnabled = true;
+    }
+
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
         LoadSelections();
         RefreshSnoozeState();
         UpdateSectionSummaries();
+        SubscribeToPushRelay();
+        PushRelayTestResultText = string.Empty;
+        ApplyPushRelaySnapshot(_pushRelay.Snapshot);
+        OfferInstantPushIfRequested(parameters);
+
+        // Opening the page is a moment the user looks at live notifications; a stalled relay tries again now.
+        _syncCoordinator?.RequestRelayRetry(RelayRetryTrigger.SettingsOpened);
 
         await LoadAccountsAsync();
+        await ExecuteUIThread(() => ApplyPushRelaySnapshot(_pushRelay.Snapshot));
+    }
+
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
+    {
+        base.OnNavigatedFrom(mode, parameters);
+
+        UnsubscribeFromPushRelay();
     }
 
     protected override void RegisterRecipients()
@@ -363,8 +655,60 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
         RefreshSnoozeState();
     }
 
+    #region Sound provider
+
     /// <summary>
-    /// Returns every notification preference and account override to its factory value.
+    /// True on platforms whose sounds are chosen by id through <see cref="INotificationSoundProvider"/> instead of
+    /// the <see cref="NotificationSoundEvent"/> options (<see cref="SoundOptions"/>).
+    /// </summary>
+    public bool HasSoundProvider => _soundProvider != null;
+
+    public IReadOnlyList<NotificationSoundChoice> SoundChoices => _soundProvider?.Choices ?? (NotificationSoundChoice[])[];
+
+    public string GetSound(NotificationSoundKind kind) => _soundProvider?.GetSound(kind) ?? NotificationSoundChoice.DefaultId;
+
+    public void SetSound(NotificationSoundKind kind, string id) => _soundProvider?.SetSound(kind, id);
+
+    /// <summary>
+    /// The sound of an account's override: its stored choice, otherwise its <see cref="NotificationSoundEvent"/> mapped
+    /// by the provider, which is what the notification plays.
+    /// </summary>
+    public string GetAccountSound(Guid accountId)
+    {
+        if (_soundProvider == null) return NotificationSoundChoice.DefaultId;
+
+        var stored = _soundProvider.GetAccountSound(accountId);
+        if (!string.IsNullOrEmpty(stored)) return stored;
+
+        var preferences = Accounts.FirstOrDefault(account => account.AccountId == accountId)?.Account?.Preferences;
+        return preferences == null
+            ? NotificationSoundChoice.DefaultId
+            : _soundProvider.MapSoundEvent(preferences.AccountNotificationSoundEvent);
+    }
+
+    public void SetAccountSound(Guid accountId, string id) => _soundProvider?.SetAccountSound(accountId, id);
+
+    public Task PlaySoundAsync(string id) => _soundProvider?.PlayAsync(id) ?? Task.CompletedTask;
+
+    #endregion
+
+    /// <summary>
+    /// The Reset button (Windows NotificationSettingsPage): asks first, then <see cref="ResetAsync"/>. True when the
+    /// preferences were reset, so a head can refresh what it keeps outside the ViewModel (its sound pickers).
+    /// </summary>
+    public async Task<bool> ConfirmResetAsync(IDialogServiceBase dialogService)
+    {
+        ArgumentNullException.ThrowIfNull(dialogService);
+        if (!await dialogService.ShowConfirmationDialogAsync(Translator.NotificationSettings_Reset_ConfirmMessage,
+                Translator.NotificationSettings_Reset_ConfirmTitle, Translator.NotificationSettings_Reset_Title))
+            return false;
+        await ResetAsync();
+        return true;
+    }
+
+    /// <summary>
+    /// Returns every notification preference and account override to its factory value. The live notification
+    /// opt-in is a privacy choice, not a notification default, so it is left alone.
     /// </summary>
     public async Task ResetAsync()
     {
@@ -406,6 +750,8 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
             await _accountService.UpdateAccountAsync(account);
         }
 
+        _soundProvider?.ResetAll(Accounts.Select(account => account.AccountId).ToArray());
+
         LoadSelections();
         RefreshSnoozeState();
         UpdateSectionSummaries();
@@ -416,9 +762,13 @@ public partial class NotificationSettingsPageViewModel : CoreBaseViewModel,
     private async Task LoadAccountsAsync()
     {
         var accounts = await _accountService.GetAccountsAsync();
+        var names = accounts.ToDictionary(
+            account => account.Id,
+            account => string.IsNullOrWhiteSpace(account.Name) ? account.Address ?? string.Empty : account.Name);
 
         await ExecuteUIThread(() =>
         {
+            _accountNames = names;
             Accounts.Clear();
 
             foreach (var account in accounts)

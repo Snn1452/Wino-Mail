@@ -9,6 +9,7 @@ using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.ViewModels;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
 
 namespace Wino.Mail.MacOS.Views.ToDo;
 
@@ -31,16 +32,19 @@ public sealed partial class ToDoPageViewController : WinoViewController<ToDoPage
     private bool _released;
     private bool _compact;
 
-    public ToDoPageViewController(ToDoPageViewModel viewModel, IDispatcher dispatcher, IWinoLogger logger)
+    private readonly INotificationBuilder _notifications;
+
+    public ToDoPageViewController(ToDoPageViewModel viewModel, IDispatcher dispatcher, IWinoLogger logger, INotificationBuilder notifications)
         : base(viewModel, dispatcher, logger)
     {
+        _notifications = notifications;
     }
 
     public override void LoadView()
     {
         var root = new ToDoPage();
         _zone.Fill = WinoStyle.ZoneFill;
-        WinoLayout.Fill(_zone, root, 2, 4, 7, 7);
+        _zone.AttachTo(root, 2, 4, 7, 7);
         var content = _zone.ContentView;
 
         _listSurface = BuildListSurface();

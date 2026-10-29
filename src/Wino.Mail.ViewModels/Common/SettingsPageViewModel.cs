@@ -20,6 +20,8 @@ public partial class SettingsPageViewModel : CoreBaseViewModel, IShellMenuOwner
     private IReadOnlyList<SettingsNavigationItemInfo> _accountSearchItems = [];
     private bool _isAccountSearchIndexInitialized;
 
+    private readonly SettingsMenuProvider _settingsMenuProvider;
+
     public SettingsPageViewModel(
         INavigationService navigationService,
         IStatePersistanceService statePersistenceService,
@@ -32,6 +34,7 @@ public partial class SettingsPageViewModel : CoreBaseViewModel, IShellMenuOwner
         _accountService = accountService;
         _entitlementService = entitlementService;
         ShellMenuProvider = settingsMenuProvider;
+        _settingsMenuProvider = settingsMenuProvider;
     }
 
     /// <summary>
@@ -62,7 +65,9 @@ public partial class SettingsPageViewModel : CoreBaseViewModel, IShellMenuOwner
         if (!_isAccountSearchIndexInitialized)
             await RefreshAccountSummaryAsync().ConfigureAwait(false);
 
-        var results = SettingsNavigationInfoProvider.Search(query, ManageAccountsDescription, _accountSearchItems);
+        var results = SettingsNavigationInfoProvider.Search(query, ManageAccountsDescription, _accountSearchItems)
+            .Where(item => item.PageType is not { } page || _settingsMenuProvider.IsPageAvailable(page))
+            .ToArray();
         return _entitlementService.CurrentEntitlement.CanAccessSurfaces
             ? results
             : results.Where(item => item.PageType != WinoPage.WinoIntelligencePage &&
@@ -260,6 +265,8 @@ public partial class SettingsPageViewModel : CoreBaseViewModel, IShellMenuOwner
                 return Translator.SettingsHome_ManageAccounts_Description;
             case WinoPage.CreateEmailTemplatePage:
                 return Translator.SettingsEmailTemplates_NewTemplateDescription;
+            case WinoPage.ReaderActionsPage:
+                return Translator.ReaderActions_Description;
             case WinoPage.CalendarAccountSettingsPage:
                 var calendarAccountName = await GetCalendarAccountNameAsync(parameter).ConfigureAwait(false);
                 return string.Format(

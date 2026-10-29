@@ -198,7 +198,7 @@
                                         x:Name="DailyBriefingUnseenBadge"
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Top"
-                                        Background="{ThemeResource SystemAccentColor}"
+                                        Background="{ThemeResource WinoAccentIndicatorBrush}"
                                         Visibility="Collapsed" />
                                 </Grid>
                             </ToggleButton>
@@ -217,6 +217,34 @@
                                 <Viewbox Width="22" Height="22">
                                     <coreControls:WinoFontIcon Icon="Announcement" />
                                 </Viewbox>
+                            </Button>
+                            <!--  Relay-based sync is selected but the relay connection failed; mail and calendar run on the user's intervals.  -->
+                            <Button
+                                x:Name="RelayFallbackIndicator"
+                                Width="38"
+                                Height="38"
+                                Padding="0"
+                                AutomationProperties.AutomationId="ShellRelayFallbackIndicator"
+                                AutomationProperties.Name="{x:Bind domain:Translator.Relay_FallbackIndicatorAutomationName, Mode=OneTime}"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                ToolTipService.ToolTip="{x:Bind domain:Translator.Relay_FallbackFlyoutTitle, Mode=OneTime}"
+                                Visibility="Collapsed">
+                                <Ellipse
+                                    Width="10"
+                                    Height="10"
+                                    Fill="{ThemeResource SystemFillColorCriticalBrush}" />
+                                <Button.Flyout>
+                                    <Flyout Placement="Bottom">
+                                        <StackPanel MaxWidth="320" Spacing="6">
+                                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind domain:Translator.Relay_FallbackFlyoutTitle, Mode=OneTime}" />
+                                            <TextBlock
+                                                Style="{StaticResource BodyTextBlockStyle}"
+                                                Text="{x:Bind domain:Translator.Relay_FallbackFlyoutMessage, Mode=OneTime}"
+                                                TextWrapping="WrapWholeWords" />
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
                             </Button>
                             <Button
                                 x:Name="WinoAccountButton"
@@ -239,14 +267,8 @@
                                                 <Border
                                                     Margin="-16,-16,-16,0"
                                                     Padding="20"
+                                                    Background="{ThemeResource WinoAccountHeroBackgroundBrush}"
                                                     CornerRadius="8,8,0,0">
-                                                    <Border.Background>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                            <GradientStop Offset="0" Color="#1A6EE7B7" />
-                                                            <GradientStop Offset="0.5" Color="#2038BDF8" />
-                                                            <GradientStop Offset="1" Color="#1A818CF8" />
-                                                        </LinearGradientBrush>
-                                                    </Border.Background>
                                                     <StackPanel Spacing="4">
                                                         <TextBlock
                                                             Margin="0,8,0,0"
@@ -363,14 +385,8 @@
                                                 <Border
                                                     Margin="-16,-16,-16,0"
                                                     Padding="20"
+                                                    Background="{ThemeResource WinoAccountHeroBackgroundBrush}"
                                                     CornerRadius="8,8,0,0">
-                                                    <Border.Background>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                            <GradientStop Offset="0" Color="#1A6EE7B7" />
-                                                            <GradientStop Offset="0.5" Color="#2038BDF8" />
-                                                            <GradientStop Offset="1" Color="#1A818CF8" />
-                                                        </LinearGradientBrush>
-                                                    </Border.Background>
                                                     <StackPanel Orientation="Horizontal" Spacing="14">
                                                         <PersonPicture
                                                             x:Name="WinoAccountFlyoutPicture"
@@ -481,5 +497,22 @@
             Closed="ShellInfoBar_Closed"
             IsClosable="False"
             IsOpen="False" />
+
+        <!--
+            Instant push introduction for installs that had accounts before it existed. It points at the Wino Account
+            button in the title bar; the icon is set from code with the colorful font for the current theme.
+        -->
+        <TeachingTip
+            x:Name="RelayIntroductionTip"
+            Title="{x:Bind domain:Translator.RelayIntroduction_TipTitle, Mode=OneTime}"
+            Grid.RowSpan="2"
+            ActionButtonClick="RelayIntroductionTipActionClicked"
+            ActionButtonContent="{x:Bind domain:Translator.RelayIntroduction_TipAction, Mode=OneTime}"
+            AutomationProperties.AutomationId="ShellRelayIntroductionTip"
+            CloseButtonClick="RelayIntroductionTipCloseClicked"
+            IsLightDismissEnabled="False"
+            IsOpen="False"
+            PreferredPlacement="BottomLeft"
+            Subtitle="{x:Bind domain:Translator.RelayIntroduction_TipSubtitle, Mode=OneTime}" />
     </Grid>
 </winuiex:WindowEx>

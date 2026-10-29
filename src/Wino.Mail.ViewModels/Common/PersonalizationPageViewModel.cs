@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -12,6 +13,7 @@ using Wino.Core.Domain.Entities.Mail;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Navigation;
 using Wino.Core.Domain.Models.Personalization;
 using Wino.Core.ViewModels.Data;
@@ -27,8 +29,12 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
     private readonly IDialogServiceBase _dialogService;
     private readonly INewThemeService _newThemeService;
     private readonly IThumbnailService _thumbnailService;
+    private readonly IAppModeReadinessService _appModeReadinessService;
 
     private bool isPropChangeDisabled = false;
+    private int _appModeRequestId;
+
+    public ObservableCollection<AppModeOptionViewModel> AppModeOptions { get; } = [];
 
     // Sample mail copy to use in previewing mail display modes.
     public MailCopy DemoPreviewMailCopy { get; } = new MailCopy()
@@ -125,14 +131,21 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
                                         IStatePersistanceService statePersistanceService,
                                         INewThemeService newThemeService,
                                         IPreferencesService preferencesService,
-                                        IThumbnailService thumbnailService)
+                                        IThumbnailService thumbnailService,
+                                        IAppModeReadinessService appModeReadinessService)
     {
         _dialogService = dialogService;
         _newThemeService = newThemeService;
         _thumbnailService = thumbnailService;
+        _appModeReadinessService = appModeReadinessService;
 
         StatePersistenceService = statePersistanceService;
         PreferencesService = preferencesService;
+
+        foreach (var mode in AppModeVisibility.SwitchableModes)
+        {
+            AppModeOptions.Add(new AppModeOptionViewModel(mode, PreferencesService.SetApplicationModeHidden));
+        }
 
         DemoPreviewMailItemInformation = new DemoMailItemDisplayInformation(
             DemoPreviewMailCopy.FromName,
@@ -153,21 +166,8 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
     private void InitializeColors()
     {
         Colors.Clear();
-        Colors.Add(new AppColorViewModel("#0078d7"));
-        Colors.Add(new AppColorViewModel("#00838c"));
-        Colors.Add(new AppColorViewModel("#e3008c"));
-        Colors.Add(new AppColorViewModel("#ca4f07"));
-        Colors.Add(new AppColorViewModel("#e81123"));
-        Colors.Add(new AppColorViewModel("#00819e"));
-        Colors.Add(new AppColorViewModel("#10893e"));
-        Colors.Add(new AppColorViewModel("#881798"));
-        Colors.Add(new AppColorViewModel("#c239b3"));
-        Colors.Add(new AppColorViewModel("#767676"));
-        Colors.Add(new AppColorViewModel("#e1b12c"));
-        Colors.Add(new AppColorViewModel("#16a085"));
-        Colors.Add(new AppColorViewModel("#0984e3"));
-        Colors.Add(new AppColorViewModel("#4a69bd"));
-        Colors.Add(new AppColorViewModel("#05c46b"));
+        foreach (var hex in AppearanceSettingsModel.AccentPalette)
+            Colors.Add(new AppColorViewModel(hex));
 
         // Add system accent color as last item.
 
@@ -201,10 +201,10 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
         SelectedBackdropType = AvailableBackdropTypes?.FirstOrDefault(x => x.BackdropType == currentBackdropType);
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
@@ -227,6 +227,7 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
 
         InitializeColors();
         SetInitialValues();
+        await ActivateAppModeOptionsAsync();
 
         PropertyChanged -= PersonalizationSettingsUpdated;
         PropertyChanged += PersonalizationSettingsUpdated;
@@ -263,16 +264,54 @@ public partial class PersonalizationPageViewModel : CoreBaseViewModel
         Deactivate();
     }
 
+    /// <summary>
+    /// Fills <see cref="AppModeOptions"/> and follows account changes until <see cref="DeactivateAppModeOptions"/>.
+    /// The native pages that lay the Windows pickers out themselves (and skip OnNavigatedTo) call this directly.
+    /// </summary>
+    public async Task ActivateAppModeOptionsAsync()
+    {
+        _appModeReadinessService.ReadinessInvalidated -= AppModeReadinessInvalidated;
+        _appModeReadinessService.ReadinessInvalidated += AppModeReadinessInvalidated;
+        await RefreshAppModeOptionsAsync();
+    }
+
+    public void DeactivateAppModeOptions() => _appModeReadinessService.ReadinessInvalidated -= AppModeReadinessInvalidated;
+
+    private void AppModeReadinessInvalidated(object sender, EventArgs e) => _ = RefreshAppModeOptionsAsync();
+
+    private async Task RefreshAppModeOptionsAsync()
+    {
+        var requestId = Interlocked.Increment(ref _appModeRequestId);
+        var visibility = await _appModeReadinessService.GetVisibilityAsync();
+
+        if (requestId != _appModeRequestId)
+            return;
+
+        await ExecuteUIThreadAsync(() =>
+        {
+            if (requestId != _appModeRequestId)
+                return Task.CompletedTask;
+
+            foreach (var option in AppModeOptions)
+            {
+                option.Apply(visibility);
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
     private void Deactivate()
     {
         PropertyChanged -= PersonalizationSettingsUpdated;
+        DeactivateAppModeOptions();
 
         _newThemeService.AccentColorChanged -= AccentColorChanged;
         _newThemeService.ElementThemeChanged -= ElementThemeChanged;
 
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         Deactivate();
         base.OnNavigatedFrom(mode, parameters);

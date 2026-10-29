@@ -5,7 +5,9 @@ using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Core.Domain.Entities.Mail;
+using Wino.Mail.Controls.Core;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Controls;
 
 namespace Wino.Mail.Controls.AppKit.Contacts;
 
@@ -13,17 +15,17 @@ namespace Wino.Mail.Controls.AppKit.Contacts;
 public static class WinoContactStyle
 {
     /// <summary>Full-width group header strip tint (Windows LayerFillColorDefault).</summary>
-    public static NSColor HeaderFill => WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.045), WinoStyle.Hex(0xFFFFFF, 0.07));
+    public static NSColor HeaderFill { get; } = WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.045), WinoStyle.Hex(0xFFFFFF, 0.07));
 
     /// <summary>Selected row fill: subtle, like the Windows list item selection on a zone.</summary>
-    public static NSColor SelectedFill => WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.06), WinoStyle.Hex(0xFFFFFF, 0.10));
+    public static NSColor SelectedFill { get; } = WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.06), WinoStyle.Hex(0xFFFFFF, 0.10));
 
-    public static NSColor HoverFill => WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.035), WinoStyle.Hex(0xFFFFFF, 0.06));
+    public static NSColor HoverFill => WinoStyle.RowHoverFill;
 
     /// <summary>Card surface in the detail pane (Windows CardBackgroundFillColorDefault).</summary>
-    public static NSColor CardFill => WinoStyle.Dynamic(WinoStyle.Hex(0xF7F7F8), WinoStyle.Hex(0xFFFFFF, 0.06));
+    public static NSColor CardFill { get; } = WinoStyle.Dynamic(WinoStyle.Hex(0xF7F7F8), WinoStyle.Hex(0xFFFFFF, 0.06));
 
-    public static NSColor CardStroke => WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.06), WinoStyle.Hex(0xFFFFFF, 0.07));
+    public static NSColor CardStroke { get; } = WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.06), WinoStyle.Hex(0xFFFFFF, 0.07));
 
     /// <summary>Star toggle image: filled in the caution colour when favourite, otherwise a tertiary grey outline. Always mono.</summary>
     public static NSImage StarImage(bool favorite, double size)
@@ -68,6 +70,7 @@ public sealed class WinoContactRowView : NSTableCellView
 
     public WinoContactRowView()
     {
+        WinoLiveObjects.Track(this);
         Identifier = ReuseIdentifier;
         _name.SetContentCompressionResistancePriority(250, NSLayoutConstraintOrientation.Horizontal);
         _secondary.SetContentCompressionResistancePriority(250, NSLayoutConstraintOrientation.Horizontal);
@@ -79,7 +82,7 @@ public sealed class WinoContactRowView : NSTableCellView
         _star = new NSButton { Bordered = false, BezelStyle = NSBezelStyle.Inline, TranslatesAutoresizingMaskIntoConstraints = false };
         _star.SetButtonType(NSButtonType.MomentaryChange);
         _star.ImagePosition = NSCellImagePosition.ImageOnly;
-        _star.Activated += (_, _) => _toggleFavorite?.Invoke();
+        _star.OnActivated(this, static row => row._toggleFavorite?.Invoke());
         WinoLayout.Size(_star, 28, 28);
 
         var row = WinoLayout.HStack(12, _picture, text, _star);
@@ -104,8 +107,7 @@ public sealed class WinoContactRowView : NSTableCellView
 
     private void ModelChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is null or "" or "IsFavorite" or "Name" or "SecondaryValue" or "Categories" or "ContactPictureFileId" or "SourceContact")
-            Apply();
+        if (WinoContactRowRules.RefreshesRow(args.PropertyName)) Apply();
     }
 
     private void Apply()
@@ -127,10 +129,7 @@ public sealed class WinoContactRowView : NSTableCellView
     /// <summary>Keeps the chips whose category still matches and replaces only the rest.</summary>
     private void ApplyCategories(IReadOnlyList<MailCategory> categories)
     {
-        int keep = 0;
-        while (keep < categories.Count && keep < _chipKeys.Count
-            && _chipKeys[keep] == (categories[keep].Name, categories[keep].BackgroundColorHex))
-            keep++;
+        int keep = WinoListDiff.ReusablePrefix(_chipKeys, categories, static (shown, next) => shown == (next.Name, next.BackgroundColorHex));
         if (keep == categories.Count && keep == _chipKeys.Count) return;
 
         if (categories.Count == 0)
@@ -198,12 +197,13 @@ public sealed class WinoContactGroupHeaderView : NSTableCellView
 {
     public const string ReuseIdentifier = "WinoContactGroupHeader";
     private readonly WinoSurfaceView _strip = new() { CornerRadius = 6 };
-    private readonly NSTextField _title = WinoStyle.Label(string.Empty, WinoStyle.BodyStrong);
+    private readonly NSTextField _title = WinoStyle.Label(string.Empty, WinoStyle.BodyStrong, WinoStyle.SecondaryText);
 
     public WinoContactGroupHeaderView()
     {
         Identifier = ReuseIdentifier;
-        _strip.Fill = WinoContactStyle.HeaderFill;
+        // A plain letter like Contacts; the strip fill only returns with a wallpaper theme.
+        _strip.Fill = WinoStyle.FloatingZones ? WinoContactStyle.HeaderFill : null;
         WinoLayout.Fill(_strip, this, 6, 0, 2, 0);
         _strip.AddSubview(_title);
         NSLayoutConstraint.ActivateConstraints(
@@ -214,10 +214,7 @@ public sealed class WinoContactGroupHeaderView : NSTableCellView
         ]);
         AccessibilityElement = true;
         AccessibilityRole = NSAccessibilityRoles.StaticTextRole;
-        WinoStyle.AccentChanged += AccentChanged;
     }
-
-    private void AccentChanged(object? sender, EventArgs args) => _title.TextColor = WinoStyle.Accent;
 
     public string Title
     {
@@ -225,15 +222,8 @@ public sealed class WinoContactGroupHeaderView : NSTableCellView
         set
         {
             _title.StringValue = value ?? string.Empty;
-            _title.TextColor = WinoStyle.Accent;
             AccessibilityLabel = value;
         }
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) WinoStyle.AccentChanged -= AccentChanged;
-        base.Dispose(disposing);
     }
 }
 

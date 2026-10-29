@@ -303,12 +303,18 @@
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="UnreadMailSubjectForegroundBrush" Color="{ThemeResource SystemAccentColor}" />
+                    <SolidColorBrush x:Key="SystemControlRevealFocusVisualBrush" Color="#FF4C4A48" />
+                    <SolidColorBrush x:Key="SystemControlFocusVisualSecondaryBrush" Color="#FFFFFFFF" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
                     <SolidColorBrush x:Key="UnreadMailSubjectForegroundBrush" Color="{ThemeResource SystemAccentColorLight2}" />
+                    <SolidColorBrush x:Key="SystemControlRevealFocusVisualBrush" Color="#FF4C4A48" />
+                    <SolidColorBrush x:Key="SystemControlFocusVisualSecondaryBrush" Color="#FFFFFFFF" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <StaticResource x:Key="UnreadMailSubjectForegroundBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+                    <StaticResource x:Key="SystemControlRevealFocusVisualBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+                    <StaticResource x:Key="SystemControlFocusVisualSecondaryBrush" ResourceKey="SystemColorWindowColorBrush" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
@@ -330,9 +336,6 @@
 
             <StaticResource x:Key="ExpanderContentBackground" ResourceKey="CardBackgroundFillColorSecondaryBrush" />
             <StaticResource x:Key="ExpanderHeaderBackground" ResourceKey="CardBackgroundFillColorDefaultBrush" />
-
-            <SolidColorBrush x:Key="SystemControlRevealFocusVisualBrush" Color="#FF4C4A48" />
-            <SolidColorBrush x:Key="SystemControlFocusVisualSecondaryBrush" Color="#FFFFFFFF" />
 
             <SolidColorBrush x:Key="ButtonBackgroundDisabled">Transparent</SolidColorBrush>
 
@@ -366,7 +369,7 @@
                         x:Name="CompactSenderPicture"
                         Width="28"
                         Height="28"
-                        Margin="8,0,6,0"
+                        Margin="8,0,8,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -393,9 +396,9 @@
                     </Grid.ColumnDefinitions>
                     <mailControls:WinoContactPicture
                         x:Name="MediumSenderPicture"
-                        Width="30"
-                        Height="30"
-                        Margin="8,0,8,0"
+                        Width="32"
+                        Height="32"
+                        Margin="8,0,12,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -422,9 +425,9 @@
                     </Grid.ColumnDefinitions>
                     <mailControls:WinoContactPicture
                         x:Name="SpaciousSenderPicture"
-                        Width="36"
-                        Height="36"
-                        Margin="4,0,8,0"
+                        Width="40"
+                        Height="40"
+                        Margin="8,0,12,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -450,7 +453,7 @@
                         x:Name="CompactThreadSenderPicture"
                         Width="28"
                         Height="28"
-                        Margin="8,0,6,0"
+                        Margin="8,0,8,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -475,9 +478,9 @@
                     </Grid.ColumnDefinitions>
                     <mailControls:WinoContactPicture
                         x:Name="MediumThreadSenderPicture"
-                        Width="30"
-                        Height="30"
-                        Margin="8,0,8,0"
+                        Width="32"
+                        Height="32"
+                        Margin="8,0,12,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -502,9 +505,9 @@
                     </Grid.ColumnDefinitions>
                     <mailControls:WinoContactPicture
                         x:Name="SpaciousThreadSenderPicture"
-                        Width="36"
-                        Height="36"
-                        Margin="4,0,8,0"
+                        Width="40"
+                        Height="40"
+                        Margin="8,0,12,0"
                         VerticalAlignment="Center"
                         x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                         x:Phase="1"
@@ -544,14 +547,14 @@
 
             <DataTemplate x:Key="MailGroupHeaderDefaultTemplate" x:DataType="mailListCore:MailListGroup">
                 <Grid
-                    Margin="0,0,0,6"
+                    Margin="{x:Bind helpers:XamlHelpers.GetMailGroupHeaderMargin(), Mode=OneTime}"
                     helpers:Accessibility.ContainerName="{x:Bind helpers:XamlHelpers.GetMailGroupDateString(Key)}"
                     AllowFocusOnInteraction="False"
                     AutomationProperties.Name="{x:Bind helpers:XamlHelpers.GetMailGroupDateString(Key)}"
                     Background="{ThemeResource MailListHeaderBackgroundColor}"
                     CornerRadius="6">
                     <TextBlock
-                        Padding="12"
+                        Padding="{x:Bind helpers:XamlHelpers.GetMailGroupHeaderPadding(), Mode=OneTime}"
                         VerticalAlignment="Center"
                         AllowFocusOnInteraction="False"
                         FontWeight="SemiBold"
@@ -917,6 +920,7 @@
                                 HorizontalContentAlignment="Stretch"
                                 toolkitExt:ListViewExtensions.ItemContainerStretchDirection="Horizontal"
                                 toolkitExt:ScrollViewerExtensions.VerticalScrollBarMargin="-6"
+                                ActionResolver="{x:Bind ViewModel.MailActionResolver, Mode=OneWay}"
                                 AutomationProperties.AutomationId="MailListView"
                                 AutomationProperties.Name="{x:Bind domain:Translator.Accessibility_MailList, Mode=OneTime}"
                                 CanDragItems="True"
@@ -952,6 +956,20 @@
                                 </listview:ThreadedMailListView.ItemContainerTransitions>
                                 <listview:ThreadedMailListView.Resources>
                                     <ResourceDictionary>
+                                        <!--  Mail rows set explicit text brushes, so contrast themes keep rows on the window color and mark selection with the indicator.  -->
+                                        <ResourceDictionary.ThemeDictionaries>
+                                            <ResourceDictionary x:Key="Default" />
+                                            <ResourceDictionary x:Key="HighContrast">
+                                                <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="SystemColorWindowColorBrush" />
+                                                <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="SystemColorWindowColorBrush" />
+                                                <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="SystemColorWindowColorBrush" />
+                                                <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="SystemColorWindowColorBrush" />
+                                                <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="SystemColorWindowColorBrush" />
+                                                <StaticResource x:Key="ListViewItemForegroundPointerOver" ResourceKey="SystemColorWindowTextColorBrush" />
+                                                <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="SystemColorWindowTextColorBrush" />
+                                                <StaticResource x:Key="ListViewItemSelectionIndicatorBrush" ResourceKey="SystemColorHighlightColorBrush" />
+                                            </ResourceDictionary>
+                                        </ResourceDictionary.ThemeDictionaries>
                                         <Style BasedOn="{StaticResource MailListHeaderStyle}" TargetType="ListViewHeaderItem" />
                                     </ResourceDictionary>
                                 </listview:ThreadedMailListView.Resources>

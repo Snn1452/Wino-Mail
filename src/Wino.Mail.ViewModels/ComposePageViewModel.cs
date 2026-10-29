@@ -29,7 +29,6 @@ using Wino.Core.Domain.Models.Contacts;
 using Wino.Core.Extensions;
 using Wino.Core.Services;
 using Wino.Mail.ViewModels.Data;
-using Wino.Messaging.Client.Mails;
 using Wino.Messaging.UI;
 
 namespace Wino.Mail.ViewModels;
@@ -44,6 +43,8 @@ public partial class ComposePageViewModel : MailBaseViewModel,
 
     public Func<Task<string>> GetHTMLBodyFunction;
     public Func<string, Task> RenderHtmlBodyAsyncFunc { get; set; }
+
+    public bool ShouldBlockRemoteContent { get; private set; }
 
     /// <summary>Wino Intelligence rewrite for this draft. Hidden unless the account is eligible.</summary>
     public ComposerRewriteSession RewriteSession { get; }
@@ -761,13 +762,68 @@ public partial class ComposePageViewModel : MailBaseViewModel,
         }
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public static readonly TimeSpan AutosaveDelay = TimeSpan.FromSeconds(3);
+
+    private CancellationTokenSource? _autosaveCancellation;
+
+    /// <summary>Runs before each autosave; returning false skips that save (for example once the editor is gone).</summary>
+    public Func<Task<bool>>? BeforeAutosave { get; set; }
+
+    [ObservableProperty]
+    public partial DateTime? LastSavedAt { get; set; }
+
+    [ObservableProperty]
+    public partial string? LastSavedText { get; set; }
+
+    /// <summary>
+    /// Restarts the autosave countdown. The returned task completes when this countdown is superseded,
+    /// cancelled or saved, and faults only when the save itself fails.
+    /// </summary>
+    public Task ScheduleAutosave()
     {
+        var previous = _autosaveCancellation;
+        var source = _autosaveCancellation = new CancellationTokenSource();
+        previous?.Cancel();
+        previous?.Dispose();
+        return AutosaveAfterDelayAsync(source.Token);
+    }
+
+    public void CancelAutosave()
+    {
+        var source = _autosaveCancellation;
+        _autosaveCancellation = null;
+        source?.Cancel();
+        source?.Dispose();
+    }
+
+    private async Task AutosaveAfterDelayAsync(CancellationToken token)
+    {
+        try { await Task.Delay(AutosaveDelay, token); }
+        catch (OperationCanceledException) { return; }
+
+        if (token.IsCancellationRequested) return;
+        if (BeforeAutosave is { } beforeAutosave && !await beforeAutosave()) return;
+        if (token.IsCancellationRequested) return;
+
+        if (await UpdateMimeChangesAsync())
+        {
+            var savedAt = DateTime.Now;
+            await ExecuteUIThread(() =>
+            {
+                LastSavedAt = savedAt;
+                LastSavedText = string.Format(Translator.Composer_DraftSaved, savedAt.ToString("t", System.Globalization.CultureInfo.CurrentCulture));
+            });
+        }
+    }
+
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
+    {
+        CancelAutosave();
         ReleaseSigningCertificates();
         base.OnNavigatedFrom(mode, parameters);
     }
 
-    //public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    //public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     //{
     //    base.OnNavigatedFrom(mode, parameters);
 
@@ -775,10 +831,10 @@ public partial class ComposePageViewModel : MailBaseViewModel,
     //    /// Make sure to use Page's OnNavigatedTo instead.
     //}
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
@@ -1053,6 +1109,7 @@ public partial class ComposePageViewModel : MailBaseViewModel,
         var mimeFilePath = mimeMessageInformation.Path;
 
         var renderModel = _mimeFileService.GetMailRenderModel(replyingMime, mimeFilePath);
+        var shouldBlockRemoteContent = await ShouldBlockRemoteContentAsync(replyingMime).ConfigureAwait(false);
         var toItems = await ResolveAddressInfoAsync(replyingMime.To).ConfigureAwait(false);
         var ccItems = await ResolveAddressInfoAsync(replyingMime.Cc).ConfigureAwait(false);
         var bccItems = await ResolveAddressInfoAsync(replyingMime.Bcc).ConfigureAwait(false);
@@ -1062,6 +1119,7 @@ public partial class ComposePageViewModel : MailBaseViewModel,
             // Extract information
 
             CurrentMimeMessage = replyingMime;
+            ShouldBlockRemoteContent = shouldBlockRemoteContent;
 
             ToItems.Clear();
             CCItems.Clear();
@@ -1082,14 +1140,32 @@ public partial class ComposePageViewModel : MailBaseViewModel,
 
             Subject = replyingMime.Subject;
             IsReadReceiptRequested = replyingMime.HasReadReceiptRequest();
-
-            Messenger.Send(new CreateNewComposeMailRequested(renderModel));
         }).ConfigureAwait(false);
 
         if (RenderHtmlBodyAsyncFunc != null)
         {
             await ExecuteUIThreadAsync(() => RenderHtmlBodyAsyncFunc(renderModel.RenderHtml))
                 .ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> ShouldBlockRemoteContentAsync(MimeMessage draftMessage)
+    {
+        if (!PreferencesService.RenderImages) return true;
+
+        var accountId = ComposingAccount?.Id;
+        var referenceMessageId = MailHeaderExtensions.NormalizeMessageId(draftMessage.InReplyTo);
+        if (accountId == null || string.IsNullOrEmpty(referenceMessageId)) return false;
+
+        try
+        {
+            var referenceMail = await _mailService.GetMailCopyByMessageIdAsync(accountId.Value, referenceMessageId).ConfigureAwait(false);
+            return referenceMail?.AssignedFolder?.SpecialFolderType == SpecialFolderType.Junk;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not resolve the replied message for the composer remote content policy.");
+            return true;
         }
     }
 

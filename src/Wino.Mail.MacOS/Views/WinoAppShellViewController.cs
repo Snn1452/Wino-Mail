@@ -4,15 +4,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.MenuItems;
 using Wino.Core.Domain.Models.Navigation;
+using Wino.Core.Domain.Models.Reader;
 using Wino.Mail.Controls.Core.AccountIcon;
 using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.MacOS.Views.Shell;
 using Wino.Mail.ViewModels;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
 using Wino.Shell.ViewModels;
 
 namespace Wino.Mail.MacOS.Views;
@@ -27,6 +30,10 @@ namespace Wino.Mail.MacOS.Views;
 public sealed class WinoAppShellViewController : WinoViewController<WinoAppShellViewModel>
 {
     private const double BriefingPanelWidth = 400;
+    private const double SidebarMinimumWidth = 220;
+    private const double SidebarReopenMargin = 8;
+    private const float SidebarMinimumPriority = 999;
+    private const float SidebarMinimumLiveResizePriority = 490;
 
     private readonly INavigationService _navigation;
     private readonly IStatePersistanceService _state;
@@ -37,12 +44,15 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     private readonly WinoZoneView _emptyZone = new();
     private ShellSidebarViewController? _sidebar;
     private NSSplitViewItem? _sidebarItem;
+    private Foundation.NSObject? _splitResizeObserver;
+    private NSLayoutConstraint? _sidebarMinimum;
+    private nfloat _autoCollapsedWidth;
     private ShellToolbar? _toolbar;
     private NSViewController? _child;
     private IShellCommandTarget? _commandTarget;
     private IShellMenuProvider? _provider;
     private INotifyPropertyChanged? _titleSource;
-    private WinoApplicationMode? _activeMode;
+    private readonly ShellModeActivator _modes;
     private IDailyBriefingPresenter? _briefing;
     private NSViewController? _briefingPanel;
     private bool _briefingOpen;
@@ -53,13 +63,14 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         _navigation = navigation;
         _state = state;
         _services = services;
+        _modes = new ShellModeActivator(viewModel, state, ReportError);
     }
 
     public IShellCommandTarget? CommandTarget => _commandTarget;
     public IShellSearchTarget? SearchTarget => _child as IShellSearchTarget;
 
     /// <summary>The mode currently on screen.</summary>
-    public WinoApplicationMode? ActiveMode => _activeMode;
+    public WinoApplicationMode? ActiveMode => _modes.ActiveMode;
 
     /// <summary>The mail shell client, available in every mode (sidebar context menus use it).</summary>
     internal IMailShellClient? MailClient => _services.GetService<IMailShellClient>();
@@ -74,15 +85,23 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
             account => pictures is null
                 ? MailAccountIconInfoFactory.CreateProviderFallback(account.ProviderType, account.SpecialImapProvider)
                 : MailAccountIconInfoFactory.Create(account, pictures),
-            () => ViewModel.PreferencesService.FirstDayOfWeek);
+            () => ViewModel.PreferencesService.FirstDayOfWeek,
+            () => ViewModel.PreferencesService.IsCompactAccountMenuItemEnabled);
         var menus = new ShellSidebarMenuContext(MailClient, Navigation, Dispatcher, ReportError, FixAccountAsync);
         _sidebar = new ShellSidebarViewController(Dispatcher, ReportError, Select, SwitchMode, FixAccount, context, menus);
         _sidebarItem = NSSplitViewItem.FromViewController(_sidebar);
-        _sidebarItem.MinimumThickness = 220;
         _sidebarItem.MaximumThickness = 380;
         _sidebarItem.CanCollapse = true;
-        _sidebarItem.CanCollapseFromWindowResize = true;
+        // The shell collapses the pane on a narrow window itself (SplitViewResized): AppKit's own
+        // collapse re-expands the pane while the window is still too narrow, and the two loop.
+        _sidebarItem.CanCollapseFromWindowResize = false;
         _sidebarItem.HoldingPriority = 262;
+        // The split view treats a minimum stronger than the window size as fixed: opening the pane
+        // widens a narrow window. During a live resize the minimum turns soft so a narrowing drag
+        // squeezes the pane, which is the cue to collapse it.
+        _sidebarMinimum = _sidebar.View.WidthAnchor.ConstraintGreaterThanOrEqualTo((nfloat)SidebarMinimumWidth);
+        _sidebarMinimum.Priority = SidebarMinimumPriority;
+        _sidebarMinimum.Active = true;
         // The Windows pane opens at 280; a soft width keeps it there when the content page changes.
         var preferredWidth = _sidebar.View.WidthAnchor.ConstraintEqualTo(280);
         preferredWidth.Priority = 251;
@@ -90,7 +109,7 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
 
         // Pages start below the toolbar; while no page is shown an empty zone keeps the layout.
         _contentHost.View = _content;
-        PinBelowToolbar(_emptyZone);
+        _emptyZone.AttachTo(_content, 2, 0, 7, 7, _content.SafeAreaLayoutGuide.TopAnchor);
         var contentItem = NSSplitViewItem.FromViewController(_contentHost);
         contentItem.MinimumThickness = 560;
 
@@ -101,9 +120,14 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         _split.SplitView.AutosaveName = "WinoShellSplit.v3";
         _split.AddSplitViewItem(_sidebarItem);
         _split.AddSplitViewItem(contentItem);
+        _splitResizeObserver = Foundation.NSNotificationCenter.DefaultCenter.AddObserver(
+            new Foundation.NSString("NSSplitViewDidResizeSubviewsNotification"), _ => SplitViewResized(), _split.SplitView);
 
         // The theme backdrop fills the whole window: title bar, pane and content sit on it.
-        var root = new NSView();
+        var root = new LiveResizeView(live =>
+        {
+            if (_sidebarMinimum is not null) _sidebarMinimum.Priority = live ? SidebarMinimumLiveResizePriority : SidebarMinimumPriority;
+        });
         WinoLayout.Fill(new ThemeBackdropView(), root);
         AddChildViewController(_split);
         Layout.Fill(_split.View, root);
@@ -111,12 +135,18 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         bool hasSavedLayout = Foundation.NSUserDefaults.StandardUserDefaults["NSSplitView Subview Frames WinoShellSplit.v3"] is not null;
         NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
         {
-            if (_sidebarItem is { Collapsed: true }) _sidebarItem.Collapsed = false;
+            SetSidebarCollapsed(!ViewModel.PreferencesService.IsNavigationPaneOpened);
             if (!hasSavedLayout) _split.SplitView.SetPositionOfDivider(280, 0);
         });
 
-        _toolbar = new ShellToolbar(_split.SplitView, () => SearchTarget, ToggleSidebar, Synchronize, ToggleBriefing, ShowWhatsNew, OpenAccount, ReportError);
+        _toolbar = new ShellToolbar(() => SearchTarget, ToggleSidebar, Synchronize, ToggleBriefing, ShowWhatsNew, OpenAccount, ReportError,
+            () => _commandTarget is { ShowsMailActions: true }, CanExecuteCommand, IsCommandActive, (command, anchor) => { if (_commandTarget is { } target && target.CanExecute(command)) target.Execute(command, anchor); });
         _toolbar.SetAccountHidden(ViewModel.PreferencesService.IsWinoAccountButtonHidden);
+        _toolbar.SetCommandLayout(ReaderCommandLayout.Parse(ViewModel.PreferencesService.ReaderCommandLayout));
+        _toolbar.SetCommandLabels(ViewModel.PreferencesService.IsShowActionLabelsEnabled);
+        ViewModel.PreferencesService.PreferenceChanged += PreferenceChanged;
+        Bindings.Own(new PropertyBinding<WinoAppShellViewModel, bool>(ViewModel, nameof(ViewModel.IsRelayFallbackActive),
+            vm => vm.IsRelayFallbackActive, active => _toolbar?.SetRelayFallbackActive(active), Dispatcher, ReportError));
 
         Bindings.Own(new PropertyBinding<WinoAppShellViewModel, ShellMenu?>(ViewModel, nameof(ViewModel.CurrentMenu),
             vm => vm.CurrentMenu, menu => _sidebar.Bind(menu), Dispatcher, ReportError));
@@ -126,9 +156,12 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
             vm => vm.CurrentProvider, ObserveProvider, Dispatcher, ReportError));
         Bindings.Own(new PropertyBinding<WinoAppShellViewModel, WinoApplicationMode>(ViewModel, nameof(ViewModel.CurrentMode),
             vm => vm.CurrentMode, mode => { _sidebar.SetMode(mode); UpdateTitle(); }, Dispatcher, ReportError));
+        Bindings.Own(new PropertyBinding<WinoAppShellViewModel, AppModeVisibility?>(ViewModel, nameof(ViewModel.ModeVisibility),
+            vm => vm.ModeVisibility, visibility => _sidebar.SetModeVisibility(visibility), Dispatcher, ReportError));
 #if DEBUG
         // "folder NAME" invokes the first folder menu item with that name, as a sidebar click would.
         // "account TEXT" invokes the account menu item whose account name or address contains TEXT.
+        Infrastructure.MacDebugBridge.Register("toolbar-commands", _ => Task.FromResult(_toolbar?.DumpCommands() ?? "no toolbar"));
         Infrastructure.MacDebugBridge.Register("newmail", _ =>
         {
             var item = ViewModel.CurrentMenu?.Items.OfType<NewMailMenuItem>().FirstOrDefault();
@@ -191,53 +224,18 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     protected override async Task InitializeAsync(NavigationMode mode, object? parameter)
     {
         ViewModel.OnNavigatedTo(mode, parameter!);
-        var start = _state.ApplicationMode;
-        if (start == WinoApplicationMode.Settings || _navigation is AppKitNavigationService router && !router.IsModeAvailable(start))
-            start = WinoApplicationMode.Mail;
+        var start = ShellModeActivator.StartMode(_state, candidate => _navigation is not AppKitNavigationService router || router.IsModeAvailable(candidate));
         await ActivateModeAsync(start, new ShellModeActivationContext { IsInitialActivation = true });
     }
 
     /// <summary>
-    /// Switches the shell to a mode the way the Windows WinoAppShell.ActivateMode does: release the
-    /// outgoing provider's menu, publish the new provider and let it navigate its root page into the
-    /// content host. A mode whose page is not built yet leaves the content empty rather than failing.
+    /// Switches the shell to a mode the way the Windows WinoAppShell.ActivateMode does (shared
+    /// <see cref="ShellModeActivator"/>). A mode whose page is not built yet leaves the content empty rather than failing.
     /// </summary>
     public async Task ActivateModeAsync(WinoApplicationMode mode, ShellModeActivationContext? context)
     {
-        context ??= new ShellModeActivationContext { IsInitialActivation = false };
-        IShellMenuProvider provider;
-        try { provider = ViewModel.GetProvider(mode); }
-        catch (Exception exception) { ReportError(exception); return; }
-
-        if (_activeMode == mode && _child is not null)
-        {
-            if (context.Parameter is not null) provider.ActivateShellMenu(context);
-            return;
-        }
-
-        _state.ApplicationMode = mode;
-        _state.AppModeTitle = ModeTitle(mode);
-        _state.CoreWindowTitle = string.Empty;
-        ViewModel.SetShellMenu(null);
-        if (_activeMode is { } previous && ViewModel.TryGetProvider(previous, out var outgoing) && outgoing is not null)
-        {
-            try { outgoing.ReleaseShellMenu(); }
-            catch (Exception exception) { ReportError(exception); }
-        }
-        _activeMode = mode;
-        ViewModel.SetCurrentMode(mode);
-        await ClearContentAsync();
-        if (!ReferenceEquals(provider.Dispatcher, Dispatcher)) provider.Dispatcher = Dispatcher;
-        try
-        {
-            // Mail awaits its first folder route; the other modes navigate through the router themselves.
-            if (provider is MailAppShellViewModel mail) await mail.InitializeNavigationAsync(NavigationMode.New, context);
-            else provider.ActivateShellMenu(context);
-        }
-        catch (Exception exception) { ReportError(exception); }
-        if (_activeMode != mode) return;
-        ViewModel.SetShellMenu(provider);
-        await Dispatcher.ExecuteOnUIThread(UpdateTitle);
+        if (await _modes.ActivateAsync(mode, context, ClearContentAsync, Dispatcher, () => _child is not null, ModeTitle))
+            await Dispatcher.ExecuteOnUIThread(UpdateTitle);
     }
 
     private static string ModeTitle(WinoApplicationMode mode) => mode switch
@@ -287,6 +285,7 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         if (_child is IWinoViewController child) await child.ReleaseAsync();
         await Dispatcher.ExecuteOnUIThread(() =>
         {
+            ViewModel.PreferencesService.PreferenceChanged -= PreferenceChanged;
             DetachCommandTarget();
             _child?.Dispose();
             _child = null;
@@ -304,13 +303,12 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     {
         view.TranslatesAutoresizingMaskIntoConstraints = false;
         _content.AddSubview(view);
-        bool isZone = ReferenceEquals(view, _emptyZone);
         NSLayoutConstraint.ActivateConstraints(
         [
-            view.TopAnchor.ConstraintEqualTo(_content.SafeAreaLayoutGuide.TopAnchor, isZone ? 2 : 0),
+            view.TopAnchor.ConstraintEqualTo(_content.SafeAreaLayoutGuide.TopAnchor),
             view.LeadingAnchor.ConstraintEqualTo(_content.LeadingAnchor),
-            view.TrailingAnchor.ConstraintEqualTo(_content.TrailingAnchor, isZone ? -7 : 0),
-            view.BottomAnchor.ConstraintEqualTo(_content.BottomAnchor, isZone ? -7 : 0)
+            view.TrailingAnchor.ConstraintEqualTo(_content.TrailingAnchor),
+            view.BottomAnchor.ConstraintEqualTo(_content.BottomAnchor)
         ]);
     }
 
@@ -321,6 +319,8 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     }
 
     public bool CanExecuteCommand(ShellCommand command) => _commandTarget?.CanExecute(command) == true;
+
+    public bool IsCommandActive(ShellCommand command) => _commandTarget?.IsCommandActive(command) == true;
 
     /// <summary>The content page's ViewModel, for keyboard shortcut eligibility (Windows rootPage.AssociatedViewModel).</summary>
     public object? ContentViewModel => (_child as IViewModelHost)?.AssociatedViewModel;
@@ -338,7 +338,50 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     public void ToggleSidebar()
     {
         if (_sidebarItem is null) return;
-        ((NSSplitViewItem)_sidebarItem.Animator).Collapsed = !_sidebarItem.Collapsed;
+        _autoCollapsedWidth = 0;
+        bool collapse = !_sidebarItem.Collapsed;
+        ((NSSplitViewItem)_sidebarItem.Animator).Collapsed = collapse;
+        ViewModel.PreferencesService.IsNavigationPaneOpened = !collapse;
+    }
+
+    private void PreferenceChanged(object? sender, string name)
+    {
+        if (name == nameof(IPreferencesService.IsWinoAccountButtonHidden))
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() => _toolbar?.SetAccountHidden(ViewModel.PreferencesService.IsWinoAccountButtonHidden));
+        else if (name == nameof(IPreferencesService.IsCompactAccountMenuItemEnabled))
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() => _sidebar?.ReloadRows());
+        else if (name == nameof(IPreferencesService.ReaderCommandLayout))
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
+                _toolbar?.SetCommandLayout(ReaderCommandLayout.Parse(ViewModel.PreferencesService.ReaderCommandLayout)));
+        else if (name == nameof(IPreferencesService.IsShowActionLabelsEnabled))
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() => _toolbar?.SetCommandLabels(ViewModel.PreferencesService.IsShowActionLabelsEnabled));
+    }
+
+    /// <summary>
+    /// Collapses the pane when a window drag squeezes it below its minimum (the content page is
+    /// already at its own minimum then) and expands it again once the drag passes that width.
+    /// A pane closed with the toggle stays closed.
+    /// </summary>
+    private void SplitViewResized()
+    {
+        if (_sidebarItem is null || _sidebar is null || _content.Window is not { InLiveResize: true } window) return;
+        if (!_sidebarItem.Collapsed)
+        {
+            var squeeze = (nfloat)SidebarMinimumWidth - _sidebar.View.Frame.Width;
+            if (squeeze < 1) return;
+            _autoCollapsedWidth = window.Frame.Width + squeeze;
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() => SetSidebarCollapsed(true));
+        }
+        else if (_autoCollapsedWidth > 0 && window.Frame.Width >= _autoCollapsedWidth + SidebarReopenMargin)
+        {
+            _autoCollapsedWidth = 0;
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() => SetSidebarCollapsed(false));
+        }
+    }
+
+    private void SetSidebarCollapsed(bool collapsed)
+    {
+        if (_sidebarItem is { } item && item.Collapsed != collapsed) item.Collapsed = collapsed;
     }
 
     public void FocusSearch() => _toolbar?.FocusSearch();
@@ -364,7 +407,7 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         if (mode == WinoApplicationMode.Settings)
         {
             OpenSettings();
-            if (_activeMode is { } current) _sidebar?.SetMode(current);
+            if (_modes.ActiveMode is { } current) _sidebar?.SetMode(current);
             return;
         }
         _navigation.ChangeApplicationMode(mode);
@@ -397,12 +440,12 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
     {
         try
         {
-            if (!ShellPaneRows.IsEnabled(item)) return;
+            if (!ShellMenuItemRules.IsEnabled(item)) return;
             // Folders select themselves when their navigation starts (MailAppShellViewModel.NavigateFolderAsync).
             // Pre-selecting them here would make that navigation look like a repeat of the current
             // folder and skip it, leaving the previous folder's list on screen. Windows also raises
             // ItemInvoked before the navigation view changes its selection.
-            if (ViewModel.HandlesSelection && ShellPaneRows.SelectsOnInvoked(item) && item is not IBaseFolderMenuItem)
+            if (ViewModel.HandlesSelection && ShellMenuItemRules.SelectsOnInvoked(item) && item is not IBaseFolderMenuItem)
                 ViewModel.SelectedMenuItem = item;
             await ViewModel.InvokeMenuItemAsync(item);
         }
@@ -567,7 +610,7 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         if (View.Window is not { } window) return;
         string title;
         string subtitle = string.Empty;
-        if (_activeMode is WinoApplicationMode.Mail or null && ViewModel.SelectedMenuItem is IBaseFolderMenuItem folder)
+        if (_modes.ActiveMode is WinoApplicationMode.Mail or null && ViewModel.SelectedMenuItem is IBaseFolderMenuItem folder)
         {
             title = folder.FolderName ?? string.Empty;
             var owner = folder is IFolderMenuItem { ParentAccount: { } account }
@@ -585,13 +628,37 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         window.Subtitle = subtitle;
     }
 
-    /// <summary>A split view whose 1 pt divider stays draggable but draws nothing.</summary>
+    /// <summary>Reports the start and end of a live window resize.</summary>
+    private sealed class LiveResizeView(Action<bool> liveResizeChanged) : NSView
+    {
+        public override void ViewWillStartLiveResize()
+        {
+            base.ViewWillStartLiveResize();
+            liveResizeChanged(true);
+        }
+
+        public override void ViewDidEndLiveResize()
+        {
+            base.ViewDidEndLiveResize();
+            liveResizeChanged(false);
+        }
+    }
+
+    /// <summary>
+    /// A split view whose 1 pt divider stays draggable. It draws nothing while zones float over a theme
+    /// backdrop (Windows has no line between pane and content) and the system hairline otherwise.
+    /// </summary>
     private sealed class ClearDividerSplitView : NSSplitView
     {
-        public override NSColor DividerColor => NSColor.Clear;
+        public ClearDividerSplitView() => WinoStyle.BackdropWatchers.Add(this, static split => split.NeedsDisplay = true);
+
+        public override NSColor DividerColor => WinoStyle.FloatingZones ? NSColor.Clear : NSColor.Separator;
 
         public override void DrawDivider(CoreGraphics.CGRect rect)
         {
+            if (WinoStyle.FloatingZones) return;
+            NSColor.Separator.SetFill();
+            NSGraphics.RectFill(rect);
         }
     }
 
@@ -601,6 +668,8 @@ public sealed class WinoAppShellViewController : WinoViewController<WinoAppShell
         {
             DetachCommandTarget();
             ObserveBriefing(null);
+            if (_splitResizeObserver is not null) Foundation.NSNotificationCenter.DefaultCenter.RemoveObserver(_splitResizeObserver);
+            _splitResizeObserver = null;
             _sidebar?.Dispose();
         }
         base.Dispose(disposing);

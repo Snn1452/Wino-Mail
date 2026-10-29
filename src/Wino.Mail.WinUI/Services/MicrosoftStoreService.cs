@@ -5,9 +5,11 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.WinUI;
+using Windows.ApplicationModel;
 using Windows.Services.Store;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Interfaces;
+using Wino.Mail.WinUI.Models;
 using WinRT.Interop;
 using WinoAddOnProductType = Wino.Core.Domain.Enums.WinoAddOnProductType;
 using WinoStorePurchaseResult = Wino.Core.Domain.Enums.StorePurchaseResult;
@@ -47,6 +49,7 @@ public sealed class MicrosoftStoreService : IMicrosoftStoreService
     private int _isInstalling;
 
     public bool HasAvailableUpdate { get; private set; }
+    public string? AvailableUpdateVersion { get; private set; }
 
     public MicrosoftStoreService(IConfigurationService configurationService,
                                  IWinoLogger logger,
@@ -227,9 +230,20 @@ public sealed class MicrosoftStoreService : IMicrosoftStoreService
 
         try
         {
+            switch (_nativeAppService.Distribution)
+            {
+                case WindowsAppDistribution.Sideload:
+                    HasAvailableUpdate = await AppInstallerUpdater.IsUpdateAvailableAsync();
+                    AvailableUpdateVersion = null;
+                    return HasAvailableUpdate;
+                case WindowsAppDistribution.Beta:
+                    return false;
+            }
+
             var updates = await RunOnMainWindowAsync(async context =>
                 await context.GetAppAndOptionalStorePackageUpdatesAsync());
             HasAvailableUpdate = updates?.Count > 0;
+            AvailableUpdateVersion = updates is { Count: > 0 } ? FormatVersion(updates[0].Package.Id.Version) : null;
 
             return HasAvailableUpdate;
         }
@@ -252,12 +266,15 @@ public sealed class MicrosoftStoreService : IMicrosoftStoreService
         }
     }
 
+    private static string FormatVersion(PackageVersion version)
+        => $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+
     // 0x803FB112: Store is not available on this machine/network. 0x80070422: the Store service is disabled.
     // 0x80070002: the Store components or package registration are missing.
     private static bool IsExpectedStoreUnavailableError(Exception exception)
         => unchecked((uint)exception.HResult) is 0x803FB112u or 0x80070422u or 0x80070002u;
 
-    public async Task<bool> StartUpdateAsync()
+    public async Task<bool> StartUpdateAsync(IProgress<double>? progress = null)
     {
         // A legacy toast and the shell prompt can both request installation.
         if (Interlocked.CompareExchange(ref _isInstalling, 1, 0) != 0)
@@ -265,35 +282,24 @@ public sealed class MicrosoftStoreService : IMicrosoftStoreService
 
         await _operationSemaphore.WaitAsync().ConfigureAwait(false);
 
+        // Installing closes every process of the package. Without a restart registration a desktop
+        // app stays closed, which users read as the update button doing nothing.
+        var isRestartRegistered = AppRestartRegistration.RegisterForUpdate();
+        var isCompleted = false;
+
         try
         {
-            return await RunOnMainWindowAsync(async context =>
+            isCompleted = _nativeAppService.Distribution switch
             {
-                var updates = await context.GetAppAndOptionalStorePackageUpdatesAsync();
+                WindowsAppDistribution.Store => await InstallStoreUpdateAsync(progress),
+                WindowsAppDistribution.Sideload => await AppInstallerUpdater.InstallAsync(progress, _logger),
+                _ => false
+            };
 
-                if (updates == null || updates.Count == 0)
-                {
-                    HasAvailableUpdate = false;
-                    return false;
-                }
+            if (isCompleted)
+                HasAvailableUpdate = false;
 
-                HasAvailableUpdate = true;
-                var result = await context.RequestDownloadAndInstallStorePackageUpdatesAsync(updates);
-                var isCompleted = result?.OverallState == StorePackageUpdateState.Completed;
-
-                if (isCompleted)
-                    HasAvailableUpdate = false;
-
-                if (!isCompleted && result != null)
-                {
-                    _logger.TrackEvent("Store update installation did not complete", new Dictionary<string, string>
-                    {
-                        { nameof(result.OverallState), result.OverallState.ToString() }
-                    });
-                }
-
-                return isCompleted;
-            });
+            return isCompleted;
         }
         catch (Exception ex)
         {
@@ -302,10 +308,52 @@ public sealed class MicrosoftStoreService : IMicrosoftStoreService
         }
         finally
         {
+            // A failed install leaves the app running; keep it from relaunching on an unrelated restart.
+            if (isRestartRegistered && !isCompleted)
+                AppRestartRegistration.Unregister();
+
             _operationSemaphore.Release();
             Volatile.Write(ref _isInstalling, 0);
         }
     }
+
+    private Task<bool> InstallStoreUpdateAsync(IProgress<double>? progress)
+        => RunOnMainWindowAsync(async context =>
+        {
+            var updates = await context.GetAppAndOptionalStorePackageUpdatesAsync();
+
+            if (updates == null || updates.Count == 0)
+            {
+                HasAvailableUpdate = false;
+                return false;
+            }
+
+            HasAvailableUpdate = true;
+
+            // Silent install needs Store auto-updates on and an unmetered network; otherwise the Store asks for consent.
+            var operation = context.CanSilentlyDownloadStorePackageUpdates
+                ? context.TrySilentDownloadAndInstallStorePackageUpdatesAsync(updates)
+                : context.RequestDownloadAndInstallStorePackageUpdatesAsync(updates);
+
+            // PackageDownloadProgress reaches 0.8 when the download ends and 1.0 after installation.
+            var storeProgress = progress == null
+                ? null
+                : new Progress<StorePackageUpdateStatus>(status => progress.Report(Math.Min(status.PackageDownloadProgress / 0.8, 1) * 100));
+
+            var result = storeProgress == null ? await operation : await operation.AsTask(storeProgress);
+            var isCompleted = result?.OverallState == StorePackageUpdateState.Completed;
+
+            if (!isCompleted && result != null)
+            {
+                _logger.TrackEvent("Store update installation did not complete", new Dictionary<string, string>
+                {
+                    { nameof(result.OverallState), result.OverallState.ToString() },
+                    { nameof(context.CanSilentlyDownloadStorePackageUpdates), context.CanSilentlyDownloadStorePackageUpdates.ToString() }
+                });
+            }
+
+            return isCompleted;
+        });
 
     #endregion
 

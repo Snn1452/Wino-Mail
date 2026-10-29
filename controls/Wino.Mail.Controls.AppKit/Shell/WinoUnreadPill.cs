@@ -1,4 +1,5 @@
 using AppKit;
+using Wino.Mail.Controls.Core;
 using Wino.Presentation.AppKit;
 
 namespace Wino.Mail.Controls.AppKit.Shell;
@@ -14,8 +15,8 @@ public sealed class WinoUnreadPill : WinoSurfaceView
     public WinoUnreadPill()
     {
         CornerRadius = 9;
-        Fill = WinoStyle.Accent;
-        _label = WinoStyle.Label(string.Empty, NSFont.SystemFontOfSize(11, NSFontWeight.Semibold), NSColor.White);
+        Fill = BadgeFill;
+        _label = WinoStyle.Label(string.Empty, NSFont.SystemFontOfSize(11, NSFontWeight.Semibold), WinoStyle.SecondaryText);
         _label.Alignment = NSTextAlignment.Center;
         AddSubview(_label);
         _label.SetContentHuggingPriorityForOrientation(1000, NSLayoutConstraintOrientation.Horizontal);
@@ -33,11 +34,11 @@ public sealed class WinoUnreadPill : WinoSurfaceView
         SetContentHuggingPriorityForOrientation(1000, NSLayoutConstraintOrientation.Horizontal);
         SetContentHuggingPriorityForOrientation(1000, NSLayoutConstraintOrientation.Vertical);
         SetContentCompressionResistancePriority(1000, NSLayoutConstraintOrientation.Horizontal);
-        WinoStyle.AccentChanged += AccentChanged;
         Hidden = true;
     }
 
-    private void AccentChanged(object? sender, EventArgs args) => Fill = WinoStyle.Accent;
+    /// <summary>The grey source-list badge (Mail, Finder), not the accent, so no accent subscription is needed.</summary>
+    private static NSColor BadgeFill { get; } = WinoStyle.Dynamic(WinoStyle.Hex(0x000000, 0.08), WinoStyle.Hex(0xFFFFFF, 0.14));
 
     public override CoreGraphics.CGSize IntrinsicContentSize
     {
@@ -52,7 +53,7 @@ public sealed class WinoUnreadPill : WinoSurfaceView
     {
         set
         {
-            var text = value > 999 ? "999+" : value.ToString();
+            var text = WinoControlText.UnreadPill(value);
             if (_label.StringValue != text)
             {
                 _label.StringValue = text;
@@ -63,11 +64,6 @@ public sealed class WinoUnreadPill : WinoSurfaceView
         }
     }
 
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) WinoStyle.AccentChanged -= AccentChanged;
-        base.Dispose(disposing);
-    }
 }
 
 /// <summary>
@@ -98,10 +94,8 @@ public sealed class WinoSyncBar : NSView
             _fill.BottomAnchor.ConstraintEqualTo(BottomAnchor)
         ]);
         Update(false, 0);
-        WinoStyle.AccentChanged += AccentChanged;
+        WinoStyle.AccentWatchers.Add(this, static bar => bar._fill.Fill = WinoStyle.Accent);
     }
-
-    private void AccentChanged(object? sender, EventArgs args) => _fill.Fill = WinoStyle.Accent;
 
     /// <summary>Sets the bar; <paramref name="value"/> is 0 to 100.</summary>
     public void Update(bool indeterminate, double value)
@@ -162,7 +156,7 @@ public sealed class WinoSyncBar : NSView
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) WinoStyle.AccentChanged -= AccentChanged;
+        if (disposing) WinoStyle.AccentWatchers.Remove(this);
         base.Dispose(disposing);
     }
 }

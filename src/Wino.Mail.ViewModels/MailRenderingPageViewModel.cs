@@ -19,6 +19,7 @@ using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Exceptions;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Platform;
 using Wino.Core.Domain.Models;
 using Wino.Core.Domain.Models.Attachments;
 using Wino.Core.Domain.Models.MailItem;
@@ -30,6 +31,7 @@ using Wino.Core.Services;
 using Wino.Mail.ViewModels.Data;
 using Wino.Mail.ViewModels.Models;
 using Wino.Messaging.Client.Mails;
+using Wino.Messaging.Client.Shell;
 using Wino.Messaging.UI;
 using IMailService = Wino.Core.Domain.Interfaces.IMailService;
 
@@ -37,6 +39,7 @@ namespace Wino.Mail.ViewModels;
 
 public partial class MailRenderingPageViewModel : MailBaseViewModel,
     IRecipient<ThumbnailAdded>,
+    IRecipient<PreferenceChangedMessage>,
     ITransferProgress // For listening IMAP message download progress.
 {
     private const int AttachmentPreviewLimit = 5;
@@ -108,6 +111,12 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     [NotifyPropertyChangedFor(nameof(ShouldDisplayDownloadProgress))]
     public partial bool IsIndetermineProgress { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsReaderViewEnabled { get; set; }
+
+    [ObservableProperty]
+    public partial MailDarkModeMethod ReaderDarkModeMethod { get; set; }
+
     /// <summary>
     /// False from the moment a message starts loading until its body has been handed to the renderer.
     /// The reader shows skeletons while it is false, so no half-populated header is ever on screen.
@@ -160,12 +169,17 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     #endregion
 
     public IExternalLauncher ExternalLauncher { get; }
+    private readonly ILinkBrowserService _linkBrowserService;
     private readonly IClipboardService _clipboardService;
     public IStatePersistanceService StatePersistenceService { get; }
     public IPreferencesService PreferencesService { get; }
     public IPlatformCapabilities PlatformCapabilities { get; }
     public Guid? CurrentMailAccountId => initializedMailItemViewModel?.MailCopy.AssignedAccount?.Id;
     public Guid? CurrentMailFileId => initializedMailItemViewModel?.MailCopy.FileId;
+
+    /// <summary>Opens a link from the message in the browser chosen for its account.</summary>
+    public Task<PlatformOperationResult> OpenLinkAsync(Uri uri)
+        => _linkBrowserService?.OpenLinkAsync(uri, CurrentMailAccountId) ?? ExternalLauncher.LaunchUriAsync(uri);
 
     public override async Task KeyboardShortcutHook(KeyboardShortcutTriggerDetails args)
     {
@@ -211,10 +225,12 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         IPreferencesService preferencesService,
         IPlatformCapabilities platformCapabilities,
         IApplicationConfiguration applicationConfiguration,
-        IAttachmentFileService attachmentFileService = null)
+        IAttachmentFileService attachmentFileService = null,
+        ILinkBrowserService linkBrowserService = null)
     {
         _dialogService = dialogService;
         ExternalLauncher = externalLauncher;
+        _linkBrowserService = linkBrowserService;
         _clipboardService = clipboardService;
         StatePersistenceService = statePersistenceService;
         _contactService = contactService;
@@ -229,7 +245,34 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         _folderService = folderService;
         _fileService = fileService;
         _requestDelegator = requestDelegator;
-        IsDarkWebviewRenderer = _underlyingThemeService.IsUnderlyingThemeDark();
+        IsDarkWebviewRenderer = GetReaderThemeIsDark(_underlyingThemeService.IsUnderlyingThemeDark());
+        ReaderDarkModeMethod = PreferencesService.ReaderDarkModeMethod;
+    }
+
+    public bool GetReaderThemeIsDark(bool isUnderlyingThemeDark) => PreferencesService.ReaderContentTheme switch
+    {
+        MailContentTheme.Light => false,
+        MailContentTheme.Dark => true,
+        _ => isUnderlyingThemeDark
+    };
+
+    public void RememberReaderTheme(bool isDark)
+    {
+        PreferencesService.ReaderContentTheme = isDark == _underlyingThemeService.IsUnderlyingThemeDark()
+            ? MailContentTheme.FollowApplication
+            : isDark ? MailContentTheme.Dark : MailContentTheme.Light;
+    }
+
+    public void ApplyApplicationTheme(bool isUnderlyingThemeDark)
+    {
+        var rememberedTheme = PreferencesService.ReaderContentTheme;
+        if ((rememberedTheme == MailContentTheme.Dark && isUnderlyingThemeDark) ||
+            (rememberedTheme == MailContentTheme.Light && !isUnderlyingThemeDark))
+        {
+            PreferencesService.ReaderContentTheme = MailContentTheme.FollowApplication;
+        }
+
+        IsDarkWebviewRenderer = GetReaderThemeIsDark(isUnderlyingThemeDark);
     }
 
     [RelayCommand]
@@ -294,7 +337,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
                 confirmed = await _dialogService.ShowConfirmationDialogAsync(string.Format(Translator.DialogMessage_UnsubscribeConfirmationGoToWebsiteMessage, FromName), Translator.DialogMessage_UnsubscribeConfirmationTitle, Translator.DialogMessage_UnsubscribeConfirmationGoToWebsiteConfirmButton);
                 if (!confirmed) return;
 
-                (await ExternalLauncher.LaunchUriAsync(new Uri(CurrentRenderModel.UnsubscribeInfo.HttpLink))).ThrowIfNotSucceeded();
+                (await OpenLinkAsync(new Uri(CurrentRenderModel.UnsubscribeInfo.HttpLink))).ThrowIfNotSucceeded();
             }
         }
         else if (CurrentRenderModel.UnsubscribeInfo.MailToLink is not null)
@@ -427,10 +470,10 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     private int _loadVersion;
     private int _downloadLoadVersion;
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
@@ -499,13 +542,13 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     /// as a <see cref="MimeMessageInformation"/>. EML rendering is read-only, so it gets no
     /// message-specific command bar items.
     /// </remarks>
-    public async Task LoadContentAsync(object parameters)
+    public async Task LoadContentAsync(object? parameters)
     {
         var loadVersion = _loadVersion;
 
         try
         {
-            IsDarkWebviewRenderer = _underlyingThemeService.IsUnderlyingThemeDark();
+            IsDarkWebviewRenderer = GetReaderThemeIsDark(_underlyingThemeService.IsUnderlyingThemeDark());
 
             // Mime content might not be available for now and might require a download.
             if (parameters is MailItemViewModel selectedMailItemViewModel)
@@ -767,7 +810,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         return accounts;
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
 
@@ -793,84 +836,27 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
 
     private void InitializeCommandBarItems()
     {
-        var menuItems = new List<IMenuOperation>();
+        var assignedFolder = initializedMailItemViewModel?.MailCopy.AssignedFolder;
 
-        // Save As PDF
-        if (PlatformCapabilities.PdfExport)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.SaveAs, true, true));
-        else
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.SaveAsEml, true, true));
-
-        // Print
-        if (PlatformCapabilities.Printing)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.Print, true, true));
-
-        if (initializedMailItemViewModel == null)
-        {
-            MenuItems = menuItems;
-            return;
-        }
-
-        var assignedFolder = initializedMailItemViewModel.MailCopy.AssignedFolder;
-
-        if (assignedFolder == null)
+        if (initializedMailItemViewModel != null && assignedFolder == null)
         {
             Log.Warning("Skipping folder-specific mail commands because AssignedFolder is missing for {MailUniqueId}",
                 initializedMailItemViewModel.MailCopy.UniqueId);
-            MenuItems = menuItems;
-            return;
         }
 
-        menuItems.Add(MailOperationMenuItem.Create(MailOperation.Seperator));
-
-        // You can't do these to draft items.
-        if (!initializedMailItemViewModel.IsDraft)
+        var context = new ReaderCommandContext
         {
-            // Reply
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.Reply));
+            HasMailItem = initializedMailItemViewModel != null && assignedFolder != null,
+            IsDraft = initializedMailItemViewModel?.IsDraft ?? false,
+            IsRead = initializedMailItemViewModel?.IsRead ?? false,
+            IsFlagged = initializedMailItemViewModel?.IsFlagged ?? false,
+            FolderType = assignedFolder?.SpecialFolderType ?? SpecialFolderType.Other,
+            HasMimeMessage = initializedMimeMessageInformation?.MimeMessage != null,
+            CanExportPdf = PlatformCapabilities.PdfExport,
+            CanPrint = PlatformCapabilities.Printing
+        };
 
-            // Reply All
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.ReplyAll));
-
-            // Forward
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.Forward));
-        }
-
-        if (initializedMimeMessageInformation?.MimeMessage != null)
-        {
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.ViewMessageSource, true, true));
-        }
-
-        // Archive - Unarchive
-        if (assignedFolder.SpecialFolderType == SpecialFolderType.Archive)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.UnArchive));
-        else
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.Archive));
-
-        // Delete
-        menuItems.Add(MailOperationMenuItem.Create(MailOperation.SoftDelete));
-
-        // Flag - Clear Flag
-        if (initializedMailItemViewModel.IsFlagged)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.ClearFlag));
-        else
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.SetFlag));
-
-        // Secondary items.
-
-        // Read - Unread
-        if (initializedMailItemViewModel.IsRead)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.MarkAsUnread, true, false));
-        else
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.MarkAsRead, true, false));
-
-        if (assignedFolder.SpecialFolderType == SpecialFolderType.Junk)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.MarkAsNotJunk, true, true));
-        else if (!initializedMailItemViewModel.IsDraft &&
-                 assignedFolder.SpecialFolderType != SpecialFolderType.Sent)
-            menuItems.Add(MailOperationMenuItem.Create(MailOperation.MoveToJunk, true, true));
-
-        MenuItems = menuItems;
+        MenuItems = ReaderCommandLayout.CreateMenuItems(ReaderCommandLayout.Parse(PreferencesService.ReaderCommandLayout), context);
     }
 
     protected override async void OnMailUpdated(MailCopy updatedMail, EntityUpdateSource source, MailCopyChangeFlags changedProperties)
@@ -980,7 +966,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         {
             attachmentViewModel.IsBusy = true;
 
-            var pickedPath = await _dialogService.PickWindowsFolderAsync();
+            var pickedPath = await _dialogService.PickFolderAsync();
 
             if (string.IsNullOrEmpty(pickedPath)) return;
 
@@ -1035,7 +1021,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     [RelayCommand]
     private async Task SaveAllAttachmentsAsync()
     {
-        var pickedPath = await _dialogService.PickWindowsFolderAsync();
+        var pickedPath = await _dialogService.PickFolderAsync();
 
         if (string.IsNullOrEmpty(pickedPath)) return;
 
@@ -1074,7 +1060,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     {
         try
         {
-            var pickedFolder = await _dialogService.PickWindowsFolderAsync();
+            var pickedFolder = await _dialogService.PickFolderAsync();
 
             if (string.IsNullOrEmpty(pickedFolder)) return;
 
@@ -1111,7 +1097,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
                 return;
             }
 
-            var pickedFolder = await _dialogService.PickWindowsFolderAsync();
+            var pickedFolder = await _dialogService.PickFolderAsync();
 
             if (string.IsNullOrEmpty(pickedFolder)) return;
 
@@ -1217,6 +1203,22 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
     // For upload.
     void ITransferProgress.Report(long bytesTransferred) { }
 
+    public void Receive(PreferenceChangedMessage message)
+    {
+        if (message.PropertyName == nameof(IPreferencesService.ReaderCommandLayout))
+        {
+            _ = ExecuteUIThread(InitializeCommandBarItems);
+        }
+        else if (message.PropertyName == nameof(IPreferencesService.ReaderContentTheme))
+        {
+            _ = ExecuteUIThread(() => IsDarkWebviewRenderer = GetReaderThemeIsDark(_underlyingThemeService.IsUnderlyingThemeDark()));
+        }
+        else if (message.PropertyName == nameof(IPreferencesService.ReaderDarkModeMethod))
+        {
+            _ = ExecuteUIThread(() => ReaderDarkModeMethod = PreferencesService.ReaderDarkModeMethod);
+        }
+    }
+
     public void Receive(ThumbnailAdded message)
     {
         _ = ExecuteUIThread(() =>
@@ -1311,6 +1313,7 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         base.RegisterRecipients();
 
         Messenger.Register<ThumbnailAdded>(this);
+        Messenger.Register<PreferenceChangedMessage>(this);
     }
 
     protected override void UnregisterRecipients()
@@ -1318,5 +1321,6 @@ public partial class MailRenderingPageViewModel : MailBaseViewModel,
         base.UnregisterRecipients();
 
         Messenger.Unregister<ThumbnailAdded>(this);
+        Messenger.Unregister<PreferenceChangedMessage>(this);
     }
 }

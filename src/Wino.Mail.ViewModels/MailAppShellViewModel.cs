@@ -16,6 +16,7 @@ using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Exceptions;
 using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Settings;
 using Wino.Core.Domain.MenuItems;
 using Wino.Core.Domain.Models;
 using Wino.Core.Domain.Models.Folders;
@@ -38,6 +39,7 @@ namespace Wino.Mail.ViewModels;
 public partial class MailAppShellViewModel : MailBaseViewModel,
     IMailShellClient,
     IRecipient<MailtoProtocolMessageRequested>,
+    IRecipient<UnreadBadgeLaunchNavigationRequested>,
     IRecipient<RefreshUnreadCountsMessage>,
     IRecipient<AccountsMenuRefreshRequested>,
     IRecipient<MergedInboxRenamed>,
@@ -277,10 +279,10 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         }).ConfigureAwait(false);
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters)
     {
         if (!_hasRegisteredPersistentRecipients)
         {
@@ -344,7 +346,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         });
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
 
@@ -616,7 +618,8 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
     /// </summary>
     private async Task<bool> TryNavigateToUnreadBadgeLocationAsync()
     {
-        if (!PreferencesService.IsTaskbarBadgeLaunchNavigationEnabled)
+        if (!SettingAvailability.IsAvailable(PlatformSetting.BadgeLaunchNavigation, PlatformCapabilities) ||
+            !PreferencesService.IsTaskbarBadgeLaunchNavigationEnabled)
             return false;
 
         try
@@ -1032,9 +1035,19 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
             await NavigateFolderAsync(baseFolderMenuItem);
         }
-        else if (clickedMenuItem is MergedAccountMenuItem clickedMergedAccountMenuItem && latestSelectedAccountMenuItem != clickedMenuItem)
+        else if (clickedMenuItem is MergedAccountMenuItem clickedMergedAccountMenuItem)
         {
-            // Don't navigate to merged account if it's already selected. Preserve user's already selected folder.
+            // The mode owns the group's expansion for this click, set before the first await so the
+            // heads can neutralize their own click toggle. With the merged folders loaded the click
+            // only toggles the group; otherwise it loads them and keeps the accounts visible.
+            if (latestSelectedAccountMenuItem == clickedMergedAccountMenuItem)
+            {
+                clickedMergedAccountMenuItem.IsExpanded = !clickedMergedAccountMenuItem.IsExpanded;
+                return;
+            }
+
+            clickedMergedAccountMenuItem.IsExpanded = true;
+
             await ChangeLoadedAccountAsync(clickedMergedAccountMenuItem, true);
         }
         else if (clickedMenuItem is IAccountMenuItem clickedAccountMenuItem)
@@ -1075,7 +1088,17 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
                 latestSelectedAccountMenuItem.IsSelected = false;
             }
 
+            if (latestSelectedAccountMenuItem?.ParentMenuItem is MergedAccountMenuItem previousParentMenuItem)
+            {
+                previousParentMenuItem.IsChildSelected = false;
+            }
+
             clickedBaseAccountMenuItem.IsSelected = true;
+
+            if (clickedBaseAccountMenuItem.ParentMenuItem is MergedAccountMenuItem clickedParentMenuItem)
+            {
+                clickedParentMenuItem.IsChildSelected = true;
+            }
 
             latestSelectedAccountMenuItem = clickedBaseAccountMenuItem;
 
@@ -1314,7 +1337,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
                     if (!mergedAccounts.Any()) return;
 
-                    Messenger.Send(new CreateNewMailWithMultipleAccountsRequested(mergedAccounts.ToList()));
+                    operationAccount = await PickNewMailAccountAsync(mergedAccounts.ToList());
                 }
                 else if (latestSelectedAccountMenuItem is AccountMenuItem selectedAccountMenuItem)
                 {
@@ -1323,13 +1346,23 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
                 else
                 {
                     // User is at some other page. List all accounts.
-                    Messenger.Send(new CreateNewMailWithMultipleAccountsRequested(accounts));
+                    operationAccount = await PickNewMailAccountAsync(accounts);
                 }
             }
         }
 
         if (operationAccount != null)
             await CreateNewMailForAsync(operationAccount);
+    }
+
+    private async Task<MailAccount> PickNewMailAccountAsync(List<MailAccount> accounts)
+    {
+        Messenger.Send(new CreateNewMailWithMultipleAccountsRequested(accounts));
+
+        if (_dialogService.HandlesMultipleAccountNewMailPicker)
+            return null;
+
+        return await _dialogService.PickAccountAsync(accounts, Translator.MailShell_PickAccountForNewMail);
     }
 
     public async Task CreateNewMailForAsync(MailAccount account)
@@ -1422,8 +1455,8 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
             }
             catch (Exception ex)
             {
-                // Any other failure (a storage or synchronizer error) used to reach only the caller's logger,
-                // so New Message did nothing visible.
+                // Any other failure (a storage or synchronizer error) used to reach only the caller's
+                // logger, so New Message did nothing visible. Every head shows it through its info bar.
                 Log.Error(ex, "Creating a new draft for account {AccountId} failed.", account.Id);
                 _dialogService.InfoBarMessage(Translator.Info_DraftCreationFailed, ex.Message, InfoBarMessageType.Error);
             }
@@ -1464,6 +1497,9 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
 
     public void Receive(MailtoProtocolMessageRequested message)
         => _ = ExecuteUIThreadAsync(HandleMailToProtocolMessageAsync);
+
+    public void Receive(UnreadBadgeLaunchNavigationRequested message)
+        => _ = TryNavigateToUnreadBadgeLocationAsync();
 
     private async Task HandleMailToProtocolMessageAsync()
     {
@@ -1847,6 +1883,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         Messenger.Register<NavigateMailFolderEvent>(this);
         Messenger.Register<AccountUpdatedMessage>(this);
         Messenger.Register<MailtoProtocolMessageRequested>(this);
+        Messenger.Register<UnreadBadgeLaunchNavigationRequested>(this);
         Messenger.Register<RefreshUnreadCountsMessage>(this);
         Messenger.Register<AccountsMenuRefreshRequested>(this);
         Messenger.Register<MergedInboxRenamed>(this);
@@ -1866,6 +1903,7 @@ public partial class MailAppShellViewModel : MailBaseViewModel,
         Messenger.Unregister<NavigateMailFolderEvent>(this);
         Messenger.Unregister<AccountUpdatedMessage>(this);
         Messenger.Unregister<MailtoProtocolMessageRequested>(this);
+        Messenger.Unregister<UnreadBadgeLaunchNavigationRequested>(this);
         Messenger.Unregister<RefreshUnreadCountsMessage>(this);
         Messenger.Unregister<AccountsMenuRefreshRequested>(this);
         Messenger.Unregister<MergedInboxRenamed>(this);

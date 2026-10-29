@@ -43,6 +43,17 @@ Install Wino Mail from the Microsoft Store or directly with App Installer.
 
 The beta channel gets new changes before they reach Microsoft Store. Beta builds can contain unfinished changes and are for testing. Install the beta with [App Installer](https://download.winomail.app/WinoMailBetaIsolated.appinstaller); it installs next to the Store version.
 
+## Platforms
+
+| Platform | Application | Developer guide |
+| --- | --- | --- |
+| Windows | WinUI 3 | [Windows development](docs/harness/development-windows.md) |
+| macOS | AppKit | [macOS development](docs/harness/development-macos.md) |
+| iOS and iPadOS | UIKit | [iOS development](docs/harness/development-ios.md) |
+| Android | Android Views and Material Components (in development) | [Android development](docs/harness/development-android.md) |
+
+All applications share the .NET backend, ViewModels, and translations. The download links above are for Windows.
+
 ## Other features
 
 - Native WinUI 3 interface with light, dark, and high-contrast support

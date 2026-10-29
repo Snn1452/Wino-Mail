@@ -40,34 +40,12 @@ public class NewThemeService : INewThemeService
 {
     public const string CustomThemeFolderName = "CustomThemes";
 
-    private static string _defaultThemeId = "00000000-0000-0000-0000-000000000000";
-    private static string _cloudsThemeId = "3b621cc2-e270-4a76-8477-737917cccda0";
-    private static string _forestThemeId = "8bc89b37-a7c5-4049-86e2-de1ae8858dbd";
-    private static string _nightyThemeId = "5b65e04e-fd7e-4c2d-8221-068d3e02d23a";
-    private static string _snowflakeThemeId = "e143ddde-2e28-4846-9d98-dad63d6505f1";
-    private static string _gardenThemeId = "698e4466-f88c-4799-9c61-f0ea1308ed49";
-    private static string _dunesThemeId = "fff1d070-e7f2-4a91-8e50-30f20a19bf7d";
-    private static string _lavenderThemeId = "41567cf1-31ca-4f8c-bd18-2f9a2d990cb5";
-    private static string _coastlineThemeId = "17434033-2152-41dc-bda6-933c52d250b4";
-    private static string _blossomThemeId = "02eb4827-50c7-4052-8dde-3a4af843317b";
-    private static string _poppyThemeId = "004c87bc-e540-406c-8c50-8eb8eb03d247";
-    private static string _auroraThemeId = "ba2974ca-7e03-4fe1-b102-efc6a6fa9cc9";
-    private static string _emberThemeId = "437d53b5-9228-408d-9374-c5ca457bf02f";
-    private static string _nebulaThemeId = "b509ae0e-ca7a-4d53-b052-c3f30bbd4bd5";
-    private static string _skylineThemeId = "1ae2d96e-1aa8-4058-ad08-84f11069c69a";
-    private static string _graphiteThemeId = "7e633982-ad91-4634-a926-25b154e7bfaf";
-    private static string _mistThemeId = "a0347ab8-d51e-411f-ab80-996d3b21a81b";
-    private static string _cocoaThemeId = "24b4f855-c9ea-485c-b9a9-0672d1b327dc";
-    private static string _mossThemeId = "e75ea27f-3757-4b46-8ad7-f5a4d4c58cdf";
-    private static string _roseThemeId = "ef2a1205-f6a4-4551-bac6-8747879669f7";
-    private static string _indigoThemeId = "14c784d9-d8d3-462d-9b2c-965967d86d38";
-
     public event EventHandler<ApplicationElementTheme>? ElementThemeChanged;
     public event EventHandler<string>? AccentColorChanged;
     public event EventHandler<WindowBackdropType>? BackdropChanged;
 
-    private const string AccentColorKey = nameof(AccentColorKey);
-    private const string CurrentApplicationThemeKey = nameof(CurrentApplicationThemeKey);
+    private const string AccentColorKey = WinoThemeCatalog.AccentColorKey;
+    private const string CurrentApplicationThemeKey = WinoThemeCatalog.CurrentApplicationThemeKey;
     private const string WindowBackdropTypeKey = nameof(WindowBackdropTypeKey);
 
     // Custom theme
@@ -87,33 +65,12 @@ public class NewThemeService : INewThemeService
     private const string LightIconFontFamily = "ms-appx:///Assets/WinoIconsColor-Light.ttf#WinoIconsColorLight";
     private const string DarkIconFontFamily = "ms-appx:///Assets/WinoIconsColor-Dark.ttf#WinoIconsColorDark";
 
-    private List<AppThemeBase> preDefinedThemes { get; set; } = new List<AppThemeBase>()
-    {
-        new SystemAppTheme("Default", Guid.Parse(_defaultThemeId)),
-        new PreDefinedAppTheme("Nighty", Guid.Parse(_nightyThemeId), "#e1b12c", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Forest", Guid.Parse(_forestThemeId), "#16a085", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Clouds", Guid.Parse(_cloudsThemeId), "#0984e3", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Snowflake", Guid.Parse(_snowflakeThemeId), "#4a69bd", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Garden", Guid.Parse(_gardenThemeId), "#05c46b", ApplicationElementTheme.Light),
-
-        new PreDefinedAppTheme("Dunes", Guid.Parse(_dunesThemeId), "#e17055", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Lavender", Guid.Parse(_lavenderThemeId), "#6c5ce7", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Coastline", Guid.Parse(_coastlineThemeId), "#00a8b5", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Blossom", Guid.Parse(_blossomThemeId), "#e84393", ApplicationElementTheme.Light),
-        new PreDefinedAppTheme("Poppy", Guid.Parse(_poppyThemeId), "#d63031", ApplicationElementTheme.Light),
-
-        new PreDefinedAppTheme("Aurora", Guid.Parse(_auroraThemeId), "#00cec9", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Ember", Guid.Parse(_emberThemeId), "#e58e26", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Nebula", Guid.Parse(_nebulaThemeId), "#8c7ae6", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Skyline", Guid.Parse(_skylineThemeId), "#0097e6", ApplicationElementTheme.Dark),
-        new PreDefinedAppTheme("Graphite", Guid.Parse(_graphiteThemeId), "#6b7b8c", ApplicationElementTheme.Dark),
-
-        new PreDefinedAppTheme("Mist", Guid.Parse(_mistThemeId), "#5e81ac", ApplicationElementTheme.Default),
-        new PreDefinedAppTheme("Cocoa", Guid.Parse(_cocoaThemeId), "#c07a4c", ApplicationElementTheme.Default),
-        new PreDefinedAppTheme("Moss", Guid.Parse(_mossThemeId), "#2f9e63", ApplicationElementTheme.Default),
-        new PreDefinedAppTheme("Rose", Guid.Parse(_roseThemeId), "#c4577e", ApplicationElementTheme.Default),
-        new PreDefinedAppTheme("Indigo", Guid.Parse(_indigoThemeId), "#4c5fd7", ApplicationElementTheme.Default),
-    };
+    // The catalog is shared with the other platforms so theme ids, accents and forced themes stay identical.
+    private List<AppThemeBase> preDefinedThemes { get; set; } = WinoThemeCatalog.PredefinedThemes
+        .Select(static theme => theme.IsSystemTheme
+            ? new SystemAppTheme(theme.Name, theme.Id)
+            : (AppThemeBase)new PreDefinedAppTheme(theme.Name, theme.Id, theme.AccentColor, theme.ForcedElementTheme))
+        .ToList();
 
     public NewThemeService(IConfigurationService configurationService,
                           IUnderlyingThemeService underlyingThemeService,
@@ -136,7 +93,7 @@ public class NewThemeService : INewThemeService
         get
         {
             var rootContent = TryGetShellRootContent();
-            if (rootContent == null)
+            if (rootContent == null || ContrastThemeHelper.IsActive)
                 return _configurationService.Get(UnderlyingThemeService.SelectedAppThemeKey, ApplicationElementTheme.Default);
 
             return rootContent.RequestedTheme.ToWinoElementTheme();
@@ -145,7 +102,7 @@ public class NewThemeService : INewThemeService
         {
             var rootContent = TryGetShellRootContent();
             if (rootContent != null)
-                rootContent.RequestedTheme = value.ToWindowsElementTheme();
+                rootContent.RequestedTheme = ContrastThemeHelper.IsActive ? ElementTheme.Default : value.ToWindowsElementTheme();
 
             _configurationService.Set(UnderlyingThemeService.SelectedAppThemeKey, value);
 
@@ -243,6 +200,7 @@ public class NewThemeService : INewThemeService
     private bool isInitialized = false;
 
     private const string ThemeNameKey = "ThemeName";
+    private const string DefaultThemeName = "Default";
     private const string DefaultThemeDictionaryUri = "ms-appx:///AppThemes/Default.xaml";
     private const string HighContrastThemeKey = "HighContrast";
 
@@ -311,6 +269,9 @@ public class NewThemeService : INewThemeService
         // Already initialized. There is no need.
         if (isInitialized) return;
 
+        isContrastThemeApplied = ContrastThemeHelper.IsActive;
+        contrastDispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
         RootTheme = _configurationService.Get(UnderlyingThemeService.SelectedAppThemeKey, ApplicationElementTheme.Default);
         AccentColor = _configurationService.Get(AccentColorKey, string.Empty);
 
@@ -341,13 +302,113 @@ public class NewThemeService : INewThemeService
         //uiSettings.ColorValuesChanged -= UISettingsColorChanged;
         //uiSettings.ColorValuesChanged += UISettingsColorChanged;
 
+        // AccessibilitySettings.HighContrastChanged throws 0x80070490 when subscribed from a desktop
+        // window, which crashed every launch. A contrast theme change also changes the system colors,
+        // and this handler only queues work to the UI thread.
+        uiSettings.ColorValuesChanged -= SystemColorValuesChanged;
+        uiSettings.ColorValuesChanged += SystemColorValuesChanged;
+
         isInitialized = true;
+    }
+
+    private bool isContrastThemeApplied;
+    private Microsoft.UI.Dispatching.DispatcherQueue? contrastDispatcherQueue;
+
+    private static readonly string[] AccentColorResourceKeys =
+    [
+        "SystemAccentColor",
+        "SystemAccentColorLight1",
+        "SystemAccentColorLight2",
+        "SystemAccentColorLight3",
+        "SystemAccentColorDark1",
+        "SystemAccentColorDark2",
+        "SystemAccentColorDark3"
+    ];
+
+    private void SystemColorValuesChanged(UISettings sender, object args) => QueueContrastThemeCheck();
+
+    private void QueueContrastThemeCheck()
+    {
+        var dispatcherQueue = contrastDispatcherQueue ?? GetThemeWindow()?.DispatcherQueue;
+        dispatcherQueue?.TryEnqueue(() => _ = ApplyContrastThemeChangeAsync());
+    }
+
+    private async Task ApplyContrastThemeChangeAsync()
+    {
+        var isContrastThemeActive = ContrastThemeHelper.IsActive;
+        if (isContrastThemeActive == isContrastThemeApplied) return;
+
+        isContrastThemeApplied = isContrastThemeActive;
+
+        try
+        {
+            if (isContrastThemeActive)
+            {
+                RemoveAccentColorOverrides();
+                ApplyContrastThemeDictionary();
+                RootTheme = _configurationService.Get(UnderlyingThemeService.SelectedAppThemeKey, ApplicationElementTheme.Default);
+            }
+            else
+            {
+                // Initializing mode keeps the user's stored accent instead of the theme's default one.
+                await ApplyCustomThemeCoreAsync(isInitializing: true, forceReapply: true, throwOnError: false);
+                RootTheme = _configurationService.Get(UnderlyingThemeService.SelectedAppThemeKey, ApplicationElementTheme.Default);
+                UpdateAccentColor(string.IsNullOrWhiteSpace(accentColor) ? GetSystemAccentColorHex() : accentColor);
+            }
+
+            ApplyBackdrop(currentBackdropType);
+            RefreshThemeResource();
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Applying the contrast theme change failed.");
+            EnsureThemeResources();
+        }
+    }
+
+    // Wallpaper, acrylic and custom themes declare top-level brushes that win over their HighContrast
+    // dictionaries, so a contrast theme always runs on Default. The stored selection stays untouched.
+    private void ApplyContrastThemeDictionary()
+    {
+        var existingThemeDictionary = FindMergedThemeDictionary();
+
+        if (existingThemeDictionary != null
+            && existingThemeDictionary.TryGetValue(ThemeNameKey, out var themeName)
+            && themeName?.ToString() == DefaultThemeName)
+        {
+            EnsureHighContrastFallbacks(existingThemeDictionary);
+            return;
+        }
+
+        var contrastThemeDictionary = new ResourceDictionary { Source = new Uri(DefaultThemeDictionaryUri) };
+        EnsureHighContrastFallbacks(contrastThemeDictionary);
+        _applicationResourceManager.AddResource(contrastThemeDictionary);
+
+        if (existingThemeDictionary != null)
+            _applicationResourceManager.RemoveResource(existingThemeDictionary);
+    }
+
+    private void RemoveAccentColorOverrides()
+    {
+        var resources = Application.Current.Resources;
+
+        foreach (var key in AccentColorResourceKeys)
+        {
+            try
+            {
+                resources.Remove(key);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Accent override {key} was not removed: {ex.Message}");
+            }
+        }
     }
 
     [DynamicWindowsRuntimeCast(typeof(DesktopAcrylicBackdrop))]
     public void ApplyBackdrop(WindowBackdropType backdropType)
     {
-        backdropType = NormalizeBackdropType(backdropType);
+        backdropType = ContrastThemeHelper.IsActive ? WindowBackdropType.None : NormalizeBackdropType(backdropType);
 
         if (GetThemeWindow() is not WindowEx windowEx)
         {
@@ -451,6 +512,9 @@ public class NewThemeService : INewThemeService
             TrackAccentThemeSource(rootContent);
 
             appliedAccentHex = hex;
+
+            if (ContrastThemeHelper.IsActive) return;
+
             ApplyAccentPalette(hex, IsAccentThemeDark(rootContent));
 
             RefreshThemeResource();
@@ -483,7 +547,7 @@ public class NewThemeService : INewThemeService
     private void AccentThemeSourceActualThemeChanged(FrameworkElement sender, object args)
     {
         // Brush color changes propagate without a theme refresh, so this cannot loop.
-        if (!string.IsNullOrEmpty(appliedAccentHex))
+        if (!string.IsNullOrEmpty(appliedAccentHex) && !ContrastThemeHelper.IsActive)
             ApplyAccentPalette(appliedAccentHex, sender.ActualTheme == ElementTheme.Dark);
     }
 
@@ -647,6 +711,13 @@ public class NewThemeService : INewThemeService
     [DynamicWindowsRuntimeCast(typeof(ResourceDictionary))]
     private async Task ApplyCustomThemeCoreAsync(bool isInitializing, bool forceReapply, bool throwOnError)
     {
+        if (ContrastThemeHelper.IsActive)
+        {
+            ApplyContrastThemeDictionary();
+            UpdateSystemCaptionButtonColors();
+            return;
+        }
+
         // If no theme ID is set, don't apply any theme (for backward compatibility)
         if (currentApplicationThemeId == null)
         {
@@ -811,6 +882,10 @@ public class NewThemeService : INewThemeService
             return;
 
         SetPaletteColor(dictionary, "MainCustomThemeColor", palette.MainCustomThemeColor, asColor: true);
+        SetPaletteColor(dictionary, "AppBarBackgroundColor", palette.MainCustomThemeColor);
+        SetPaletteColor(dictionary, "NavigationViewDefaultPaneBackground", palette.MainCustomThemeColor);
+        SetPaletteColor(dictionary, "NavigationViewExpandedPaneBackground", palette.MainCustomThemeColor);
+        SetPaletteColor(dictionary, "WelcomeOverlayBrush", palette.MainCustomThemeColor);
         SetPaletteColor(dictionary, "MailListHeaderBackgroundColor", palette.MailListHeaderBackgroundColor);
         SetPaletteColor(dictionary, "CalendarDefaultHourBackgroundBrush", palette.CalendarDefaultHourBackgroundBrush);
         SetPaletteColor(dictionary, "CalendarHoverHourBackgroundBrush", palette.CalendarHoverHourBackgroundBrush);
@@ -880,7 +955,7 @@ public class NewThemeService : INewThemeService
     }
 
     public ThemeRuntimeState CaptureRuntimeState()
-        => new(currentApplicationThemeId, currentApplicationThemeId ?? Guid.Parse(_defaultThemeId), AccentColor, RootTheme);
+        => new(currentApplicationThemeId, currentApplicationThemeId ?? WinoThemeCatalog.DefaultThemeId, AccentColor, RootTheme);
 
     [DynamicWindowsRuntimeCast(typeof(ResourceDictionary))]
     public async Task PreviewCustomThemeAsync(
@@ -888,6 +963,9 @@ public class NewThemeService : INewThemeService
         byte[]? wallpaperData,
         ApplicationElementTheme elementTheme)
     {
+        if (ContrastThemeHelper.IsActive)
+            return;
+
         var wallpaperUri = metadata.Id == Guid.Empty
             ? $"ms-appdata:///local/{CustomThemeFolderName}/editor-preview.jpg"
             : $"ms-appdata:///local/{CustomThemeFolderName}/{metadata.Id}.jpg";

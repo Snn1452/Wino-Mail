@@ -11,6 +11,7 @@ using Wino.Core.Domain.Models.Accounts;
 using Wino.Messaging.Client.Accounts;
 using Wino.Messaging.Client.Calendar;
 using Wino.Messaging.UI;
+using Wino.Services;
 
 namespace Wino.Core.Services;
 
@@ -25,7 +26,9 @@ public sealed class AppModeReadinessService : IAppModeReadinessService
     private readonly ICalendarService _calendarService;
     private readonly ITaskQueryService _taskQueryService;
     private readonly IContactQueryService _contactQueryService;
+    private readonly IPreferencesService _preferencesService;
     private readonly IWinoLogger _logger;
+    private readonly IDatabaseService _databaseService;
 
     public event EventHandler ReadinessInvalidated;
 
@@ -35,16 +38,52 @@ public sealed class AppModeReadinessService : IAppModeReadinessService
         ICalendarService calendarService,
         ITaskQueryService taskQueryService,
         IContactQueryService contactQueryService,
-        IWinoLogger logger = null)
+        IPreferencesService preferencesService,
+        IWinoLogger logger = null,
+        IDatabaseService databaseService = null)
     {
         _accountService = accountService;
         _folderService = folderService;
         _calendarService = calendarService;
         _taskQueryService = taskQueryService;
         _contactQueryService = contactQueryService;
+        _preferencesService = preferencesService;
         _logger = logger;
+        _databaseService = databaseService;
 
+        _preferencesService.PreferenceChanged += PreferenceChanged;
         RegisterInvalidationMessages(WeakReferenceMessenger.Default);
+    }
+
+    public async Task<AppModeVisibility> GetVisibilityAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Initializing the database here would create it before the legacy migration check runs.
+            if (_databaseService?.Connection == null)
+                return AppModeVisibility.All;
+
+            var accounts = await _accountService.GetAccountsAsync().ConfigureAwait(false) ?? [];
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return AppModeVisibility.Evaluate(accounts, _preferencesService.HiddenApplicationModes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A failed check must never hide a mode the user may need.
+            _logger?.CaptureException(ex, nameof(AppModeReadinessService));
+            return AppModeVisibility.All;
+        }
+    }
+
+    private void PreferenceChanged(object sender, string propertyName)
+    {
+        if (propertyName == nameof(IPreferencesService.HiddenApplicationModes))
+            Invalidate();
     }
 
     public async Task<AppModeReadiness> GetReadinessAsync(WinoApplicationMode mode, CancellationToken cancellationToken = default)
@@ -54,6 +93,9 @@ public sealed class AppModeReadinessService : IAppModeReadinessService
 
         try
         {
+            if (_databaseService?.Connection == null)
+                return AppModeReadiness.Ready(mode);
+
             var accounts = await _accountService.GetAccountsAsync().ConfigureAwait(false) ?? [];
             cancellationToken.ThrowIfCancellationRequested();
 

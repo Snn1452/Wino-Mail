@@ -25,9 +25,9 @@
         <DataTemplate x:Key="OverlappedCalendarEventTemplate" x:DataType="viewModels:CalendarItemViewModel">
             <Border
                 Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
-                BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                BorderBrush="{ThemeResource SolidBackgroundFillColorBaseBrush}"
                 BorderThickness="1"
-                CornerRadius="1">
+                CornerRadius="5">
                 <local:CalendarItemControl CalendarItem="{x:Bind}" />
             </Border>
         </DataTemplate>
@@ -35,9 +35,9 @@
         <DataTemplate x:Key="ProtectedTitleCalendarEventTemplate" x:DataType="viewModels:CalendarItemViewModel">
             <Border
                 Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
-                BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                BorderBrush="{ThemeResource SolidBackgroundFillColorBaseBrush}"
                 BorderThickness="1"
-                CornerRadius="1">
+                CornerRadius="5">
                 <local:CalendarItemControl CalendarItem="{x:Bind}" ProtectTitle="True" />
             </Border>
         </DataTemplate>
@@ -166,7 +166,8 @@
                     Background="Transparent"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto"
-                    VerticalScrollMode="Enabled">
+                    VerticalScrollMode="Enabled"
+                    ViewChanged="TimedScrollViewerViewChanged">
                     <Grid
                         x:Name="TimedScrollContentGrid"
                         Height="{x:Bind TimelineHeight, Mode=OneWay}"
@@ -210,6 +211,22 @@
                         </Grid>
                     </Grid>
                 </ScrollViewer>
+            </Grid>
+
+            <!--
+                Stays over the visible hours instead of scrolling with them. It has no background, so
+                only the indicators take input and everything else reaches the hour grid below.
+            -->
+            <Grid
+                x:Name="TimedHiddenEventsHost"
+                Grid.Row="2"
+                Grid.Column="1"
+                PointerWheelChanged="TimedHiddenEventsHostPointerWheelChanged"
+                SizeChanged="TimedHiddenEventsHostSizeChanged">
+                <Grid.Clip>
+                    <RectangleGeometry x:Name="TimedHiddenEventsClip" />
+                </Grid.Clip>
+                <Canvas x:Name="TimedHiddenEventsRail" />
             </Grid>
 
         </Grid>

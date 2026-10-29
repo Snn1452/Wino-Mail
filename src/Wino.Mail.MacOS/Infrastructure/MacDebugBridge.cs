@@ -104,6 +104,65 @@ public static class MacDebugBridge
             };
             return Task.FromResult("ok");
         });
+        // "seedmail" adds the shared demo account with its folders and mails (MailDebugSeed), then opens Mail.
+        Register("seedmail", async _ =>
+        {
+            var result = await Wino.Mail.ViewModels.Diagnostics.MailDebugSeed.SeedAsync(_services!);
+            Get<AppKitNavigationService>().ChangeApplicationMode(WinoApplicationMode.Mail);
+            return result;
+        });
+        // "pref NAME" prints a preference; "pref NAME VALUE" sets it (bool, number, string or enum member name).
+        Register("live", _ =>
+        {
+            var lines = Wino.Presentation.AppKit.WinoLiveObjects.Snapshot().Select(entry => $"{entry.Type}={entry.Count}({entry.Disposed}d)");
+            var rss = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+            return Task.FromResult($"rss={rss}MB managed={GC.GetTotalMemory(false) / (1024 * 1024)}MB " + string.Join(' ', lines));
+        });
+        Register("chain", args =>
+        {
+            var report = new System.Text.StringBuilder();
+            foreach (var instance in Wino.Presentation.AppKit.WinoLiveObjects.Instances(args[0]).OfType<NSView>().Take(6))
+            {
+                if (instance.Handle == IntPtr.Zero) { report.AppendLine("disposed"); continue; }
+                var chain = new List<string>();
+                NSView? view = instance;
+                int guard = 0;
+                while (view is not null && guard++ < 40) { chain.Add(view.GetType().Name); view = view.Superview; }
+                report.AppendLine($"window={(instance.Window is null ? "none" : "yes")} retain={instance.RetainCount} chain={string.Join(" < ", chain)}");
+            }
+            return Task.FromResult(report.ToString());
+        });
+        Register("roots", _ =>
+        {
+            var report = new System.Text.StringBuilder();
+            void Dump(string name, IEnumerable<string> targets)
+            {
+                var groups = targets.GroupBy(t => t).Select(g => $"{g.Key.Split('.').Last()}x{g.Count()}");
+                report.Append(name).Append(": ").Append(string.Join(' ', groups)).Append(Environment.NewLine);
+            }
+            var preferences = Get<IPreferencesService>();
+            Dump("PreferenceChanged", Wino.Presentation.AppKit.WinoLiveObjects.EventTargets(preferences.GetType(), preferences, "PreferenceChanged"));
+            Dump("AccentChanged", Wino.Presentation.AppKit.WinoLiveObjects.EventTargets(typeof(Wino.Presentation.AppKit.WinoStyle), null, "AccentChanged"));
+            Dump("BackdropChanged", Wino.Presentation.AppKit.WinoLiveObjects.EventTargets(typeof(Wino.Presentation.AppKit.WinoStyle), null, "BackdropChanged"));
+            Dump("StyleChanged", Wino.Presentation.AppKit.WinoLiveObjects.EventTargets(typeof(Wino.Presentation.AppKit.WinoIcons), null, "StyleChanged"));
+            var sync = Wino.Core.Services.SynchronizationManager.Instance;
+            foreach (var evt in sync.GetType().GetEvents()) Dump("Sync." + evt.Name, Wino.Presentation.AppKit.WinoLiveObjects.EventTargets(sync.GetType(), sync, evt.Name));
+            return Task.FromResult(report.ToString());
+        });
+        Register("pref", args =>
+        {
+            var preferences = Get<IPreferencesService>();
+            var property = typeof(IPreferencesService).GetProperty(args[0]);
+            if (property is null) return Task.FromResult("no preference " + args[0]);
+            if (args.Length > 1)
+            {
+                var text = string.Join(' ', args.Skip(1));
+                var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                object value = type.IsEnum ? Enum.Parse(type, text, true) : Convert.ChangeType(text, type, System.Globalization.CultureInfo.InvariantCulture);
+                property.SetValue(preferences, value);
+            }
+            return Task.FromResult($"{args[0]}={property.GetValue(preferences)}");
+        });
         Register("iconstyle", args =>
         {
             Get<IPreferencesService>().IconStyle = args[0].StartsWith("c", StringComparison.OrdinalIgnoreCase) ? WinoIconStyle.Colorful : WinoIconStyle.Monochrome;

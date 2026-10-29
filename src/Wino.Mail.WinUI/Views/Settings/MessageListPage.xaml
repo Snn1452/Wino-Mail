@@ -31,7 +31,7 @@
                     x:Name="PreviewCompactSenderPicture"
                     Width="28"
                     Height="28"
-                    Margin="8,0,6,0"
+                    Margin="8,0,8,0"
                     VerticalAlignment="Center"
                     x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                     ContactPicture="{x:Bind helpers:XamlHelpers.GetRowContactPicture(SourceItem), Mode=OneTime}"
@@ -54,9 +54,9 @@
                 </Grid.ColumnDefinitions>
                 <mailControls:WinoContactPicture
                     x:Name="PreviewMediumSenderPicture"
-                    Width="30"
-                    Height="30"
-                    Margin="8,0,8,0"
+                    Width="32"
+                    Height="32"
+                    Margin="8,0,12,0"
                     VerticalAlignment="Center"
                     x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                     ContactPicture="{x:Bind helpers:XamlHelpers.GetRowContactPicture(SourceItem), Mode=OneTime}"
@@ -79,9 +79,9 @@
                 </Grid.ColumnDefinitions>
                 <mailControls:WinoContactPicture
                     x:Name="PreviewSpaciousSenderPicture"
-                    Width="36"
-                    Height="36"
-                    Margin="4,0,8,0"
+                    Width="40"
+                    Height="40"
+                    Margin="8,0,12,0"
                     VerticalAlignment="Center"
                     x:Load="{x:Bind helpers:XamlHelpers.GetMailItemSenderPictureVisibility(), Mode=OneTime}"
                     ContactPicture="{x:Bind helpers:XamlHelpers.GetRowContactPicture(SourceItem), Mode=OneTime}"
@@ -112,12 +112,6 @@
     </Page.Resources>
 
     <StackPanel Spacing="{StaticResource SettingsCardSpacing}">
-        <StackPanel.ChildrenTransitions>
-            <TransitionCollection>
-                <RepositionThemeTransition IsStaggeringEnabled="False" />
-            </TransitionCollection>
-        </StackPanel.ChildrenTransitions>
-
         <!--  Live preview of a single mail row, rendered by the mail list control and templates.  -->
         <Border
             Padding="4,8"
@@ -143,6 +137,7 @@
                     Margin="4,0"
                     HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Stretch"
+                    ActionResolver="{x:Bind ViewModel.PreviewActionResolver, Mode=OneWay}"
                     AutomationProperties.AutomationId="MessageListPreviewList"
                     AutomationProperties.Name="{x:Bind domain:Translator.SettingsMailListPreview_Title, Mode=OneTime}"
                     CenterHoverAction="{x:Bind helpers:XamlHelpers.GetHoverActionKind(ViewModel.PreferencesService.CenterHoverAction), Mode=OneWay}"
@@ -213,6 +208,7 @@
 
         <controls:SettingsCard
             AutomationProperties.AutomationId="MessageListMailSpacingCard"
+            Visibility="{x:Bind ViewModel.IsMailListDensityAvailable, Mode=OneTime}"
             Description="{x:Bind domain:Translator.SettingsMailSpacing_Description}"
             Header="{x:Bind domain:Translator.SettingsMailSpacing_Title}">
             <controls:SettingsCard.HeaderIcon>
@@ -225,232 +221,305 @@
                 SelectedIndex="{x:Bind ViewModel.SelectedMailSpacingIndex, Mode=TwoWay}" />
         </controls:SettingsCard>
 
-        <controls:SettingsExpander
-            AutomationProperties.AutomationId="MessageListPageSettingsExpander2"
-            Description="{x:Bind domain:Translator.SettingsHoverActions_Description}"
-            Header="{x:Bind domain:Translator.SettingsHoverActions_Title}">
-            <controls:SettingsExpander.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="CursorHover" />
-            </controls:SettingsExpander.HeaderIcon>
-            <controls:SettingsExpander.Items>
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard3" Header="{x:Bind domain:Translator.SettingsEnableHoverActions_Title}">
-                    <controls:SettingsCard.Content>
-                        <ToggleSwitch
-                            x:Name="HoverEnableToggle"
-                            AutomationProperties.AutomationId="HoverEnableToggle"
-                            IsOn="{x:Bind ViewModel.PreferencesService.IsHoverActionsEnabled, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
+        <!--  Loaded after the first frame; building every card up front makes the frame skip the page slide.  -->
+        <StackPanel
+            x:Name="DeferredSettingsPanel"
+            x:Load="False"
+            Spacing="{StaticResource SettingsCardSpacing}">
+            <controls:SettingsExpander
+                AutomationProperties.AutomationId="MessageListPageSettingsExpander2"
+                Visibility="{x:Bind ViewModel.IsHoverActionsAvailable, Mode=OneTime}"
+                Description="{x:Bind domain:Translator.SettingsHoverActions_Description}"
+                Header="{x:Bind domain:Translator.SettingsHoverActions_Title}">
+                <controls:SettingsExpander.Content>
+                    <ToggleSwitch
+                        x:Name="HoverEnableToggle"
+                        AutomationProperties.AutomationId="HoverEnableToggle"
+                        IsOn="{x:Bind ViewModel.PreferencesService.IsHoverActionsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Content>
+                <controls:SettingsExpander.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="CursorHover" />
+                </controls:SettingsExpander.HeaderIcon>
+                <controls:SettingsExpander.ItemsHeader>
+                    <InfoBar
+                        AutomationProperties.AutomationId="MessageListPageHoverCustomisedAccountsInfoBar"
+                        BorderThickness="0"
+                        CornerRadius="0"
+                        IsClosable="False"
+                        IsOpen="{x:Bind ViewModel.HasCustomisedHoverAccounts, Mode=OneWay}"
+                        Message="{x:Bind ViewModel.CustomisedHoverAccountsText, Mode=OneWay}"
+                        Severity="Informational" />
+                </controls:SettingsExpander.ItemsHeader>
+                <controls:SettingsExpander.Items>
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageHoverScopeSettingsCard"
+                        Description="{x:Bind ViewModel.HoverScopeDescription, Mode=OneWay}"
+                        Header="{x:Bind domain:Translator.SettingsActionScope_Title}"
+                        Visibility="{x:Bind ViewModel.IsAccountScopeAvailable, Mode=OneWay}">
+                        <controls:SettingsCard.Content>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <HyperlinkButton
+                                    AutomationProperties.AutomationId="MessageListPageHoverUseDefaultsButton"
+                                    Command="{x:Bind ViewModel.UseDefaultHoverActionsCommand}"
+                                    Content="{x:Bind domain:Translator.SettingsActionScope_UseAllAccounts}"
+                                    Visibility="{x:Bind ViewModel.CanUseDefaultHoverActions, Mode=OneWay}" />
+                                <ComboBox
+                                    Width="220"
+                                    AutomationProperties.AutomationId="MessageListPageHoverScopeComboBox"
+                                    IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
+                                    ItemsSource="{x:Bind ViewModel.ActionScopeOptions, Mode=OneWay}"
+                                    SelectedIndex="{x:Bind ViewModel.SelectedHoverScopeIndex, Mode=TwoWay}" />
+                            </StackPanel>
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
 
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard4" Header="{x:Bind domain:Translator.SettingsHoverActionLeft}">
-                    <controls:SettingsCard.Content>
+                    <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard4" Header="{x:Bind domain:Translator.SettingsHoverActionLeft}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageComboBox"
+                                IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
+                                SelectedIndex="{x:Bind ViewModel.LeftHoverActionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard5" Header="{x:Bind domain:Translator.SettingsHoverActionCenter}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageComboBox2"
+                                IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
+                                SelectedIndex="{x:Bind ViewModel.CenterHoverActionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard6" Header="{x:Bind domain:Translator.SettingsHoverActionRight}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageComboBox3"
+                                IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
+                                SelectedIndex="{x:Bind ViewModel.RightHoverActionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageHoverActionButtonSizeSettingsCard"
+                        Description="{x:Bind ViewModel.HoverPresentationDescription, Mode=OneWay}"
+                        Header="{x:Bind domain:Translator.SettingsHoverActionButtonSize, Mode=OneTime}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageHoverActionButtonSizeComboBox"
+                                IsEnabled="{x:Bind ViewModel.IsHoverPresentationEditable, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.HoverActionButtonSizeOptions, Mode=OneTime}"
+                                SelectedIndex="{x:Bind ViewModel.SelectedHoverActionButtonSizeIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageHoverActionPositionSettingsCard"
+                        Description="{x:Bind ViewModel.HoverPresentationDescription, Mode=OneWay}"
+                        Header="{x:Bind domain:Translator.SettingsHoverActionPosition}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageHoverActionPositionComboBox"
+                                IsEnabled="{x:Bind ViewModel.IsHoverPresentationEditable, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.HoverActionPositionOptions, Mode=OneTime}"
+                                SelectedIndex="{x:Bind ViewModel.SelectedHoverActionPositionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageHoverActionAnimationSettingsCard"
+                        Description="{x:Bind ViewModel.HoverPresentationDescription, Mode=OneWay}"
+                        Header="{x:Bind domain:Translator.SettingsHoverActionAnimation}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageHoverActionAnimationComboBox"
+                                IsEnabled="{x:Bind ViewModel.IsHoverPresentationEditable, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.HoverActionAnimationOptions, Mode=OneTime}"
+                                SelectedIndex="{x:Bind ViewModel.SelectedHoverActionAnimationIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+                </controls:SettingsExpander.Items>
+            </controls:SettingsExpander>
+
+            <controls:SettingsExpander
+                AutomationProperties.AutomationId="MessageListPageSwipeActionsSettingsExpander"
+                Description="{x:Bind domain:Translator.SettingsSwipeActions_Description}"
+                Header="{x:Bind domain:Translator.SettingsSwipeActions_Title}">
+                <controls:SettingsExpander.Content>
+                    <ToggleSwitch
+                        x:Name="SwipeEnableToggle"
+                        AutomationProperties.AutomationId="SwipeEnableToggle"
+                        IsOn="{x:Bind ViewModel.PreferencesService.IsSwipeActionsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Content>
+                <controls:SettingsExpander.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="ArrowSwap" />
+                </controls:SettingsExpander.HeaderIcon>
+                <controls:SettingsExpander.ItemsHeader>
+                    <InfoBar
+                        AutomationProperties.AutomationId="MessageListPageSwipeCustomisedAccountsInfoBar"
+                        BorderThickness="0"
+                        CornerRadius="0"
+                        IsClosable="False"
+                        IsOpen="{x:Bind ViewModel.HasCustomisedSwipeAccounts, Mode=OneWay}"
+                        Message="{x:Bind ViewModel.CustomisedSwipeAccountsText, Mode=OneWay}"
+                        Severity="Informational" />
+                </controls:SettingsExpander.ItemsHeader>
+                <controls:SettingsExpander.Items>
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageSwipeScopeSettingsCard"
+                        Description="{x:Bind ViewModel.SwipeScopeDescription, Mode=OneWay}"
+                        Header="{x:Bind domain:Translator.SettingsActionScope_Title}"
+                        Visibility="{x:Bind ViewModel.IsAccountScopeAvailable, Mode=OneWay}">
+                        <controls:SettingsCard.Content>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <HyperlinkButton
+                                    AutomationProperties.AutomationId="MessageListPageSwipeUseDefaultsButton"
+                                    Command="{x:Bind ViewModel.UseDefaultSwipeActionsCommand}"
+                                    Content="{x:Bind domain:Translator.SettingsActionScope_UseAllAccounts}"
+                                    Visibility="{x:Bind ViewModel.CanUseDefaultSwipeActions, Mode=OneWay}" />
+                                <ComboBox
+                                    Width="220"
+                                    AutomationProperties.AutomationId="MessageListPageSwipeScopeComboBox"
+                                    IsEnabled="{x:Bind SwipeEnableToggle.IsOn, Mode=OneWay}"
+                                    ItemsSource="{x:Bind ViewModel.ActionScopeOptions, Mode=OneWay}"
+                                    SelectedIndex="{x:Bind ViewModel.SelectedSwipeScopeIndex, Mode=TwoWay}" />
+                            </StackPanel>
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+                    <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageLeftSwipeActionSettingsCard" Header="{x:Bind domain:Translator.SettingsSwipeActionLeft}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageLeftSwipeActionComboBox"
+                                IsEnabled="{x:Bind SwipeEnableToggle.IsOn, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.AvailableSwipeActionsTranslations}"
+                                SelectedIndex="{x:Bind ViewModel.LeftSwipeActionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageRightSwipeActionSettingsCard" Header="{x:Bind domain:Translator.SettingsSwipeActionRight}">
+                        <controls:SettingsCard.Content>
+                            <ComboBox
+                                Width="150"
+                                AutomationProperties.AutomationId="MessageListPageRightSwipeActionComboBox"
+                                IsEnabled="{x:Bind SwipeEnableToggle.IsOn, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.AvailableSwipeActionsTranslations}"
+                                SelectedIndex="{x:Bind ViewModel.RightSwipeActionIndex, Mode=TwoWay}" />
+                        </controls:SettingsCard.Content>
+                    </controls:SettingsCard>
+                </controls:SettingsExpander.Items>
+            </controls:SettingsExpander>
+
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListPageSettingsCard7"
+                Description="{x:Bind domain:Translator.SettingsMailListActionBar_Description}"
+                Header="{x:Bind domain:Translator.SettingsMailListActionBar_Title}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="Window" />
+                </controls:SettingsCard.HeaderIcon>
+
+                <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch" IsOn="{x:Bind ViewModel.PreferencesService.IsMailListActionBarEnabled, Mode=TwoWay}" />
+            </controls:SettingsCard>
+
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListPageAccountNicknameSettingsCard"
+                Description="{x:Bind domain:Translator.SettingsShowAccountNickname_Description}"
+                Header="{x:Bind domain:Translator.SettingsShowAccountNickname_Title}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="PersonTag" />
+                </controls:SettingsCard.HeaderIcon>
+
+                <ComboBox
+                    Width="170"
+                    AutomationProperties.AutomationId="AccountNicknamePositionComboBox"
+                    ItemsSource="{x:Bind ViewModel.AccountNicknamePositionOptions, Mode=OneTime}"
+                    SelectedIndex="{x:Bind ViewModel.SelectedAccountNicknamePositionIndex, Mode=TwoWay}" />
+            </controls:SettingsCard>
+
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListPageSettingsCard8"
+                Description="{x:Bind domain:Translator.SettingsMailListGroupHeaders_Description}"
+                Header="{x:Bind domain:Translator.SettingsMailListGroupHeaders_Title}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Icon="GroupList" />
+                </controls:SettingsCard.HeaderIcon>
+                <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch2" IsOn="{x:Bind ViewModel.PreferencesService.IsMailListGroupHeadersEnabled, Mode=TwoWay}" />
+            </controls:SettingsCard>
+
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListPageTimeFormatSettingsCard"
+                Description="{x:Bind domain:Translator.SettingsTimeFormat_Description, Mode=OneTime}"
+                Header="{x:Bind domain:Translator.SettingsTimeFormat_Title, Mode=OneTime}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="Clock" />
+                </controls:SettingsCard.HeaderIcon>
+                <ComboBox
+                    Width="180"
+                    AutomationProperties.AutomationId="MessageListPageTimeFormatComboBox"
+                    ItemsSource="{x:Bind ViewModel.TimeFormatPreferenceOptions, Mode=OneTime}"
+                    SelectedIndex="{x:Bind ViewModel.SelectedTimeFormatPreferenceIndex, Mode=TwoWay}" />
+            </controls:SettingsCard>
+
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListOtherInboxUnreadNoticeSettingsCard"
+                Description="{x:Bind domain:Translator.SettingsOtherInboxUnreadNotice_Description, Mode=OneTime}"
+                Header="{x:Bind domain:Translator.SettingsOtherInboxUnreadNotice_Title, Mode=OneTime}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="Mail" />
+                </controls:SettingsCard.HeaderIcon>
+                <ToggleSwitch AutomationProperties.AutomationId="MessageListOtherInboxUnreadNoticeToggleSwitch" IsOn="{x:Bind ViewModel.PreferencesService.IsOtherInboxUnreadNoticeEnabled, Mode=TwoWay}" />
+            </controls:SettingsCard>
+
+            <controls:SettingsExpander
+                AutomationProperties.AutomationId="MessageListPageSettingsExpander3"
+                Description="{x:Bind domain:Translator.SettingsThreads_Description}"
+                Header="{x:Bind domain:Translator.SettingsThreads_Title}">
+                <controls:SettingsExpander.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="TextBulletListTree" />
+                </controls:SettingsExpander.HeaderIcon>
+                <controls:SettingsExpander.Items>
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageSettingsCard9"
+                        Description="{x:Bind domain:Translator.SettingsThreads_Enabled_Description}"
+                        Header="{x:Bind domain:Translator.SettingsThreads_Enabled_Title}">
+                        <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch3" IsOn="{x:Bind ViewModel.PreferencesService.IsThreadingEnabled, Mode=TwoWay}" />
+                    </controls:SettingsCard>
+                    <controls:SettingsCard
+                        AutomationProperties.AutomationId="MessageListPageSettingsCard10"
+                        Description="{x:Bind domain:Translator.SettingsThreadOrder_Description}"
+                        Header="{x:Bind domain:Translator.SettingsThreadOrder_Title}"
+                        IsEnabled="{x:Bind ViewModel.PreferencesService.IsThreadingEnabled, Mode=OneWay}">
                         <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageComboBox"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
-                            SelectedIndex="{x:Bind ViewModel.LeftHoverActionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
+                            Width="170"
+                            AutomationProperties.AutomationId="MessageListPageComboBox4"
+                            ItemsSource="{x:Bind ViewModel.ThreadItemSortingOptions, Mode=OneWay}"
+                            SelectedIndex="{x:Bind ViewModel.SelectedThreadItemSortingIndex, Mode=TwoWay}" />
+                    </controls:SettingsCard>
+                </controls:SettingsExpander.Items>
+            </controls:SettingsExpander>
 
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard5" Header="{x:Bind domain:Translator.SettingsHoverActionCenter}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageComboBox2"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
-                            SelectedIndex="{x:Bind ViewModel.CenterHoverActionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
+            <controls:SettingsCard
+                AutomationProperties.AutomationId="MessageListPageSettingsCard14"
+                Description="{x:Bind domain:Translator.SettingsShowPreviewText_Description}"
+                Header="{x:Bind domain:Translator.SettingsShowPreviewText_Title}">
+                <controls:SettingsCard.HeaderIcon>
+                    <coreControls:WinoFontIcon Icon="TextDescription" />
+                </controls:SettingsCard.HeaderIcon>
 
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageSettingsCard6" Header="{x:Bind domain:Translator.SettingsHoverActionRight}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageComboBox3"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.AvailableHoverActionsTranslations}"
-                            SelectedIndex="{x:Bind ViewModel.RightHoverActionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageHoverActionButtonSizeSettingsCard" Header="{x:Bind domain:Translator.SettingsHoverActionButtonSize, Mode=OneTime}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageHoverActionButtonSizeComboBox"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.HoverActionButtonSizeOptions, Mode=OneTime}"
-                            SelectedIndex="{x:Bind ViewModel.SelectedHoverActionButtonSizeIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageHoverActionPositionSettingsCard" Header="{x:Bind domain:Translator.SettingsHoverActionPosition}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageHoverActionPositionComboBox"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.HoverActionPositionOptions, Mode=OneTime}"
-                            SelectedIndex="{x:Bind ViewModel.SelectedHoverActionPositionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageHoverActionAnimationSettingsCard" Header="{x:Bind domain:Translator.SettingsHoverActionAnimation}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageHoverActionAnimationComboBox"
-                            IsEnabled="{x:Bind HoverEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.HoverActionAnimationOptions, Mode=OneTime}"
-                            SelectedIndex="{x:Bind ViewModel.SelectedHoverActionAnimationIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-            </controls:SettingsExpander.Items>
-        </controls:SettingsExpander>
-
-        <controls:SettingsExpander
-            AutomationProperties.AutomationId="MessageListPageSwipeActionsSettingsExpander"
-            Description="{x:Bind domain:Translator.SettingsSwipeActions_Description}"
-            Header="{x:Bind domain:Translator.SettingsSwipeActions_Title}">
-            <controls:SettingsExpander.Content>
-                <ToggleSwitch
-                    x:Name="SwipeEnableToggle"
-                    AutomationProperties.AutomationId="SwipeEnableToggle"
-                    IsOn="{x:Bind ViewModel.PreferencesService.IsSwipeActionsEnabled, Mode=TwoWay}" />
-            </controls:SettingsExpander.Content>
-            <controls:SettingsExpander.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="ArrowSwap" />
-            </controls:SettingsExpander.HeaderIcon>
-            <controls:SettingsExpander.Items>
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageLeftSwipeActionSettingsCard" Header="{x:Bind domain:Translator.SettingsSwipeActionLeft}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageLeftSwipeActionComboBox"
-                            IsEnabled="{x:Bind SwipeEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.AvailableSwipeActionsTranslations}"
-                            SelectedIndex="{x:Bind ViewModel.LeftSwipeActionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-
-                <controls:SettingsCard AutomationProperties.AutomationId="MessageListPageRightSwipeActionSettingsCard" Header="{x:Bind domain:Translator.SettingsSwipeActionRight}">
-                    <controls:SettingsCard.Content>
-                        <ComboBox
-                            Width="150"
-                            AutomationProperties.AutomationId="MessageListPageRightSwipeActionComboBox"
-                            IsEnabled="{x:Bind SwipeEnableToggle.IsOn, Mode=OneWay}"
-                            ItemsSource="{x:Bind ViewModel.AvailableSwipeActionsTranslations}"
-                            SelectedIndex="{x:Bind ViewModel.RightSwipeActionIndex, Mode=TwoWay}" />
-                    </controls:SettingsCard.Content>
-                </controls:SettingsCard>
-            </controls:SettingsExpander.Items>
-        </controls:SettingsExpander>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListPageSettingsCard7"
-            Description="{x:Bind domain:Translator.SettingsMailListActionBar_Description}"
-            Header="{x:Bind domain:Translator.SettingsMailListActionBar_Title}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="Window" />
-            </controls:SettingsCard.HeaderIcon>
-
-            <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch" IsOn="{x:Bind ViewModel.PreferencesService.IsMailListActionBarEnabled, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListPageAccountNicknameSettingsCard"
-            Description="{x:Bind domain:Translator.SettingsShowAccountNickname_Description}"
-            Header="{x:Bind domain:Translator.SettingsShowAccountNickname_Title}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="PersonTag" />
-            </controls:SettingsCard.HeaderIcon>
-
-            <ComboBox
-                Width="170"
-                AutomationProperties.AutomationId="AccountNicknamePositionComboBox"
-                ItemsSource="{x:Bind ViewModel.AccountNicknamePositionOptions, Mode=OneTime}"
-                SelectedIndex="{x:Bind ViewModel.SelectedAccountNicknamePositionIndex, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListPageSettingsCard8"
-            Description="{x:Bind domain:Translator.SettingsMailListGroupHeaders_Description}"
-            Header="{x:Bind domain:Translator.SettingsMailListGroupHeaders_Title}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    Icon="GroupList" />
-            </controls:SettingsCard.HeaderIcon>
-            <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch2" IsOn="{x:Bind ViewModel.PreferencesService.IsMailListGroupHeadersEnabled, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListPageTimeFormatSettingsCard"
-            Description="{x:Bind domain:Translator.SettingsTimeFormat_Description, Mode=OneTime}"
-            Header="{x:Bind domain:Translator.SettingsTimeFormat_Title, Mode=OneTime}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="Clock" />
-            </controls:SettingsCard.HeaderIcon>
-            <ComboBox
-                Width="180"
-                AutomationProperties.AutomationId="MessageListPageTimeFormatComboBox"
-                ItemsSource="{x:Bind ViewModel.TimeFormatPreferenceOptions, Mode=OneTime}"
-                SelectedIndex="{x:Bind ViewModel.SelectedTimeFormatPreferenceIndex, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListOtherInboxUnreadNoticeSettingsCard"
-            Description="{x:Bind domain:Translator.SettingsOtherInboxUnreadNotice_Description, Mode=OneTime}"
-            Header="{x:Bind domain:Translator.SettingsOtherInboxUnreadNotice_Title, Mode=OneTime}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="Mail" />
-            </controls:SettingsCard.HeaderIcon>
-            <ToggleSwitch AutomationProperties.AutomationId="MessageListOtherInboxUnreadNoticeToggleSwitch" IsOn="{x:Bind ViewModel.PreferencesService.IsOtherInboxUnreadNoticeEnabled, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-        <controls:SettingsExpander
-            AutomationProperties.AutomationId="MessageListPageSettingsExpander3"
-            Description="{x:Bind domain:Translator.SettingsThreads_Description}"
-            Header="{x:Bind domain:Translator.SettingsThreads_Title}">
-            <controls:SettingsExpander.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="TextBulletListTree" />
-            </controls:SettingsExpander.HeaderIcon>
-            <controls:SettingsExpander.Items>
-                <controls:SettingsCard
-                    AutomationProperties.AutomationId="MessageListPageSettingsCard9"
-                    Description="{x:Bind domain:Translator.SettingsThreads_Enabled_Description}"
-                    Header="{x:Bind domain:Translator.SettingsThreads_Enabled_Title}">
-                    <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch3" IsOn="{x:Bind ViewModel.PreferencesService.IsThreadingEnabled, Mode=TwoWay}" />
-                </controls:SettingsCard>
-                <controls:SettingsCard
-                    AutomationProperties.AutomationId="MessageListPageSettingsCard10"
-                    Description="{x:Bind domain:Translator.SettingsThreadOrder_Description}"
-                    Header="{x:Bind domain:Translator.SettingsThreadOrder_Title}"
-                    IsEnabled="{x:Bind ViewModel.PreferencesService.IsThreadingEnabled, Mode=OneWay}">
-                    <ComboBox
-                        Width="170"
-                        AutomationProperties.AutomationId="MessageListPageComboBox4"
-                        ItemsSource="{x:Bind ViewModel.ThreadItemSortingOptions, Mode=OneWay}"
-                        SelectedIndex="{x:Bind ViewModel.SelectedThreadItemSortingIndex, Mode=TwoWay}" />
-                </controls:SettingsCard>
-            </controls:SettingsExpander.Items>
-        </controls:SettingsExpander>
-
-        <controls:SettingsCard
-            AutomationProperties.AutomationId="MessageListPageSettingsCard14"
-            Description="{x:Bind domain:Translator.SettingsShowPreviewText_Description}"
-            Header="{x:Bind domain:Translator.SettingsShowPreviewText_Title}">
-            <controls:SettingsCard.HeaderIcon>
-                <coreControls:WinoFontIcon Icon="TextDescription" />
-            </controls:SettingsCard.HeaderIcon>
-
-            <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch7" IsOn="{x:Bind ViewModel.PreferencesService.IsShowPreviewEnabled, Mode=TwoWay}" />
-        </controls:SettingsCard>
-
-
-
+                <ToggleSwitch AutomationProperties.AutomationId="MessageListPageToggleSwitch7" IsOn="{x:Bind ViewModel.PreferencesService.IsShowPreviewEnabled, Mode=TwoWay}" />
+            </controls:SettingsCard>
+        </StackPanel>
     </StackPanel>
 </abstract:MessageListPageAbstract>

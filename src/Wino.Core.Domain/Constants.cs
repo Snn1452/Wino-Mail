@@ -22,6 +22,16 @@ public static class Constants
     public const string CalendarEventRecurrenceRuleSeperator = "___";
 
     public const string ToastMailUniqueIdKey = nameof(ToastMailUniqueIdKey);
+
+    /// <summary>Relay alerts enriched by the iOS Notification Service Extension: the provider's message id and the local account id.</summary>
+    public const string ToastRelayMailIdKey = "wino.mailId";
+    public const string ToastRelayAccountIdKey = "wino.accountId";
+
+    /// <summary>Enriched relay alerts: the RFC Message-ID, a lookup that works whatever id type the provider used.</summary>
+    public const string ToastRelayInternetMessageIdKey = "wino.messageId";
+
+    /// <summary>Every relay push: the local account id (<c>cid</c>), present even when the alert was not enriched.</summary>
+    public const string ToastRelayClientAccountIdKey = "cid";
     public const string ToastActionKey = nameof(ToastActionKey);
     public const string ToastMailAccountIdKey = nameof(ToastMailAccountIdKey);
     public const string ToastCalendarItemIdKey = nameof(ToastCalendarItemIdKey);
@@ -39,6 +49,13 @@ public static class Constants
     public const string ToastStoreUpdateActionKey = nameof(ToastStoreUpdateActionKey);
     public const string ToastStoreUpdateActionInstall = nameof(ToastStoreUpdateActionInstall);
     public const string StoreUpdateNotificationSuppressionKey = nameof(StoreUpdateNotificationSuppressionKey);
+
+    /// <summary>Mail synchronization interval in minutes when the user has not chosen one, or the platform has no choice.</summary>
+    public const int DefaultEmailSyncIntervalMinutes = 3;
+    public const long MaximumLocalAttachmentSizeBytes = 150L * 1024 * 1024;
+
+    /// <summary>Calendar synchronization interval in minutes when the user has not chosen one, or the platform has no choice.</summary>
+    public const int DefaultCalendarSyncIntervalMinutes = 5;
     public const string JumpListActionKey = "JumpListAction";
     public const string JumpListOpenMailFolderAction = "OpenMailFolder";
     public const string JumpListAccountIdKey = "JumpListAccountId";

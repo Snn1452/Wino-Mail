@@ -45,6 +45,7 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
     private ImapCalDavSettingsPageMode _pageMode;
     private Guid _editingAccountId;
     private SpecialImapProvider _editingSpecialImapProvider;
+    private string _specialImapLoginAddress;
     private TaskCompletionSource<ImapCalDavSetupResult> _completionSource;
     private AccountCreationDialogResult _accountCreationContext;
     private bool _isCompletionFinalized;
@@ -269,11 +270,11 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
         _mailServerTestService = mailServerTestService;
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeAsync(mode, parameters);
 
     /// <summary>Awaitable navigation entry for hosts that own credential hydration.</summary>
-    public async Task InitializeAsync(NavigationMode mode, object parameters)
+    public async Task InitializeAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
@@ -322,7 +323,7 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
         OnPropertyChanged(nameof(IncomingSettingsTitle));
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         if (_pageMode == ImapCalDavSettingsPageMode.Create && !_isCompletionFinalized)
         {
@@ -535,6 +536,7 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
         _providerType = account.ProviderType;
 
         _editingSpecialImapProvider = account.SpecialImapProvider;
+        _specialImapLoginAddress = null;
         _isCardDavEnabled = account.ContactIntegrationSource == AccountIntegrationSource.Dav;
         _initialContactMode = !account.IsContactAccessEnabled
             ? AccountCapabilityMode.Off
@@ -612,6 +614,7 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
 
         var specialProvider = accountCreationDialogResult?.SpecialImapProviderDetails?.SpecialImapProvider ?? SpecialImapProvider.None;
         _editingSpecialImapProvider = specialProvider;
+        _specialImapLoginAddress = accountCreationDialogResult?.SpecialImapProviderDetails?.LoginAddress;
 
         if (specialProvider != SpecialImapProvider.None)
         {
@@ -1339,7 +1342,8 @@ public partial class ImapCalDavSettingsPageViewModel : MailBaseViewModel
             effectivePassword,
             DisplayName.Trim(),
             _editingSpecialImapProvider,
-            mode);
+            mode,
+            LoginAddress: _specialImapLoginAddress);
 
         var serverInformation = _specialImapProviderConfigResolver.GetServerInformation(
             new MailAccount

@@ -28,6 +28,7 @@ internal sealed partial class NativeTrayIcon : IDisposable
     private const uint NotifyIconVersion4 = 4;
     private const uint CsDblClks = 0x0008;
     private const uint WmDestroy = 0x0002;
+    private const uint WmLButtonDown = 0x0201;
     private const uint WmLButtonUp = 0x0202;
     private const uint WmLButtonDoubleClick = 0x0203;
     private const uint NinKeySelect = 0x0401;
@@ -65,6 +66,7 @@ internal sealed partial class NativeTrayIcon : IDisposable
 
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly string _iconPath;
+    private readonly string? _unreadIconPath;
     private readonly Func<IReadOnlyList<NativeTrayMenuItem>> _menuFactory;
     private readonly Func<Task> _primaryAction;
     private readonly Func<Task> _doubleClickAction;
@@ -75,6 +77,9 @@ internal sealed partial class NativeTrayIcon : IDisposable
     private long _ignoreButtonUpUntil;
 
     private nint _iconHandle;
+    private nint _unreadIconHandle;
+    private bool _unreadIconLoadFailed;
+    private bool _isUnreadIndicatorVisible;
     private string _toolTipText;
     private bool _isDisposed;
     private bool _isVisible;
@@ -91,10 +96,12 @@ internal sealed partial class NativeTrayIcon : IDisposable
         Func<IReadOnlyList<NativeTrayMenuItem>> menuFactory,
         Func<Task> primaryAction,
         Func<Task> doubleClickAction,
-        Action? leftInteractionStarted = null)
+        Action? leftInteractionStarted = null,
+        string? unreadIconPath = null)
     {
         _dispatcherQueue = dispatcherQueue;
         _iconPath = iconPath;
+        _unreadIconPath = unreadIconPath;
         _toolTipText = toolTipText;
         _menuFactory = menuFactory;
         _primaryAction = primaryAction;
@@ -199,6 +206,20 @@ internal sealed partial class NativeTrayIcon : IDisposable
         return rect.Width > 0 && rect.Height > 0;
     }
 
+    public void SetUnreadIndicator(bool isVisible)
+    {
+        if (_isDisposed || _isUnreadIndicatorVisible == isVisible)
+            return;
+
+        var previousHandle = _notifyIconCreated ? ActiveIconHandleOrZero() : nint.Zero;
+        _isUnreadIndicatorVisible = isVisible;
+
+        if (!_notifyIconCreated || ActiveIconHandleOrZero() == previousHandle)
+            return;
+
+        CreateOrModifyNotifyIcon();
+    }
+
     public void ShowNotification(string title, string message)
     {
         if (_isDisposed || !_notifyIconCreated || string.IsNullOrWhiteSpace(message))
@@ -243,7 +264,23 @@ internal sealed partial class NativeTrayIcon : IDisposable
         }
     }
 
+    /// <summary>Every add and modify reads this, so re-adding the icon after Explorer restarts keeps the indicator.</summary>
     private nint IconHandle
+    {
+        get
+        {
+            if (_isUnreadIndicatorVisible)
+            {
+                var unreadHandle = UnreadIconHandle;
+                if (unreadHandle != nint.Zero)
+                    return unreadHandle;
+            }
+
+            return BaseIconHandle;
+        }
+    }
+
+    private nint BaseIconHandle
     {
         get
         {
@@ -255,6 +292,38 @@ internal sealed partial class NativeTrayIcon : IDisposable
                 throw CreateWin32Exception($"Failed to load tray icon from '{_iconPath}'.");
 
             return _iconHandle;
+        }
+    }
+
+    private nint UnreadIconHandle
+    {
+        get
+        {
+            if (_unreadIconHandle != nint.Zero || _unreadIconLoadFailed || string.IsNullOrEmpty(_unreadIconPath))
+                return _unreadIconHandle;
+
+            _unreadIconHandle = LoadImageW(nint.Zero, _unreadIconPath, ImageIcon, 0, 0, LoadFromFile);
+            if (_unreadIconHandle == nint.Zero)
+            {
+                _unreadIconLoadFailed = true;
+                Log.Warning("Failed to load the unread tray icon from {IconPath}. LastError: {LastError}. Using the base icon.",
+                    _unreadIconPath,
+                    Marshal.GetLastWin32Error());
+            }
+
+            return _unreadIconHandle;
+        }
+    }
+
+    private nint ActiveIconHandleOrZero()
+    {
+        try
+        {
+            return IconHandle;
+        }
+        catch (InvalidOperationException)
+        {
+            return nint.Zero;
         }
     }
 
@@ -509,6 +578,12 @@ internal sealed partial class NativeTrayIcon : IDisposable
             case TrayCallbackMessage:
                 switch (GetLowWord(lParam))
                 {
+                    // Pressing the icon activates the taskbar, which hides an open companion through its
+                    // focus check before the button is released. Announcing the interaction here keeps it
+                    // open, so the click that follows closes it instead of opening it again.
+                    case WmLButtonDown:
+                        NotifyLeftInteractionStarted();
+                        break;
                     case WmLButtonUp:
                         NotifyLeftInteractionStarted();
                         SetForegroundWindow(windowHandle);
@@ -557,11 +632,17 @@ internal sealed partial class NativeTrayIcon : IDisposable
 
     private void DestroyIconHandle()
     {
-        if (_iconHandle == nint.Zero)
-            return;
+        if (_iconHandle != nint.Zero)
+        {
+            DestroyIcon(_iconHandle);
+            _iconHandle = nint.Zero;
+        }
 
-        DestroyIcon(_iconHandle);
-        _iconHandle = nint.Zero;
+        if (_unreadIconHandle != nint.Zero)
+        {
+            DestroyIcon(_unreadIconHandle);
+            _unreadIconHandle = nint.Zero;
+        }
     }
 
     private void UnregisterActiveHotKey()

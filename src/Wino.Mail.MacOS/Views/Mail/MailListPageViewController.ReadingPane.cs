@@ -139,6 +139,7 @@ public sealed partial class MailListPageViewController : IRenderingFrameHost, IR
                 previous.Dispose();
             }
             _paneChild = next;
+            CommandStateChanged?.Invoke(this, EventArgs.Empty);
             if (next is null) return;
             if (next is IReadingPaneChild paneChild) paneChild.PaneHost = this;
             AddChildViewController(next);
@@ -158,6 +159,7 @@ public sealed partial class MailListPageViewController : IRenderingFrameHost, IR
                 child.View.RemoveFromSuperview();
                 child.RemoveFromParentViewController();
                 _paneChild = null;
+                CommandStateChanged?.Invoke(this, EventArgs.Empty);
             });
         }
         finally { _paneGate.Release(); }
@@ -222,13 +224,15 @@ public sealed partial class MailListPageViewController : IRenderingFrameHost, IR
         {
             // A detached draft opened from elsewhere replaces the selection; keep it on screen.
             if (_detachedComposerActive) return;
+            // The multi-selection overlay covers the pane. Keeping the reader (and its web view) under it means
+            // dropping back to one selected mail renders in place instead of building a new web view.
+            if (ViewModel.SelectedItemsCount > 1 && _paneChild is MailRenderingPageViewController) return;
             if (_paneChild is not IdlePageViewController) ShowIdleContent();
             return;
         }
 
         _detachedComposerActive = false;
-        ViewModel.NavigationService.Navigate(item.IsDraft ? WinoPage.ComposePage : WinoPage.MailRenderingPage,
-            item, NavigationReferenceFrame.RenderingFrame);
+        ViewModel.OpenItem(item);
     }
 
     private void UpdateMultiSelectionOverlay()

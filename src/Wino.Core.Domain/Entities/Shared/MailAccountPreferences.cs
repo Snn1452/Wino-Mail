@@ -81,6 +81,41 @@ public partial class MailAccountPreferences
     /// </summary>
     public AccountQuietHoursStance QuietHoursStance { get; set; } = AccountQuietHoursStance.Follow;
 
+    /// <summary>Read regardless of <see cref="HasCustomNotificationSettings"/>, and wins over the chosen notification content.</summary>
+    public bool HideNotificationContent { get; set; }
+
+    /// <summary>
+    /// Device-local: not part of Wino Account data sync. While false the app-wide hover actions apply
+    /// and the three values below are ignored; they are written whenever the flag turns on.
+    /// </summary>
+    public bool HasCustomHoverActions { get; set; }
+
+    public MailOperation CustomLeftHoverAction { get; set; }
+
+    public MailOperation CustomCenterHoverAction { get; set; }
+
+    public MailOperation CustomRightHoverAction { get; set; }
+
+    /// <summary>Device-local. Same contract as <see cref="HasCustomHoverActions"/>, for swipe.</summary>
+    public bool HasCustomSwipeActions { get; set; }
+
+    public MailOperation CustomLeftSwipeOperation { get; set; }
+
+    public MailOperation CustomRightSwipeOperation { get; set; }
+
+    /// <summary>
+    /// Device-local, because browser and profile ids only exist on this machine. While false the
+    /// All accounts browser applies. While true a null <see cref="CustomLinkBrowserId"/> means System default.
+    /// </summary>
+    public bool HasCustomLinkBrowser { get; set; }
+
+    public string? CustomLinkBrowserId { get; set; }
+
+    public string? CustomLinkBrowserProfileId { get; set; }
+
+    /// <summary>Kept so the warning can still name a browser after it was uninstalled.</summary>
+    public string? CustomLinkBrowserName { get; set; }
+
     /// <summary>
     /// Gets or sets whether the account has Focused inbox support.
     /// Null if the account provider type doesn't support Focused inbox.
@@ -96,6 +131,9 @@ public partial class MailAccountPreferences
     /// Gets or sets whether this account's unread items should be included in taskbar badge.
     /// </summary>
     public bool IsTaskbarBadgeEnabled { get; set; } = true;
+
+    /// <summary>Device-local: not part of Wino Account data sync.</summary>
+    public bool IsTrayIconBadgeEnabled { get; set; } = true;
 
     /// <summary>
     /// Gets or sets whether the account row in the navigation shows its unread total.

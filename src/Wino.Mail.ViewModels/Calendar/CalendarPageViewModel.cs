@@ -136,6 +136,16 @@ public partial class CalendarPageViewModel : CalendarBaseViewModel,
             SelectedQuickEventEndDate = null;
     }
 
+    public static readonly TimeSpan QuickEventDefaultDuration = TimeSpan.FromMinutes(30);
+
+    public static DateTime GetQuickEventDefaultEnd(DateTime start, DateTime? draggedEnd, bool isAllDay)
+        => draggedEnd is DateTime dragged && dragged > start ? dragged
+            : isAllDay ? start.Date.AddDays(1)
+            : start.Add(QuickEventDefaultDuration);
+
+    public void BeginQuickEvent(DateTime start, DateTime? draggedEnd, bool isAllDay)
+        => SelectQuickEventRange(start, GetQuickEventDefaultEnd(start, draggedEnd, isAllDay), isAllDay);
+
     public void SelectQuickEventRange(DateTime start, DateTime end, bool isAllDay)
     {
         if (end <= start)
@@ -405,7 +415,7 @@ public partial class CalendarPageViewModel : CalendarBaseViewModel,
         (await _externalLauncher.LaunchUriAsync(joinUri)).ThrowIfNotSucceeded();
     }
 
-    public override void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override void OnNavigatedTo(NavigationMode mode, object? parameters)
     {
         ResetPageLifetime();
         base.OnNavigatedTo(mode, parameters);
@@ -416,7 +426,7 @@ public partial class CalendarPageViewModel : CalendarBaseViewModel,
         _ = Readiness.ActivateAsync();
     }
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
         Readiness.Deactivate();

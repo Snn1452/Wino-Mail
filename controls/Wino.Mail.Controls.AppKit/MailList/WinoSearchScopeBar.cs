@@ -1,4 +1,5 @@
 using AppKit;
+using Wino.Mail.Controls.Core;
 using Wino.Presentation.AppKit;
 
 namespace Wino.Mail.Controls.AppKit.MailList;
@@ -29,6 +30,7 @@ public sealed class WinoSearchScopeBar : WinoSurfaceView
         });
         _reach.ControlSize = NSControlSize.Small;
         _reach.SelectedSegment = 0;
+        WinoStyle.UseAccentSelection(_reach);
         _reach.TranslatesAutoresizingMaskIntoConstraints = false;
 
         _scope = new NSPopUpButton { PullsDown = false, ControlSize = NSControlSize.Small, TranslatesAutoresizingMaskIntoConstraints = false };
@@ -123,7 +125,7 @@ public sealed class WinoSearchScopeBar : WinoSurfaceView
         }
         if (!string.IsNullOrEmpty(FiltersTitle))
         {
-            var title = ActiveFilterCount > 0 ? $"{FiltersTitle} ({ActiveFilterCount})" : FiltersTitle;
+            var title = WinoControlText.WithCount(FiltersTitle, ActiveFilterCount);
             var filters = new WinoChipView(22)
             {
                 Text = title,

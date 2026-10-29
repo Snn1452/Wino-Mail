@@ -71,7 +71,8 @@ public partial class App : WinoApplication,
     IRecipient<AccountRemovedMessage>,
     IRecipient<AccountUpdatedMessage>,
     IRecipient<GetStartedFromWelcomeRequested>,
-    IRecipient<WelcomeImportCompletedMessage>
+    IRecipient<WelcomeImportCompletedMessage>,
+    IRecipient<TrayUnreadIndicatorChanged>
 {
     private IApplicationRuntime? _applicationRuntime;
     private const string ToggleDefaultModeLaunchArgument = "--mode=toggle-default";
@@ -375,6 +376,7 @@ public partial class App : WinoApplication,
         }
 
         var companion = _companionIntegration;
+        companion.SetUnreadIndicator(NotificationBuilder.LastSnapshot?.IsTrayIconIndicatorVisible == true);
         companion.TryConfigureHotKey(
             _preferencesService?.IsCompanionHotKeyEnabled ?? false,
             GetConfiguredCompanionHotKey());
@@ -740,86 +742,13 @@ public partial class App : WinoApplication,
         services.AddSingleton<IMailDialogService, DialogService>();
         services.AddSingleton<ISearchHistoryService, SearchHistoryService>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
-        services.AddSingleton<IAccountCalendarStateService, Wino.Calendar.ViewModels.Services.AccountCalendarStateService>();
-        services.AddSingleton<IDateContextProvider, SystemDateContextProvider>();
-        services.AddSingleton<ICalendarRangeTextFormatter, CalendarRangeTextFormatter>();
     }
 
     private void RegisterViewModels(IServiceCollection services)
     {
-        services.AddSingleton(typeof(MailAppShellViewModel));
-        services.AddSingleton(typeof(CalendarAppShellViewModel));
-        services.AddSingleton(typeof(SettingsMenuProvider));
-        // The app shell owns window-specific binding state and must die with its window.
-        // Mode providers remain application services so background synchronization can keep
-        // running, but a newly created ShellWindow always receives a fresh shell host VM.
-        services.AddSingleton<IShellMenuProviderResolver>(provider => new ShellMenuProviderResolver(
-            () => provider.GetRequiredService<IMailShellClient>(),
-            () => provider.GetRequiredService<ICalendarShellClient>(),
-            () => provider.GetRequiredService<ContactsPageViewModel>(),
-            () => provider.GetRequiredService<ToDoPageViewModel>(),
-            () => provider.GetRequiredService<SettingsMenuProvider>()));
-        services.AddTransient(typeof(WinoAppShellViewModel));
-
-        services.AddSingleton<IMailShellClient>(serviceProvider => serviceProvider.GetRequiredService<MailAppShellViewModel>());
-        services.AddSingleton<ICalendarShellClient>(serviceProvider => serviceProvider.GetRequiredService<CalendarAppShellViewModel>());
-
-        // Breaks the calendar shell / calendar page constructor cycle and keeps the whole
-        // calendar object graph out of a session that never opens the calendar.
-        services.AddSingleton(serviceProvider =>
-            new Lazy<CalendarPageViewModel>(serviceProvider.GetRequiredService<CalendarPageViewModel>));
-
-        services.AddTransient(typeof(MailListPageViewModel));
-        services.AddTransient(typeof(MailRenderingPageViewModel));
-        services.AddTransient(typeof(AccountManagementViewModel));
-        services.AddTransient(typeof(WelcomePageV2ViewModel));
+        services.RegisterWinoViewModels();
+        // Windows-only pages.
         services.AddTransient(typeof(MigrationPageViewModel));
-        services.AddTransient(typeof(ProviderSelectionPageViewModel));
-        services.AddTransient(typeof(AccountSetupProgressPageViewModel));
-        services.AddTransient(typeof(SpecialImapCredentialsPageViewModel));
-        services.AddSingleton(typeof(WelcomeWizardContext));
-
-        services.AddTransient(typeof(ComposePageViewModel));
-        services.AddTransient(typeof(IdlePageViewModel));
-
-        services.AddTransient(typeof(ImapCalDavSettingsPageViewModel));
-        services.AddTransient(typeof(AccountDetailsPageViewModel));
-        services.AddTransient(typeof(WinoIntelligenceManagementPageViewModel));
-        services.AddTransient(typeof(IntelligenceCoveragePageViewModel));
-        services.AddTransient(typeof(DailyBriefingPanelViewModel));
-        services.AddTransient(typeof(FolderCustomizationPageViewModel));
-        services.AddTransient(typeof(SignatureManagementPageViewModel));
-        services.AddTransient(typeof(MessageListPageViewModel));
-        services.AddTransient(typeof(UnreadBadgeSettingsPageViewModel));
-        services.AddTransient(typeof(CompanionSettingsPageViewModel));
-        services.AddTransient(typeof(NotificationSettingsPageViewModel));
-        services.AddTransient(typeof(AccountUnreadBadgePageViewModel));
-        services.AddTransient(typeof(ReadComposePanePageViewModel));
-        services.AddTransient(typeof(MergedAccountDetailsPageViewModel));
-        services.AddTransient(typeof(TestPageViewModel));
-        services.AddTransient(typeof(AppPreferencesPageViewModel));
-        services.AddTransient(typeof(MailPreferencesPageViewModel));
-        services.AddTransient(typeof(BackupRestorePageViewModel));
-        services.AddTransient(typeof(StoragePageViewModel));
-        services.AddTransient(typeof(WinoAccountManagementPageViewModel));
-        services.AddTransient(typeof(AliasManagementPageViewModel));
-        services.AddTransient(typeof(MailCategoryManagementPageViewModel));
-        services.AddTransient(typeof(MailFiltersPageViewModel));
-        services.AddTransient(typeof(MailFilterEditorPageViewModel));
-        services.AddSingleton(typeof(ContactsPageViewModel));
-        services.AddSingleton(typeof(ToDoPageViewModel));
-        services.AddTransient(typeof(ContactEditPageViewModel));
-        services.AddTransient(typeof(SignatureAndEncryptionPageViewModel));
-        services.AddTransient(typeof(EmailTemplatesPageViewModel));
-        services.AddTransient(typeof(CreateEmailTemplatePageViewModel));
-        services.AddSingleton(typeof(CalendarPageViewModel));
-        services.AddTransient(typeof(CalendarRenderingSettingsPageViewModel));
-        services.AddTransient(typeof(CalendarPreferenceSettingsPageViewModel));
-        services.AddTransient(typeof(ContactsPreferenceSettingsPageViewModel));
-        services.AddTransient(typeof(ToDoPreferenceSettingsPageViewModel));
-        services.AddTransient(typeof(CalendarAccountSettingsPageViewModel));
-        services.AddTransient(typeof(EventDetailsPageViewModel));
-        services.AddTransient(typeof(CalendarEventComposePageViewModel));
     }
 
     #endregion
@@ -837,7 +766,6 @@ public partial class App : WinoApplication,
         services.RegisterCoreServices();
         services.RegisterSharedServices();
         services.RegisterCoreUWPServices();
-        services.RegisterCoreViewModels();
 
         RegisterUWPServices(services);
         RegisterViewModels(services);
@@ -1673,8 +1601,7 @@ public partial class App : WinoApplication,
 
         if (mailItem == null)
         {
-            LogActivation("Mail item not found. Exiting.");
-            ExitApplication();
+            LogActivation("Mail item not found.");
             return;
         }
 
@@ -1700,8 +1627,7 @@ public partial class App : WinoApplication,
 
             if (_synchronizationManager == null)
             {
-                LogActivation("Synchronization manager is not initialized. Exiting.");
-                ExitApplication();
+                LogActivation("Synchronization manager is not initialized.");
                 return;
             }
 
@@ -1723,7 +1649,8 @@ public partial class App : WinoApplication,
                     // Queue all requests for this account.
                     foreach (var request in accountGroup)
                     {
-                        await _synchronizationManager.QueueRequestAsync(request, accountId, triggerSynchronization: false);
+                        // No window can show the undo bar, and a deferred request would be lost on exit.
+                        await _synchronizationManager.QueueRequestAsync(request, accountId, triggerSynchronization: false, allowUndo: false);
                     }
 
                     // Create synchronization options to execute the queued requests.
@@ -1744,10 +1671,8 @@ public partial class App : WinoApplication,
                 await notificationBuilder.UpdateTaskbarIconBadgeAsync();
             }
 
-            LogActivation("Toast action handling complete. Exiting app.");
-
-            // Exit the app after synchronization is complete.
-            ExitApplication();
+            // The notification handler exits a transient process once this completes.
+            LogActivation("Toast action handling complete.");
         }
     }
 
@@ -2014,6 +1939,13 @@ public partial class App : WinoApplication,
         WeakReferenceMessenger.Default.Register<GetStartedFromWelcomeRequested>(this);
         WeakReferenceMessenger.Default.Register<WelcomeImportCompletedMessage>(this);
         WeakReferenceMessenger.Default.Register<LanguageChanged>(this);
+        WeakReferenceMessenger.Default.Register<TrayUnreadIndicatorChanged>(this);
+    }
+
+    public void Receive(TrayUnreadIndicatorChanged message)
+    {
+        // Shell_NotifyIcon belongs to the tray window's thread; a tray created later reads LastSnapshot.
+        _applicationDispatcherQueue?.TryEnqueue(() => _companionIntegration?.SetUnreadIndicator(message.IsVisible));
     }
 
     public void Receive(AccountSynchronizationCompleted message)
@@ -2386,7 +2318,17 @@ public partial class App : WinoApplication,
 
         if (route.ShouldActivateWindow && activationWindow != null)
         {
-            await ActivateWindowAsync(activationWindow, applyThemeToWindow: !activationWindow.AppWindow.IsVisible);
+            var wasHidden = !activationWindow.AppWindow.IsVisible;
+
+            await ActivateWindowAsync(activationWindow, applyThemeToWindow: wasHidden);
+
+            if (wasHidden &&
+                route.Path == AppActivationPath.StandardLaunch &&
+                route.ActivationMode == WinoApplicationMode.Mail &&
+                ReferenceEquals(activationWindow, shellWindow))
+            {
+                WeakReferenceMessenger.Default.Send(new UnreadBadgeLaunchNavigationRequested());
+            }
         }
     }
 

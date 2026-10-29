@@ -56,6 +56,7 @@ public sealed class HtmlPreviewVisitor : MimeVisitor
 
     private readonly Func<SecureMimeContext> secureMimeContextFactory;
     private readonly List<MultipartRelated> relatedStack = [];
+    private MimeMessage rootMessage;
     private readonly List<MimeEntity> attachments = [];
     private readonly HashSet<MimeEntity> attachmentSet = new(ReferenceEqualityComparer.Instance);
     private readonly List<Exception> cryptographyErrors = [];
@@ -108,6 +109,12 @@ public sealed class HtmlPreviewVisitor : MimeVisitor
     /// A detached signed message can still be rendered when verification fails.
     /// </summary>
     public IReadOnlyList<Exception> CryptographyErrors => cryptographyErrors;
+
+    protected override void VisitMimeMessage(MimeMessage message)
+    {
+        rootMessage ??= message;
+        base.VisitMimeMessage(message);
+    }
 
     protected override void VisitMultipartAlternative(MultipartAlternative alternative)
     {
@@ -371,9 +378,6 @@ public sealed class HtmlPreviewVisitor : MimeVisitor
 
             writer.WriteAttribute(attribute);
         }
-
-        if (context.TagId == HtmlTagId.Body)
-            writer.WriteAttribute("oncontextmenu", "return false;");
     }
 
     private static bool TryGetColorSchemeMeta(HtmlTagContext context, out string name, out string content)
@@ -576,7 +580,16 @@ public sealed class HtmlPreviewVisitor : MimeVisitor
             }
         }
 
-        return false;
+        // Some senders put cid-referenced images in multipart/mixed instead of multipart/related.
+        if (rootMessage != null && !string.IsNullOrWhiteSpace(contentId))
+        {
+            image = rootMessage.BodyParts
+                .OfType<MimePart>()
+                .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.ContentId)
+                    && candidate.ContentId.Trim('<', '>').Equals(contentId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return image != null;
     }
 
     private static string NormalizeContentId(string value)

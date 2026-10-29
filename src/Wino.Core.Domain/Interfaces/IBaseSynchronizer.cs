@@ -31,6 +31,11 @@ public interface IBaseSynchronizer
     bool HasQueuedRequests();
 
     /// <summary>
+    /// Returns whether a request matching <paramref name="predicate"/> is waiting to execute.
+    /// </summary>
+    bool HasQueuedRequests(Func<IRequestBase, bool> predicate);
+
+    /// <summary>
     /// Returns a copy of the requests waiting to execute, in queue order. The queue is unchanged.
     /// </summary>
     IReadOnlyList<IRequestBase> GetQueuedRequestSnapshot();

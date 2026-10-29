@@ -76,7 +76,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
     }
 
 #pragma warning disable CS8625
-    public async Task<MailCategoryDialogResult> ShowEditMailCategoryDialogAsync(MailCategory category = null)
+    public async Task<MailCategoryDialogResult?> ShowEditMailCategoryDialogAsync(MailCategory? category = null)
 #pragma warning restore CS8625
     {
         var dialog = new EditMailCategoryDialog(category)
@@ -126,7 +126,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         }
     }
 
-    public async Task<IMailItemFolder> ShowMoveMailFolderDialogAsync(List<IMailItemFolder> availableFolders)
+    public async Task<IMailItemFolder?> ShowMoveMailFolderDialogAsync(List<IMailItemFolder> availableFolders)
     {
         var moveDialog = new MoveMailDialog(availableFolders)
         {
@@ -138,7 +138,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         return moveDialog.SelectedFolder;
     }
 
-    public async Task<IMailItemFolder> PickFolderAsync(Guid accountId, PickFolderReason reason, IFolderService folderService)
+    public async Task<IMailItemFolder?> PickFolderAsync(Guid accountId, PickFolderReason reason, IFolderService folderService)
     {
         var visibleFolders = await folderService.GetFolderStructureForAccountAsync(accountId, false);
 
@@ -215,7 +215,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         }
     }
 
-    public async Task<MailAccount> ShowAccountPickerDialogAsync(List<MailAccount> availableAccounts)
+    public async Task<MailAccount?> ShowAccountPickerDialogAsync(List<MailAccount> availableAccounts)
     {
         var accountPicker = new AccountPickerDialog(availableAccounts)
         {
@@ -271,7 +271,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         return new AccountCalendarPickingResult(calendarPicker.PickedCalendar, calendarPicker.ShouldNavigateToCalendarSettings);
     }
 
-    public async Task<AccountSignature> ShowSignatureEditorDialog(AccountSignature? signatureModel = null)
+    public async Task<AccountSignature?> ShowSignatureEditorDialog(AccountSignature? signatureModel = null)
     {
         SignatureEditorDialog signatureEditorDialog;
         if (signatureModel != null)
@@ -339,7 +339,7 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
     }
 
 #pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
-    public async Task<KeyboardShortcutDialogResult> ShowKeyboardShortcutDialogAsync(KeyboardShortcut existingShortcut = null)
+    public async Task<KeyboardShortcutDialogResult> ShowKeyboardShortcutDialogAsync(KeyboardShortcut? existingShortcut = null)
 #pragma warning restore CS8625
     {
         var dialog = new KeyboardShortcutDialog(existingShortcut)
@@ -507,6 +507,18 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
     public async Task<bool> ShowIntelligenceConsentPolicyDialogAsync(Uri? policyUri, Func<Task<bool>> acceptAsync)
     {
         var dialog = new IntelligenceConsentPolicyDialog(policyUri, acceptAsync)
+        {
+            RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
+        };
+
+        await HandleDialogPresentationAsync(dialog);
+
+        return dialog.IsAccepted;
+    }
+
+    public async Task<bool> ShowRelayPolicyDialogAsync(Uri policyUri, Func<Task<bool>> acceptAsync)
+    {
+        var dialog = new RelayPolicyDialog(policyUri, acceptAsync)
         {
             RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
         };

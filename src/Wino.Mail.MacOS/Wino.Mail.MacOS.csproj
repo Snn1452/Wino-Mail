@@ -28,27 +28,57 @@
     <DefineConstants>$(DefineConstants);WINO_APPSTORE</DefineConstants>
     <CodesignEntitlements>Entitlements.AppStore.plist</CodesignEntitlements>
   </PropertyGroup>
-  <!-- Other builds update through Sparkle (Wino.Core.MacOS.Bindings/Sparkle): its feed, key and installer settings. -->
+  <!-- APNs for live notifications (WinoRelay). The entitlement is restricted: macOS refuses to launch a bundle that
+       carries it without a provisioning profile that includes Push Notifications. Debug builds signed with the
+       development profile get the development environment. The DMG script signs with the "Wino Mail macOS Developer ID"
+       profile and passes -p:WinoApsEnvironment=production. Ad hoc builds (-p:CodesignProvision=) leave it out, so APNs
+       registration fails and the device registers without a push token. App Store builds carry the production value in
+       Entitlements.AppStore.plist. -->
+  <PropertyGroup>
+    <WinoApsEnvironment Condition="'$(WinoApsEnvironment)' == ''">development</WinoApsEnvironment>
+  </PropertyGroup>
+  <!-- Sign in with Apple (Wino Accounts) is restricted the same way, and Apple does not grant it to Developer ID
+       profiles: development builds get it, the DMG script passes -p:WinoAppleSignIn=false (DMG users sign in with
+       Apple through the browser flow). App Store builds carry it in Entitlements.AppStore.plist. -->
+  <PropertyGroup>
+    <WinoAppleSignIn Condition="'$(WinoAppleSignIn)' == ''">true</WinoAppleSignIn>
+  </PropertyGroup>
+  <!-- WINO_APPLE_SIGNIN follows the entitlement exactly: Composition registers the native AuthenticationServices flow
+       only in builds that carry it (App Store, or a profile-signed build with WinoAppleSignIn); every other build
+       (DMG, unsigned local builds) signs in with Apple through the API browser flow in ASWebAuthenticationSession. -->
+  <PropertyGroup Condition="'$(WinoMacDistribution)' == 'AppStore' or ('$(CodesignProvision)' != '' and '$(WinoAppleSignIn)' == 'true')">
+    <DefineConstants>$(DefineConstants);WINO_APPLE_SIGNIN</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(WinoMacDistribution)' != 'AppStore' and '$(CodesignProvision)' != ''">
+    <CustomEntitlements Include="com.apple.developer.aps-environment" Type="String" Value="$(WinoApsEnvironment)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(WinoMacDistribution)' != 'AppStore' and '$(CodesignProvision)' != '' and '$(WinoAppleSignIn)' == 'true'">
+    <CustomEntitlements Include="com.apple.developer.applesignin" Type="StringArray" Value="Default" />
+  </ItemGroup>
+  <!-- Other builds update through Sparkle (Wino.Core.Apple.Bindings/Sparkle): its feed, key and installer settings. -->
   <ItemGroup Condition="'$(WinoMacDistribution)' != 'AppStore'">
     <PartialAppManifest Include="Sparkle.plist" />
+    <PartialAppManifest Include="Sparkle.Debug.plist" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Wino.Mail.ViewModels/Wino.Mail.ViewModels.csproj" />
     <ProjectReference Include="../Wino.Core/Wino.Core.csproj" />
+    <ProjectReference Include="../Wino.PushRelay.Socket/Wino.PushRelay.Socket.csproj" />
+    <ProjectReference Include="../Wino.Platform.Apple/Wino.Platform.Apple.csproj" />
     <ProjectReference Include="../Wino.Platform.MacOS/Wino.Platform.MacOS.csproj" />
-    <ProjectReference Include="../Wino.Core.MacOS.Bindings/Wino.Core.MacOS.Bindings.csproj" />
+    <ProjectReference Include="../Wino.Core.Apple.Bindings/Wino.Core.Apple.Bindings.csproj" />
     <ProjectReference Include="../../controls/Wino.Presentation.AppKit/Wino.Presentation.AppKit.csproj" />
     <ProjectReference Include="../../controls/Wino.Mail.Controls.AppKit/Wino.Mail.Controls.AppKit.csproj" />
-    <ProjectReference Include="../../controls/Wino.Editor.AppKit/Wino.Editor.AppKit.csproj" />
+    <ProjectReference Include="../../controls/Wino.Editor.WebKit/Wino.Editor.WebKit.csproj" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Serilog.Extensions.Logging" />
   </ItemGroup>
-  <!-- The WinoIcons fonts are built once into the WinUI assets (icons/README.md); the Mac bundle
-       carries the same files and registers them at startup (WinoIcons.Register). -->
+  <!-- The Framework7 WinoIcons fonts (icons/README.md), bundled under the WinoIcons file names and registered
+       at startup (WinoIcons.Register). -->
   <ItemGroup>
-    <BundleResource Include="../Wino.Mail.WinUI/Assets/WinoIcons.ttf" LogicalName="Fonts/WinoIcons.ttf" />
-    <BundleResource Include="../Wino.Mail.WinUI/Assets/WinoIconsColor-Light.ttf" LogicalName="Fonts/WinoIconsColor-Light.ttf" />
-    <BundleResource Include="../Wino.Mail.WinUI/Assets/WinoIconsColor-Dark.ttf" LogicalName="Fonts/WinoIconsColor-Dark.ttf" />
+    <BundleResource Include="../../icons/fonts/WinoIconsFramework7.ttf" LogicalName="Fonts/WinoIcons.ttf" />
+    <BundleResource Include="../../icons/fonts/WinoIconsFramework7Color-Light.ttf" LogicalName="Fonts/WinoIconsColor-Light.ttf" />
+    <BundleResource Include="../../icons/fonts/WinoIconsFramework7Color-Dark.ttf" LogicalName="Fonts/WinoIconsColor-Dark.ttf" />
   </ItemGroup>
   <!-- Predefined theme wallpapers and preview images, shared with Windows (BackgroundImages). -->
   <ItemGroup>

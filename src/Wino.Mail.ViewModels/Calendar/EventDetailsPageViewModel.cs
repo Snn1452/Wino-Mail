@@ -15,6 +15,7 @@ using Wino.Core.Domain.Entities.Calendar;
 using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Platform;
 using Wino.Core.Domain.Models.Calendar;
 using Wino.Core.Domain.Models;
 using Wino.Core.Domain.Models.Navigation;
@@ -31,6 +32,7 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
 {
     private readonly ICalendarService _calendarService;
     private readonly IExternalLauncher _externalLauncher;
+    private readonly ILinkBrowserService _linkBrowserService;
     private readonly IApplicationConfiguration _applicationConfiguration;
     private readonly IPreferencesService _preferencesService;
     private readonly IMailDialogService _dialogService;
@@ -57,6 +59,10 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
     }
 
     public IExternalLauncher ExternalLauncher => _externalLauncher;
+
+    /// <summary>Opens a link from the event description in the browser chosen for the calendar's account.</summary>
+    public Task<PlatformOperationResult> OpenLinkAsync(Uri uri)
+        => _linkBrowserService?.OpenLinkAsync(uri, CurrentEvent?.AssignedCalendar?.AccountId) ?? _externalLauncher.LaunchUriAsync(uri);
     public bool LastMutationSucceeded { get; private set; }
 
     /// <summary>
@@ -74,6 +80,8 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
     public partial bool IsDarkWebviewRenderer { get; set; }
 
     public ObservableCollection<CalendarAttachmentViewModel> Attachments { get; } = new ObservableCollection<CalendarAttachmentViewModel>();
+
+    public IPreferencesService PreferencesService => _preferencesService;
 
     /// <summary>
     /// Returns true if the current event has attachments.
@@ -181,6 +189,9 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
     private void NotifyCapabilityPropertiesChanged()
     {
         OnPropertyChanged(nameof(IsCalendarReadOnly));
+        OnPropertyChanged(nameof(CanEditEvent));
+        OnPropertyChanged(nameof(CanEditEventSeries));
+        OnPropertyChanged(nameof(EditEventText));
         OnPropertyChanged(nameof(CanRespondToInvitation));
         OnPropertyChanged(nameof(SendsInvitations));
         OnPropertyChanged(nameof(HasResponseNotSentWarning));
@@ -205,6 +216,14 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
     /// Only visible for child occurrences of recurring events, not for master events or single events.
     /// </summary>
     public bool CanEditSeries => CurrentEvent?.IsRecurringChild ?? false;
+
+    public bool CanEditEvent => CurrentEvent?.CalendarItem is CalendarItem item && !IsCalendarReadOnly && item.CanChangeStartAndEndDate;
+
+    public bool CanEditEventSeries => CanEditEvent && CurrentEvent.IsRecurringChild;
+
+    public string EditEventText => CurrentEvent?.IsRecurringChild == true
+        ? Translator.CalendarEventDetails_EditOccurrence
+        : Translator.CalendarEventDetails_Edit;
 
     /// <summary>
     /// Returns true if the current user is the organizer of the event.
@@ -274,10 +293,12 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
                                      IContactService contactService,
                                      IApplicationConfiguration applicationConfiguration,
                                      IAttachmentFileService attachmentFileService = null,
-                                     ICalendarCapabilityService calendarCapabilityService = null)
+                                     ICalendarCapabilityService calendarCapabilityService = null,
+                                     ILinkBrowserService linkBrowserService = null)
     {
         _calendarService = calendarService;
         _externalLauncher = externalLauncher;
+        _linkBrowserService = linkBrowserService;
         _applicationConfiguration = applicationConfiguration;
         _preferencesService = preferencesService;
         _dialogService = dialogService;
@@ -306,10 +327,10 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
         }
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeNavigationAsync(mode, parameters);
 
-    public async Task InitializeNavigationAsync(NavigationMode mode, object parameters)
+    public async Task InitializeNavigationAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 
@@ -871,6 +892,78 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
     }
 
     [RelayCommand]
+    private async Task EditEventAsync()
+    {
+        if (CurrentEvent?.CalendarItem is not CalendarItem item)
+            return;
+
+        await OpenEventEditorAsync(item);
+    }
+
+    [RelayCommand]
+    private async Task EditEventSeriesAsync()
+    {
+        if (CurrentEvent?.CalendarItem?.RecurringCalendarItemId is not Guid masterEventId)
+            return;
+
+        var masterEvent = await _calendarService.GetCalendarItemAsync(masterEventId);
+
+        if (masterEvent == null)
+        {
+            _dialogService.InfoBarMessage(
+                Translator.CalendarEventCompose_EditUnavailableTitle,
+                Translator.CalendarEventCompose_EditUnavailableMessage,
+                InfoBarMessageType.Warning);
+            return;
+        }
+
+        await OpenEventEditorAsync(masterEvent);
+    }
+
+    private async Task OpenEventEditorAsync(CalendarItem item)
+    {
+        await CapabilityLoadTask;
+
+        if (IsCalendarReadOnly)
+        {
+            _dialogService.ShowReadOnlyCalendarMessage();
+            return;
+        }
+
+        if (!CanEditEvent)
+        {
+            _dialogService.InfoBarMessage(
+                Translator.CalendarDragDropMoveNotAllowedTitle,
+                Translator.CalendarEventDetails_EditNotAllowedMessage,
+                InfoBarMessageType.Warning);
+            return;
+        }
+
+        if (!CanNavigateShell)
+            return;
+
+        _navigationService.Navigate(WinoPage.CalendarEventComposePage, new CalendarEventComposeNavigationArgs
+        {
+            EditCalendarItemId = item.Id,
+            SelectedCalendarId = item.CalendarId,
+            NotesHtml = GetEditableNotesHtml(item.Description)
+        });
+    }
+
+    private static string GetEditableNotesHtml(string description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return string.Empty;
+
+        if (description.Contains('<'))
+            return description;
+
+        return System.Net.WebUtility.HtmlEncode(description)
+            .Replace("\r\n", "\n")
+            .Replace("\n", "<br>");
+    }
+
+    [RelayCommand]
     private async Task OpenAttachmentAsync(CalendarAttachmentViewModel attachmentViewModel)
     {
         if (attachmentViewModel == null || CurrentEvent?.CalendarItem == null) return;
@@ -948,7 +1041,7 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
         {
             attachmentViewModel.IsBusy = true;
 
-            var pickedPath = await _dialogService.PickWindowsFolderAsync();
+            var pickedPath = await _dialogService.PickFolderAsync();
             if (string.IsNullOrEmpty(pickedPath)) return;
 
             // Download if not already downloaded
@@ -1046,6 +1139,8 @@ public partial class EventDetailsPageViewModel : CalendarBaseViewModel,
 
 public partial class ReminderOption : ObservableObject
 {
+    public override string ToString() => DisplayText;
+
     public int Minutes { get; }
     public bool IsCustom { get; }
     public string AutomationId => $"EventDetailsReminderOption{Minutes}CheckBox";
@@ -1057,6 +1152,9 @@ public partial class ReminderOption : ObservableObject
     {
         get
         {
+            if (Minutes == 0)
+                return Translator.CalendarReminder_None;
+
             if (Minutes >= 60)
             {
                 var hours = Minutes / 60;
@@ -1076,6 +1174,8 @@ public partial class ReminderOption : ObservableObject
 
 public partial class ShowAsOption : ObservableObject
 {
+    public override string ToString() => DisplayText;
+
     public CalendarItemShowAs ShowAs { get; }
 
     public string DisplayText

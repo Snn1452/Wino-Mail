@@ -10,7 +10,9 @@ using Serilog;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Entities.Shared;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Extensions;
 using Wino.Core.Domain.Interfaces;
+using Wino.Core.Domain.Models.Settings;
 using Wino.Core.Domain.Models.Synchronization;
 using Wino.Messaging.Client.Shell;
 using Wino.Messaging.Server;
@@ -27,21 +29,29 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
     private const int InboxSyncsPerFullSync = 20;
     private static readonly TimeSpan RareModeSynchronizationInterval = TimeSpan.FromHours(6);
     private static readonly TimeSpan RareModeDueCheckInterval = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan InboxRerunPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan InboxRerunWaitLimit = TimeSpan.FromMinutes(2);
     private readonly object _gate = new();
     private readonly ISynchronizationManager _synchronizationManager;
     private readonly IPreferencesService _preferencesService;
+    private readonly IPlatformCapabilities _platformCapabilities;
     private readonly IAccountService _accountService;
     private readonly IMessenger _messenger;
     private readonly IWinoLogger _logger;
     private readonly TimeProvider _timeProvider;
     private readonly Func<CancellationToken, Task> _initializeServices;
     private readonly Func<CancellationToken, Task> _backgroundStartup;
+    private readonly ISyncCoordinator _coordinator;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SemaphoreSlim _autoSynchronizationSemaphore = new(1, 1);
-    private readonly ConcurrentDictionary<Guid, int> _inboxSyncCounters = new();
+    // When each account last had a FullFolders pass. Time-based rather than tick-based, because covered accounts
+    // skip ticks and would otherwise never reach a full pass.
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lastFullFolderSyncUtc = new();
     private readonly ConcurrentDictionary<int, Task> _jobs = new();
     private readonly Queue<ApplicationRuntimeState> _stateChanges = new();
     private readonly HashSet<Guid> _pendingCreatedAccounts = new();
+    // One queued inbox pass per account for pushes that arrive while that account synchronizes. Guarded by _gate.
+    private readonly Dictionary<Guid, Task<bool>> _pendingInboxReruns = new();
     private bool _dispatchingStateChanges;
     private int _jobId;
     private Task? _initialization;
@@ -56,13 +66,15 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
     private ApplicationRuntimeState _state;
 
     public ApplicationRuntime(ISynchronizationManager synchronizationManager, IAccountService accountService,
-        IPreferencesService preferencesService, IMessenger messenger, IWinoLogger logger,
+        IPreferencesService preferencesService, IPlatformCapabilities platformCapabilities, IMessenger messenger, IWinoLogger logger,
         Func<CancellationToken, Task> initializeServices, Func<CancellationToken, Task> backgroundStartup,
-        TimeProvider? timeProvider = null)
+        ISyncCoordinator coordinator, TimeProvider? timeProvider = null)
     {
+        _coordinator = coordinator;
         _synchronizationManager = synchronizationManager;
         _accountService = accountService;
         _preferencesService = preferencesService;
+        _platformCapabilities = platformCapabilities;
         _messenger = messenger;
         _logger = logger;
         _initializeServices = initializeServices;
@@ -237,14 +249,31 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         _messenger.Register<AccountRemovedMessage>(this);
         _messenger.Register<AccountUpdatedMessage>(this);
         _preferencesService.PreferenceChanged += PreferencesChanged;
+        _coordinator.CatchUpRequested += CatchUpRequested;
         _subscribed = true;
     }
 
     private void UnregisterRecipients()
     {
         _messenger.UnregisterAll(this);
-        if (_subscribed) _preferencesService.PreferenceChanged -= PreferencesChanged;
+        if (_subscribed)
+        {
+            _preferencesService.PreferenceChanged -= PreferencesChanged;
+            _coordinator.CatchUpRequested -= CatchUpRequested;
+        }
         _subscribed = false;
+    }
+
+    // The coordinator decided that live coverage was lost long enough, or came back after a long enough outage,
+    // that one bounded mail pass is worth it. The loops themselves are not restarted: their intervals no longer
+    // depend on the relay, and each tick asks the coordinator per account.
+    private void CatchUpRequested(object? sender, SyncCatchUpReason reason)
+    {
+        lock (_gate)
+        {
+            if (_state != ApplicationRuntimeState.Running || !_hasAccounts) return;
+            Track(() => ExecuteCatchUpSynchronizationAsync(_lifetime.Token));
+        }
     }
 
     private void Track(Func<Task> operation)
@@ -301,8 +330,8 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         {
             hasAccounts = _hasAccounts = accounts.Any();
             var ids = accounts.Select(x => x.Id).ToHashSet();
-            foreach (var id in _inboxSyncCounters.Keys.Where(x => !ids.Contains(x)))
-                _inboxSyncCounters.TryRemove(id, out _);
+            foreach (var id in _lastFullFolderSyncUtc.Keys.Where(x => !ids.Contains(x)))
+                _lastFullFolderSyncUtc.TryRemove(id, out _);
 
             if (!_hasAccounts) StopLoops();
         }
@@ -326,6 +355,7 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         lock (_gate)
         {
             if (_state != ApplicationRuntimeState.Running || !_hasAccounts) return;
+            if (!SettingAvailability.IsAvailable(PlatformSetting.SyncIntervals, _platformCapabilities)) return;
             if (propertyName == nameof(IPreferencesService.EmailSyncIntervalMinutes)) RestartMailLoop();
             if (propertyName == nameof(IPreferencesService.CalendarSyncIntervalMinutes)) RestartCalendarLoop();
         }
@@ -341,13 +371,15 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         if (_contactLoop == null) RestartContactLoop();
     }
 
+    // The intervals come from the coordinator: the user's settings on desktop (in timer mode and as the relay
+    // fallback alike), the defaults on mobile. The relay never changes them; it only lets covered accounts skip ticks.
     private void RestartMailLoop()
     {
         _mailLoop?.Cancel();
         var source = _mailLoop = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var startupPass = PendingStartupPass;
-        Track(() => RunLoopWithCleanupAsync(source, () => RunAutoSynchronizationLoopAsync(
-            TimeSpan.FromMinutes(Math.Max(1, _preferencesService.EmailSyncIntervalMinutes)), startupPass, source.Token)));
+        var interval = _coordinator.MailSyncInterval;
+        Track(() => RunLoopWithCleanupAsync(source, () => RunAutoSynchronizationLoopAsync(interval, startupPass, source.Token)));
     }
 
     private void RestartCalendarLoop()
@@ -355,8 +387,8 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         _calendarLoop?.Cancel();
         var source = _calendarLoop = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var startupPass = PendingStartupPass;
-        Track(() => RunLoopWithCleanupAsync(source, () => RunCalendarAutoSynchronizationLoopAsync(
-            TimeSpan.FromMinutes(Math.Max(1, _preferencesService.CalendarSyncIntervalMinutes)), startupPass, source.Token)));
+        var interval = _coordinator.CalendarSyncInterval;
+        Track(() => RunLoopWithCleanupAsync(source, () => RunCalendarAutoSynchronizationLoopAsync(interval, startupPass, source.Token)));
     }
 
     /// <summary>The startup pass while it still runs; a loop created meanwhile lets it cover the first run.</summary>
@@ -672,6 +704,224 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         }
     }
 
+    public async Task SynchronizeOnceAsync(CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        Task work;
+        lock (_gate)
+        {
+            _lifetime.Token.ThrowIfCancellationRequested();
+            // The pass reuses the loop bodies without their timers. It is tracked so shutdown
+            // waits for it, and it stops on either the caller's token or the runtime lifetime.
+            // Run on the pool so provider work never starts while the lifecycle lock is held.
+            work = Task.Run(() => RunSynchronizationPassAsync(cancellationToken), CancellationToken.None);
+            Track(() => work);
+        }
+        await work.ConfigureAwait(false);
+    }
+
+    public async Task<bool> SynchronizeAccountInboxAsync(Guid accountId, CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        var account = await _accountService.GetAccountAsync(accountId).ConfigureAwait(false);
+        if (account is null || !account.IsMailAccessGranted)
+            return false;
+
+        Task<bool> work;
+        lock (_gate)
+        {
+            _lifetime.Token.ThrowIfCancellationRequested();
+            // Tracked like the bounded pass, and run on the pool so provider work never starts under the lifecycle lock.
+            work = Task.Run(() => RunAccountInboxPassAsync(account.Id, cancellationToken), CancellationToken.None);
+            Track(() => work);
+        }
+
+        return await work.ConfigureAwait(false);
+    }
+
+    public async Task<bool> FlushQueuedRequestsAsync(CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        Task<bool> work;
+        lock (_gate)
+        {
+            _lifetime.Token.ThrowIfCancellationRequested();
+            // Tracked like the bounded pass, and run on the pool so provider work never starts under the lifecycle lock.
+            work = Task.Run(() => RunQueuedRequestsPassAsync(cancellationToken), CancellationToken.None);
+            Track(() => work);
+        }
+
+        return await work.ConfigureAwait(false);
+    }
+
+    private async Task<bool> RunQueuedRequestsPassAsync(CancellationToken cancellationToken)
+    {
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
+        var token = source.Token;
+
+        foreach (var synchronizer in _synchronizationManager.GetAllSynchronizers().ToArray())
+        {
+            token.ThrowIfCancellationRequested();
+            if (!synchronizer.HasQueuedRequests())
+                continue;
+
+            var accountId = synchronizer.Account.Id;
+            // Each kind runs only when it has queued requests: an ExecuteRequests run without them
+            // would fall through to an ordinary synchronization of that kind.
+            if (synchronizer.HasQueuedRequests(static request => request is IMailActionRequest or IFolderActionRequest or ICategoryActionRequest))
+            {
+                await RunPassStepAsync(ct => _synchronizationManager.SynchronizeMailAsync(new MailSynchronizationOptions
+                {
+                    AccountId = accountId,
+                    Type = MailSynchronizationType.ExecuteRequests
+                }, ct), "queued mail request", token).ConfigureAwait(false);
+            }
+
+            if (synchronizer.HasQueuedRequests(static request => request is ICalendarActionRequest))
+            {
+                await RunPassStepAsync(ct => _synchronizationManager.SynchronizeCalendarAsync(new CalendarSynchronizationOptions
+                {
+                    AccountId = accountId,
+                    Type = CalendarSynchronizationType.ExecuteRequests
+                }, ct), "queued calendar request", token).ConfigureAwait(false);
+            }
+
+            if (synchronizer.HasQueuedRequests(static request => request is IContactActionRequest))
+            {
+                await RunPassStepAsync(ct => _synchronizationManager.SynchronizeContactsAsync(new ContactSynchronizationOptions
+                {
+                    AccountId = accountId,
+                    Type = ContactSynchronizationType.ExecuteRequests
+                }, ct), "queued contact request", token).ConfigureAwait(false);
+            }
+
+            if (synchronizer.HasQueuedRequests(static request => request is ITaskActionRequest))
+            {
+                await RunPassStepAsync(ct => _synchronizationManager.SynchronizeTasksAsync(new TaskSynchronizationOptions
+                {
+                    AccountId = accountId,
+                    Type = TaskSynchronizationType.ExecuteRequests
+                }, ct), "queued task request", token).ConfigureAwait(false);
+            }
+        }
+
+        return !_synchronizationManager.GetAllSynchronizers().Any(synchronizer => synchronizer.HasQueuedRequests());
+    }
+
+    private async Task<bool> RunAccountInboxPassAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
+        var token = source.Token;
+        token.ThrowIfCancellationRequested();
+
+        // A running synchronization may have read the provider's changes before the one this push reports.
+        // One more inbox pass follows it; pushes that arrive in the meantime share that pass.
+        if (_synchronizationManager.IsAccountSynchronizing(accountId))
+        {
+            var rerun = QueueInboxRerun(accountId);
+            try
+            {
+                return await rerun.WaitAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!_lifetime.Token.IsCancellationRequested)
+            {
+                // The caller's budget ran out while the running sync goes on; the queued pass still follows it.
+                return true;
+            }
+        }
+
+        return await RunInboxPassCoreAsync(accountId, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The pending rerun for the account, started when none is pending. It runs on the runtime lifetime, so a caller
+    /// that stops waiting does not cancel it for the others.
+    /// </summary>
+    private Task<bool> QueueInboxRerun(Guid accountId)
+    {
+        lock (_gate)
+        {
+            if (_pendingInboxReruns.TryGetValue(accountId, out var pending))
+                return pending;
+
+            var rerun = Task.Run(() => RunInboxRerunAsync(accountId, _lifetime.Token), CancellationToken.None);
+            _pendingInboxReruns[accountId] = rerun;
+            Track(() => rerun);
+            return rerun;
+        }
+    }
+
+    private async Task<bool> RunInboxRerunAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            wait.CancelAfter(InboxRerunWaitLimit);
+            while (_synchronizationManager.IsAccountSynchronizing(accountId))
+                await Task.Delay(InboxRerunPollInterval, _timeProvider, wait.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            Log.Information("Account {AccountId} is still synchronizing after {Limit}; the queued inbox pass is skipped.", accountId, InboxRerunWaitLimit);
+            return false;
+        }
+        finally
+        {
+            // Once the rerun starts it may read the changes before a later push's: that push queues a new one.
+            // Only this rerun can be pending for the account while it waits, so removing by key is safe.
+            lock (_gate) _pendingInboxReruns.Remove(accountId);
+        }
+
+        return await RunInboxPassCoreAsync(accountId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> RunInboxPassCoreAsync(Guid accountId, CancellationToken token)
+    {
+        var result = await _synchronizationManager.SynchronizeMailAsync(new MailSynchronizationOptions
+        {
+            AccountId = accountId,
+            Type = MailSynchronizationType.InboxOnly
+        }, token).ConfigureAwait(false);
+
+        if (result.CompletedState is not (SynchronizationCompletedState.Success or SynchronizationCompletedState.PartiallyCompleted))
+            return false;
+
+        return true;
+    }
+
+    private async Task RunSynchronizationPassAsync(CancellationToken cancellationToken)
+    {
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
+        var token = source.Token;
+
+        // Each mode runs even when an earlier one fails, as the separate loops would.
+        await RunPassStepAsync(ExecuteAutoSynchronizationAsync, "mail", token).ConfigureAwait(false);
+        await RunPassStepAsync(ExecuteCalendarAutoSynchronizationAsync, "calendar", token).ConfigureAwait(false);
+        await RunPassStepAsync(ct => RunRareModeIfDueAsync(
+            () => _preferencesService.TaskLastAutoSynchronizationUtcTicks,
+            ticks => _preferencesService.TaskLastAutoSynchronizationUtcTicks = ticks,
+            ExecuteTaskAutoSynchronizationAsync, ct), "task", token).ConfigureAwait(false);
+        await RunPassStepAsync(ct => RunRareModeIfDueAsync(
+            () => _preferencesService.ContactLastAutoSynchronizationUtcTicks,
+            ticks => _preferencesService.ContactLastAutoSynchronizationUtcTicks = ticks,
+            ExecuteContactAutoSynchronizationAsync, ct), "contact", token).ConfigureAwait(false);
+    }
+
+    private static async Task RunPassStepAsync(Func<CancellationToken, Task> step, string name, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            await step(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Information($"Bounded {name} synchronization failed: {ex.Message}");
+        }
+    }
+
     private static string GetSynchronizationFailureMessage(
         MailSynchronizationType synchronizationType,
         IEnumerable<SynchronizationIssue> issues,
@@ -772,6 +1022,7 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
 
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
+                // Each account decides for itself inside, through the coordinator's live coverage.
                 await ExecuteAutoSynchronizationAsync(cancellationToken);
             }
         }
@@ -820,23 +1071,7 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
 
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                var now = _timeProvider.GetUtcNow().UtcTicks;
-                var last = getLastSynchronizedTicks();
-
-                // No timestamp yet, or one from the future after a clock change: start the window now.
-                if (last <= 0 || last > now)
-                {
-                    setLastSynchronizedTicks(now);
-                    continue;
-                }
-
-                if (now - last < RareModeSynchronizationInterval.Ticks)
-                    continue;
-
-                // Stamp before running so a failing provider, such as an exhausted quota, waits
-                // for the next window instead of retrying on every check.
-                setLastSynchronizedTicks(now);
-                await operation(cancellationToken);
+                await RunRareModeIfDueAsync(getLastSynchronizedTicks, setLastSynchronizedTicks, operation, cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -849,13 +1084,35 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         }
     }
 
+    private async Task RunRareModeIfDueAsync(Func<long> getLastSynchronizedTicks, Action<long> setLastSynchronizedTicks,
+        Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow().UtcTicks;
+        var last = getLastSynchronizedTicks();
+
+        // No timestamp yet, or one from the future after a clock change: start the window now.
+        if (last <= 0 || last > now)
+        {
+            setLastSynchronizedTicks(now);
+            return;
+        }
+
+        if (now - last < RareModeSynchronizationInterval.Ticks)
+            return;
+
+        // Stamp before running so a failing provider, such as an exhausted quota, waits
+        // for the next window instead of retrying on every check.
+        setLastSynchronizedTicks(now);
+        await operation(cancellationToken);
+    }
+
     private async Task ExecuteTaskAutoSynchronizationAsync(CancellationToken cancellationToken)
     {
         if (_synchronizationManager == null || _accountService == null)
             return;
 
         var accounts = await _accountService.GetAccountsAsync();
-        foreach (var account in accounts.Where(a => a.IsTaskAccessGranted && !a.IsTaskReauthorizationRequired))
+        foreach (var account in accounts.Where(a => a.IsTaskAccessGranted && !a.IsTaskReauthorizationRequired && !a.IsNetworkAccessBlocked()))
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _synchronizationManager.SynchronizeTasksAsync(new TaskSynchronizationOptions
@@ -872,7 +1129,7 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
             return;
 
         var accounts = await _accountService.GetAccountsAsync();
-        foreach (var account in accounts.Where(a => a.IsContactAccessGranted))
+        foreach (var account in accounts.Where(a => a.IsContactAccessGranted && !a.IsNetworkAccessBlocked()))
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _synchronizationManager.SynchronizeContactsAsync(new ContactSynchronizationOptions
@@ -883,7 +1140,15 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         }
     }
 
-    private async Task ExecuteAutoSynchronizationAsync(CancellationToken cancellationToken)
+    private Task ExecuteAutoSynchronizationAsync(CancellationToken cancellationToken)
+        => ExecuteMailAutoSynchronizationAsync(includeLiveCovered: false, cancellationToken);
+
+    // A catch-up must reach the accounts the relay covers: they are the ones whose changes went missing while the socket was
+    // down. It also waits for a running pass, which would have skipped those accounts.
+    private Task ExecuteCatchUpSynchronizationAsync(CancellationToken cancellationToken)
+        => ExecuteMailAutoSynchronizationAsync(includeLiveCovered: true, cancellationToken);
+
+    private async Task ExecuteMailAutoSynchronizationAsync(bool includeLiveCovered, CancellationToken cancellationToken)
     {
         if (_synchronizationManager == null || _accountService == null)
             return;
@@ -892,19 +1157,19 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
 
         try
         {
-            lockTaken = await _autoSynchronizationSemaphore.WaitAsync(0, cancellationToken);
+            lockTaken = await _autoSynchronizationSemaphore.WaitAsync(includeLiveCovered ? Timeout.Infinite : 0, cancellationToken);
             if (!lockTaken)
                 return;
 
             var accounts = await _accountService.GetAccountsAsync();
             var currentAccountIds = accounts.Select(a => a.Id).ToHashSet();
-            foreach (var staleAccountId in _inboxSyncCounters.Keys.Where(a => !currentAccountIds.Contains(a)).ToList())
+            foreach (var staleAccountId in _lastFullFolderSyncUtc.Keys.Where(a => !currentAccountIds.Contains(a)).ToList())
             {
-                _inboxSyncCounters.TryRemove(staleAccountId, out _);
+                _lastFullFolderSyncUtc.TryRemove(staleAccountId, out _);
             }
 
             var synchronizationTasks = accounts
-                .Select(account => ExecuteAutoSynchronizationForAccountAsync(account, cancellationToken))
+                .Select(account => ExecuteAutoSynchronizationForAccountAsync(account, includeLiveCovered, cancellationToken))
                 .ToList();
 
             await Task.WhenAll(synchronizationTasks);
@@ -928,8 +1193,9 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         try
         {
             var accounts = await _accountService.GetAccountsAsync();
+            // Accounts that need attention are left alone until the user fixes them; the timer never retries them.
             var synchronizationTasks = accounts
-                .Where(account => account.IsCalendarAccessGranted)
+                .Where(account => account.IsCalendarAccessGranted && !account.IsNetworkAccessBlocked())
                 .Select(account => ExecuteCalendarAutoSynchronizationForAccountAsync(account, cancellationToken))
                 .ToList();
 
@@ -960,7 +1226,7 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task ExecuteAutoSynchronizationForAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account, CancellationToken cancellationToken)
+    private async Task ExecuteAutoSynchronizationForAccountAsync(Wino.Core.Domain.Entities.Shared.MailAccount account, bool includeLiveCovered, CancellationToken cancellationToken)
     {
         if (_synchronizationManager == null)
             return;
@@ -973,29 +1239,40 @@ public sealed class ApplicationRuntime : IApplicationRuntime,
         if (!account.IsMailAccessGranted)
             return;
 
-        var inboxSyncOptions = new MailSynchronizationOptions
+        // An account that needs attention (rejected credentials, certificate, missing system folders, offline demo)
+        // is left alone until the user fixes it. Retrying it on every tick only repeats the failure.
+        if (account.IsNetworkAccessBlocked())
+            return;
+
+        // A full pass is due once per InboxSyncsPerFullSync intervals, measured in time so that accounts covered
+        // live (which skip their inbox ticks) still get it. Covered accounts skip everything else.
+        var now = _timeProvider.GetUtcNow();
+        var fullPassDue = _lastFullFolderSyncUtc.TryGetValue(account.Id, out var lastFullPass)
+            && now - lastFullPass >= _coordinator.MailSyncInterval * InboxSyncsPerFullSync;
+
+        if (!fullPassDue && !includeLiveCovered && !_coordinator.ShouldRunTimerSync(account.Id))
+            return;
+
+        var options = new MailSynchronizationOptions
         {
             AccountId = account.Id,
-            Type = MailSynchronizationType.InboxOnly
+            Type = fullPassDue ? MailSynchronizationType.FullFolders : MailSynchronizationType.InboxOnly
         };
 
-        var inboxSyncResult = await _synchronizationManager.SynchronizeMailAsync(inboxSyncOptions, cancellationToken);
+        var result = await _synchronizationManager.SynchronizeMailAsync(options, cancellationToken);
+        var succeeded = result.CompletedState is SynchronizationCompletedState.Success or SynchronizationCompletedState.PartiallyCompleted;
 
-        if (inboxSyncResult.CompletedState is SynchronizationCompletedState.Success or SynchronizationCompletedState.PartiallyCompleted)
+        // A full pass restarts the clock whether or not it succeeded (the tick counter used to reset the same way),
+        // so a failing full pass waits another cycle instead of repeating on every tick.
+        if (fullPassDue)
+            _lastFullFolderSyncUtc[account.Id] = now;
+
+        if (succeeded)
         {
-            var inboxSyncCount = _inboxSyncCounters.AddOrUpdate(account.Id, 1, (_, currentCount) => currentCount + 1);
-
-            if (inboxSyncCount >= InboxSyncsPerFullSync)
-            {
-                var fullSyncOptions = new MailSynchronizationOptions
-                {
-                    AccountId = account.Id,
-                    Type = MailSynchronizationType.FullFolders
-                };
-
-                await _synchronizationManager.SynchronizeMailAsync(fullSyncOptions, cancellationToken);
-                _inboxSyncCounters[account.Id] = 0;
-            }
+            // The first successful pass starts the clock.
+            _lastFullFolderSyncUtc.TryAdd(account.Id, now);
         }
+
+        _coordinator.ReportTimerMailSyncCompleted(account.Id, succeeded, _timeProvider.GetUtcNow());
     }
 }

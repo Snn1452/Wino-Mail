@@ -1,11 +1,11 @@
 using AppKit;
-using CommunityToolkit.Mvvm.ComponentModel;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Navigation;
 using Wino.Core.Domain.Models.Personalization;
 using Wino.Core.ViewModels;
+using Wino.Core.ViewModels.Data;
 using Wino.Mail.Controls.AppKit.Settings;
 using Wino.Mail.MacOS.Infrastructure;
 using Wino.Presentation.AppKit;
@@ -26,13 +26,6 @@ namespace Wino.Mail.MacOS.Views.Settings;
 public sealed class PersonalizationPageViewController(PersonalizationPageViewModel viewModel, MacWinoThemeService themeService, IDispatcher dispatcher, IWinoLogger logger)
     : SettingsPageViewController<PersonalizationPageViewModel>(viewModel, dispatcher, logger)
 {
-    // The Windows accent palette (PersonalizationPageViewModel.InitializeColors).
-    private static readonly string[] AccentPalette =
-    [
-        "#0078d7", "#00838c", "#e3008c", "#ca4f07", "#e81123", "#00819e", "#10893e", "#881798",
-        "#c239b3", "#767676", "#e1b12c", "#16a085", "#0984e3", "#4a69bd", "#05c46b"
-    ];
-
     private readonly MacAppearanceModel _appearance = new(themeService);
     private readonly NSTextField _currentThemeName = WinoStyle.Label(string.Empty, WinoSettingsStyle.CardDescription, WinoStyle.SecondaryText);
     private readonly ThemeThumbnailView _currentThemePreview = new(64, 40);
@@ -43,7 +36,7 @@ public sealed class PersonalizationPageViewController(PersonalizationPageViewMod
         var p = vm.PreferencesService;
         Bindings.Own(_appearance);
 
-        var swatches = new WinoColorSwatchPicker { Colors = AccentPalette };
+        var swatches = new WinoColorSwatchPicker { Colors = AppearanceSettingsModel.AccentPalette };
         Bind.Bind(_appearance, nameof(MacAppearanceModel.AccentHex), s => s.AccentHex, hex => swatches.SelectedHex = hex);
         EventHandler<string> picked = (_, hex) => _appearance.AccentHex = hex;
         swatches.SelectionChanged += picked;
@@ -62,6 +55,11 @@ public sealed class PersonalizationPageViewController(PersonalizationPageViewMod
         var appearance = Card(Translator.SettingsElementTheme_Title, Translator.SettingsElementTheme_SelectThemeDescription, WinoIconGlyph.DarkTheme,
             Bind.Segmented(_appearance, vm.ElementThemes.Select(theme => theme.Title).ToList(),
                 nameof(MacAppearanceModel.ThemeIndex), s => s.ThemeIndex, (s, v) => s.ThemeIndex = v));
+        Bind.Bind(_appearance, nameof(MacAppearanceModel.CanSelectElementTheme), s => s.CanSelectElementTheme, canSelect =>
+        {
+            appearance.IsEnabled = canSelect;
+            appearance.Description = canSelect ? Translator.SettingsElementTheme_SelectThemeDescription : Translator.SettingsElementThemeSelectionDisabled;
+        });
 
         var iconStyle = Card(Translator.SettingsIconStyle_Title, Translator.SettingsIconStyle_Description, WinoIconGlyph.IconStyle,
             Bind.Segmented(p, vm.IconStyles.Select(style => style.Title).ToList(), nameof(p.IconStyle),
@@ -69,6 +67,10 @@ public sealed class PersonalizationPageViewController(PersonalizationPageViewMod
                 (s, v) => { if (v >= 0 && v < vm.IconStyles.Count) s.IconStyle = vm.IconStyles[v].IconStyle; }));
 
         AddGroup(null, accent, appearance, iconStyle);
+
+        // App modes (Windows PersonalizationPage): the modes the switcher offers; a mode no account provides stays off.
+        AddGroup(null, Expander(Translator.SettingsPersonalization_AppModes_Title, Translator.SettingsPersonalization_AppModes_Description, WinoIconGlyph.Grid, null,
+            vm.AppModeOptions.Select(AppModeCard).ToArray()));
 
         // Wino themes: one entry point into the theme gallery, like the Windows Personalization page.
         var themeContent = WinoLayout.HStack(WinoStyle.Space2, _currentThemeName, _currentThemePreview);
@@ -100,9 +102,23 @@ public sealed class PersonalizationPageViewController(PersonalizationPageViewMod
 
     protected override Task InitializeAsync(NavigationMode mode, object? parameter)
         // Deliberately not ViewModel.OnNavigatedTo: see the class remarks.
-        => RefreshCurrentThemeAsync();
+        => Task.WhenAll(RefreshCurrentThemeAsync(), ViewModel.ActivateAppModeOptionsAsync());
 
-    protected override Task DeactivateAsync() => Task.CompletedTask;
+    protected override Task DeactivateAsync()
+    {
+        ViewModel.DeactivateAppModeOptions();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>One app mode row: its switch, and the description and enabled state that follow the accounts.</summary>
+    private NSView AppModeCard(AppModeOptionViewModel option)
+    {
+        var card = Card(option.Title, option.Description, option.Icon,
+            Bind.Switch(option, nameof(option.IsShown), s => s.IsShown, (s, v) => s.IsShown = v, option.Title));
+        Bind.Bind(option, nameof(option.Description), s => s.Description, description => card.Description = description);
+        Bind.Bind(option, nameof(option.CanToggle), s => s.CanToggle, canToggle => card.IsEnabled = canToggle);
+        return card;
+    }
 
     /// <summary>Shows the current theme's name and preview on the gallery card.</summary>
     private async Task RefreshCurrentThemeAsync()
@@ -121,54 +137,15 @@ public sealed class PersonalizationPageViewController(PersonalizationPageViewMod
     }
 }
 
-/// <summary>Observable adapter over the Mac theme service for the Personalization page.</summary>
-public sealed class MacAppearanceModel : ObservableObject, IDisposable
+/// <summary>The shared appearance model plus the Mac wallpaper backdrop and window material switches.</summary>
+public sealed class MacAppearanceModel : AppearanceSettingsModel
 {
-    private static readonly ApplicationElementTheme[] Themes = [ApplicationElementTheme.Default, ApplicationElementTheme.Light, ApplicationElementTheme.Dark];
     private readonly MacWinoThemeService _themes;
-    private string? _lastAccent;
 
-    public MacAppearanceModel(MacWinoThemeService themes)
+    public MacAppearanceModel(MacWinoThemeService themes) : base(themes)
     {
         _themes = themes;
-        _themes.ElementThemeChanged += ThemeChanged;
-        _themes.AccentColorChanged += AccentChanged;
         MacWinoThemeService.AppearanceChanged += AppearanceChanged;
-        _lastAccent = string.IsNullOrEmpty(_themes.AccentColor) ? null : _themes.AccentColor;
-    }
-
-    public int ThemeIndex
-    {
-        get => Array.IndexOf(Themes, _themes.RootTheme);
-        set
-        {
-            if (value < 0 || value >= Themes.Length || Themes[value] == _themes.RootTheme) return;
-            _themes.RootTheme = Themes[value];
-            _ = _themes.ApplyThemeToActiveWindowAsync();
-            OnPropertyChanged();
-        }
-    }
-
-    /// <summary>The overriding accent, or null when the system accent is used.</summary>
-    public string? AccentHex
-    {
-        get => string.IsNullOrEmpty(_themes.AccentColor) ? null : _themes.AccentColor;
-        set
-        {
-            if (string.Equals(value ?? string.Empty, _themes.AccentColor ?? string.Empty, StringComparison.OrdinalIgnoreCase)) return;
-            if (!string.IsNullOrEmpty(value)) _lastAccent = value;
-            _themes.AccentColor = value ?? string.Empty;
-        }
-    }
-
-    public bool UseSystemAccent
-    {
-        get => string.IsNullOrEmpty(_themes.AccentColor);
-        set
-        {
-            if (value == UseSystemAccent) return;
-            AccentHex = value ? null : _lastAccent ?? "#0078d7";
-        }
     }
 
     public bool IsBackdropEnabled
@@ -194,27 +171,21 @@ public sealed class MacAppearanceModel : ObservableObject, IDisposable
         }
     }
 
-    private void AppearanceChanged(object? sender, EventArgs args)
+    // The Mac theme service stores the root theme; open windows pick it up when it is applied.
+    protected override void OnRootThemeChanged() => _ = _themes.ApplyThemeToActiveWindowAsync();
+
+    protected override void NotifyAppearanceChanged()
     {
+        base.NotifyAppearanceChanged();
         OnPropertyChanged(nameof(IsBackdropEnabled));
         OnPropertyChanged(nameof(MaterialIndex));
-        OnPropertyChanged(nameof(ThemeIndex));
-        OnPropertyChanged(nameof(AccentHex));
-        OnPropertyChanged(nameof(UseSystemAccent));
     }
 
-    private void ThemeChanged(object? sender, ApplicationElementTheme theme) => OnPropertyChanged(nameof(ThemeIndex));
+    private void AppearanceChanged(object? sender, EventArgs args) => NotifyAppearanceChanged();
 
-    private void AccentChanged(object? sender, string accent)
+    public override void Dispose()
     {
-        OnPropertyChanged(nameof(AccentHex));
-        OnPropertyChanged(nameof(UseSystemAccent));
-    }
-
-    public void Dispose()
-    {
-        _themes.ElementThemeChanged -= ThemeChanged;
-        _themes.AccentColorChanged -= AccentChanged;
         MacWinoThemeService.AppearanceChanged -= AppearanceChanged;
+        base.Dispose();
     }
 }

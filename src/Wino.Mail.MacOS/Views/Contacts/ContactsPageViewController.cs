@@ -5,6 +5,7 @@ using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.ViewModels;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
 
 namespace Wino.Mail.MacOS.Views.Contacts;
 
@@ -52,7 +53,7 @@ public sealed partial class ContactsPageViewController : WinoViewController<Cont
     {
         var root = new NSView();
         _zone = new WinoZoneView();
-        WinoLayout.Fill(_zone, root, 2, 4, 7, 7);
+        _zone.AttachTo(root, 2, 4, 7, 7);
         var content = _zone.ContentView;
 
         var list = BuildListPane();
@@ -118,7 +119,7 @@ public sealed partial class ContactsPageViewController : WinoViewController<Cont
     protected override Task DeactivateAsync()
     {
         ReleaseList();
-        ViewModel.OnNavigatedFrom(NavigationMode.New, null!);
+        ViewModel.OnNavigatedFrom(NavigationMode.New, null);
         return Task.CompletedTask;
     }
 
@@ -154,20 +155,35 @@ public sealed partial class ContactsPageViewController : WinoViewController<Cont
         _readinessMessage.StringValue = ViewModel.Readiness.Message ?? string.Empty;
     }
 
-    /// <summary>The contact's stored photo as an image, cached per file id; null falls back to initials.</summary>
+    private readonly HashSet<Guid> _pictureLoads = new();
+
+    /// <summary>
+    /// The contact's stored photo, cached per file id; null falls back to initials. A photo not yet
+    /// decoded is read off the main thread and the row is rebound when it arrives, so scrolling never
+    /// waits on file access. A missing file is not cached, so a photo stored later still shows.
+    /// </summary>
     private NSImage? LoadPicture(AccountContactViewModel contact)
     {
         if (contact.ContactPictureFileId is not { } id) return null;
         if (_pictureCache.TryGetValue(id, out var cached)) return cached;
-        NSImage? image = null;
-        try
+        if (!_pictureLoads.Add(id)) return null;
+        var path = _pictures.GetPicturePath(Wino.Core.Domain.Enums.PictureKind.Contact, id);
+        _ = Task.Run(() =>
         {
-            var path = _pictures.GetPicturePath(Wino.Core.Domain.Enums.PictureKind.Contact, id);
-            if (File.Exists(path)) image = new NSImage(path);
-        }
-        catch (Exception exception) { ReportError(exception); }
-        _pictureCache[id] = image;
-        return image;
+            NSImage? image = null;
+            try { if (File.Exists(path)) image = new NSImage(path); }
+            catch (Exception exception) { ReportError(exception); }
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
+            {
+                _pictureLoads.Remove(id);
+                if (_released || image is null) return;
+                if (_pictureCache.Count > 512) _pictureCache.Clear();
+                _pictureCache[id] = image;
+                var row = RowOf(contact);
+                if (row >= 0) _table.ReloadData(NSIndexSet.FromIndex(row), NSIndexSet.FromIndex(0));
+            });
+        });
+        return null;
     }
 
     private void Bind<TValue>(string property, Func<ContactsPageViewModel, TValue> read, Action<TValue> apply)

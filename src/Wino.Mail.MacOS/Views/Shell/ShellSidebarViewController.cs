@@ -6,11 +6,13 @@ using Foundation;
 using Wino.Calendar.ViewModels.Data;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.MenuItems;
 using Wino.Core.Domain.Models.Navigation;
 using Wino.Mail.Controls.AppKit.Shell;
 using Wino.Presentation.AppKit;
+using Wino.Mail.ViewModels.Data;
 
 namespace Wino.Mail.MacOS.Views.Shell;
 
@@ -109,10 +111,23 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             _switcher.BottomAnchor.ConstraintEqualTo(root.BottomAnchor)
         ]);
         View = root;
+        WinoStyle.AccentChanged += AccentChanged;
 #if DEBUG
         RegisterDebugCommands();
 #endif
     }
+
+    /// <summary>Selected titles and the selection fill use the accent colour, so visible rows are redrawn when it changes.</summary>
+    private void AccentChanged(object? sender, EventArgs args) => NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
+    {
+        if (!ViewLoaded) return;
+        var visible = _outline.RowsInRect(_outline.VisibleRect());
+        for (nint row = visible.Location; row < visible.Location + visible.Length; row++)
+        {
+            if (_outline.ItemAtRow(row) is Node node) _selection.Configure(_outline.GetView(0, row, false), node.Item, row);
+            if (_outline.GetRowView(row, false) is { } rowView) rowView.NeedsDisplay = true;
+        }
+    });
 
     /// <summary>Replaces the menu shown in the pane.</summary>
     public void Bind(ShellMenu? menu)
@@ -121,8 +136,19 @@ internal sealed partial class ShellSidebarViewController : NSViewController
         _rows.Bind(menu?.Items);
     }
 
+    /// <summary>Re-lays every row after a setting that changes row content or height.</summary>
+    public void ReloadRows()
+    {
+        if (!ViewLoaded) return;
+        _outline.ReloadData();
+        ApplySelection();
+    }
+
     /// <summary>Highlights the mode segment; the switch itself goes through the shell.</summary>
     public void SetMode(WinoApplicationMode mode) => _switcher.Selected = mode;
+
+    /// <summary>Offers only the modes the accounts provide and the user kept (Windows AppModeFooterSwitcherControl).</summary>
+    public void SetModeVisibility(AppModeVisibility? visibility) => _switcher.SetVisibleModes(visibility?.VisibleModes);
 
     /// <summary>Reflects the ViewModel's selected menu item without re-invoking it.</summary>
     public void SetSelectedItem(IMenuItem? item)
@@ -152,7 +178,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
     }
 
     private bool IsSelectable(IMenuItem item)
-        => _handlesSelection && ShellPaneRows.IsInteractive(item) && ShellPaneRows.SelectsOnInvoked(item) && ShellPaneRows.IsEnabled(item);
+        => _handlesSelection && ShellMenuItemRules.IsInteractive(item) && ShellMenuItemRules.SelectsOnInvoked(item) && ShellMenuItemRules.IsEnabled(item);
 
     /// <summary>Mouse clicks: rows that do not select still invoke, and parents toggle their children.</summary>
     private void Clicked(object? sender, EventArgs args)
@@ -160,7 +186,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
         var row = _outline.ClickedRow;
         if (row < 0 || _outline.ItemAtRow(row) is not Node node) return;
         var item = node.Item;
-        if (!ShellPaneRows.IsInteractive(item) || !ShellPaneRows.IsEnabled(item)) return;
+        if (!ShellMenuItemRules.IsInteractive(item) || !ShellMenuItemRules.IsEnabled(item)) return;
         if (IsSelectable(item))
         {
             // A selection change for this click was already handled; a click on the selected row re-invokes.
@@ -169,7 +195,8 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             return;
         }
         _selectionHandledRow = -1;
-        if (_rows.HasChildren(item))
+        // The mail mode owns a merged account's expansion on click; its model change moves the outline.
+        if (_rows.HasChildren(item) && item is not IMergedAccountMenuItem)
         {
             if (_outline.IsItemExpanded(node)) _outline.CollapseItem(node);
             else _outline.ExpandItem(node);
@@ -209,7 +236,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
     {
         if (row < 0 || _outline.ItemAtRow(row) is not Node node) return null;
         var item = node.Item;
-        if (!ShellPaneRows.IsEnabled(item)) return null;
+        if (!ShellMenuItemRules.IsEnabled(item)) return null;
         object? part = null;
         if (item is AccountCalendarGroupMenuItem { Parameter: { IsExpanded: true } group })
         {
@@ -245,8 +272,15 @@ internal sealed partial class ShellSidebarViewController : NSViewController
         }
 
         /// <summary>
+        /// The disclosure triangle gets no frame; the cell's trailing chevron is the pane's control.
+        /// The delegate still reports the outline cell as shown, because AppKit refuses to collapse
+        /// items otherwise.
+        /// </summary>
+        public override CGRect FrameOfOutlineCellAtRow(nint row) => CGRect.Empty;
+
+        /// <summary>
         /// AppKit reserves an 18pt disclosure gutter before every outline cell even though the pane
-        /// never shows the outline cell (expansion uses the trailing chevron). Dropping it puts root
+        /// never draws the triangle (expansion uses the trailing chevron). Dropping it puts root
         /// rows right beside the selection pipe, like the Windows NavigationView, and leaves only
         /// <see cref="NSOutlineView.IndentationPerLevel"/> per nesting level.
         /// </summary>
@@ -301,6 +335,23 @@ internal sealed partial class ShellSidebarViewController : NSViewController
                 return Task.FromResult("ran " + entry.Title);
             }
             return Task.FromResult("nothing ran");
+        });
+        // "sidebar-rows" lists each visible row: index, type, title, enabled/selectable/selected and its screen centre (top-left origin).
+        Infrastructure.MacDebugBridge.Register("sidebar-rows", _ =>
+        {
+            var lines = new List<string>();
+            var screen = _outline.Window?.Screen;
+            for (nint row = 0; row < _outline.RowCount; row++)
+            {
+                if (_outline.ItemAtRow(row) is not Node node) continue;
+                var item = node.Item;
+                var rect = _outline.Window?.ConvertRectToScreen(_outline.ConvertRectToView(_outline.RectForRow(row), null)) ?? CGRect.Empty;
+                var title = item switch { MergedAccountMenuItem merged => merged.MergedAccountName, IAccountNavigationMenuItem account => account.AccountName, IBaseFolderMenuItem folder => folder.FolderName, _ => string.Empty };
+                lines.Add($"{row}:{item.GetType().Name} '{title}' enabled={ShellMenuItemRules.IsEnabled(item)} selectable={IsSelectable(item)} " +
+                    $"selected={(item as IAccountMenuItem)?.IsSelected} expanded={_outline.IsItemExpanded(node)} at {rect.GetMidX():0},{(screen?.Frame.Height ?? 0) - rect.GetMidY():0}" +
+                    (_outline.GetView(0, row, false) is NSTableCellView { TextField: { } field } ? $" font={field.Font?.FontName} accent={field.TextColor?.Equals(WinoStyle.Accent)}" : string.Empty));
+            }
+            return Task.FromResult(string.Join(" | ", lines));
         });
         Infrastructure.MacDebugBridge.Register("sidebar-popup", args =>
         {
@@ -357,6 +408,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
     {
         if (disposing)
         {
+            WinoStyle.AccentChanged -= AccentChanged;
             _outline.Activated -= Clicked;
             _outline.PrepareMenu = null;
             _outline.DragFinished = null;
@@ -383,36 +435,78 @@ internal sealed partial class ShellSidebarViewController : NSViewController
         private IList<IMenuItem>? _items;
         private bool _disposed;
         private bool _reloadQueued;
+        private bool _nestedChangeQueued;
+        private List<IMenuItem> _shownRoots = new();
 
         public bool TryGetNode(IMenuItem item, out Node node) => _nodes.TryGetValue(item, out node!);
 
-        public bool HasChildren(IMenuItem item) => ShellPaneRows.Children(item).Any(ShellPaneRows.IsShown);
+        public bool HasChildren(IMenuItem item) => ShellMenuItemRules.Children(item).Any(ShellMenuItemRules.IsShown);
+
+        /// <summary>True while an outline notification writes IsExpanded back to the model.</summary>
+        public bool SuppressOutlineSync { get; set; }
 
         public void Bind(IList<IMenuItem>? items)
         {
             Detach();
+            lock (_children) _children.Clear();
             _items = items;
             Observe(items);
             owner._outline.ReloadData();
+            _shownRoots = Items(null).ToList();
+            PruneNodes();
+            ExpandFromModel(items);
+            owner.ApplySelection();
+        }
+
+        /// <summary>
+        /// Applies a change of the top-level list (an account switch replaces the folders below the
+        /// accounts) as row removals and insertions, so the rows that stay are not redrawn.
+        /// </summary>
+        private void SyncRoots()
+        {
+            var previous = _shownRoots;
+            var current = Items(null).ToList();
+            int prefix = 0;
+            while (prefix < previous.Count && prefix < current.Count && ReferenceEquals(previous[prefix], current[prefix])) prefix++;
+            int suffix = 0;
+            while (suffix < previous.Count - prefix && suffix < current.Count - prefix
+                && ReferenceEquals(previous[^(suffix + 1)], current[^(suffix + 1)])) suffix++;
+            int removed = previous.Count - prefix - suffix;
+            int added = current.Count - prefix - suffix;
+
+            Detach();
+            Observe(_items);
+            _shownRoots = current;
+            if (removed == 0 && added == 0) return;
+
+            owner._outline.BeginUpdates();
+            if (removed > 0) owner._outline.RemoveItems(NSIndexSet.FromNSRange(new NSRange(prefix, removed)), null, NSTableViewAnimation.None);
+            if (added > 0) owner._outline.InsertItems(NSIndexSet.FromNSRange(new NSRange(prefix, added)), null, NSTableViewAnimation.None);
+            owner._outline.EndUpdates();
+            PruneNodes();
+            ExpandFromModel(current.GetRange(prefix, added));
+            owner.ApplySelection();
+        }
+
+        private void PruneNodes()
+        {
             var live = new HashSet<IMenuItem>(_properties.OfType<IMenuItem>());
             foreach (var stale in _nodes.Keys.Where(key => !live.Contains(key)).ToList())
             {
                 _nodes[stale].Dispose();
                 _nodes.Remove(stale);
             }
-            ExpandFromModel(items);
-            owner.ApplySelection();
         }
 
         private void ExpandFromModel(IEnumerable<IMenuItem>? items)
         {
             foreach (var item in items ?? Array.Empty<IMenuItem>())
             {
-                if (!ShellPaneRows.IsShown(item) || !_nodes.TryGetValue(item, out var node)) continue;
+                if (!ShellMenuItemRules.IsShown(item) || !_nodes.TryGetValue(item, out var node)) continue;
                 // Accounts start expanded like the Windows pane; folders follow their model state.
                 if (item.IsExpanded || item is IAccountMenuItem) owner._outline.ExpandItem(node);
                 else owner._outline.CollapseItem(node);
-                ExpandFromModel(ShellPaneRows.Children(item));
+                ExpandFromModel(ShellMenuItemRules.Children(item));
             }
         }
 
@@ -423,7 +517,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             {
                 if (!_nodes.ContainsKey(item)) _nodes.Add(item, new Node(item));
                 if (item is INotifyPropertyChanged property) { _properties.Add(property); property.PropertyChanged += PropertyChanged; }
-                Observe(ShellPaneRows.Children(item));
+                Observe(ShellMenuItemRules.Children(item));
             }
         }
 
@@ -435,20 +529,28 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             _properties.Clear();
         }
 
-        private async void CollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
+        private void CollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
         {
-            // Menus are rebuilt in bursts; coalesce into one reload per dispatcher turn.
+            // Menus are rebuilt in bursts, usually on the main thread already. The dispatcher runs inline
+            // there, which would reload once per event; a posted block coalesces a burst into one reload.
+            lock (_children) _children.Clear();
+            // Only top-level changes are applied in place; a nested list (a folder's children) still reloads the outline.
+            if (!ReferenceEquals(sender, _items)) _nestedChangeQueued = true;
             if (_reloadQueued) return;
             _reloadQueued = true;
-            try
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
             {
-                await owner._dispatcher.ExecuteOnUIThread(() =>
+                _reloadQueued = false;
+                bool nested = _nestedChangeQueued;
+                _nestedChangeQueued = false;
+                if (_disposed) return;
+                try
                 {
-                    _reloadQueued = false;
-                    if (!_disposed) Bind(_items);
-                });
-            }
-            catch (Exception exception) { if (!_disposed) owner._error(exception); }
+                    if (nested) Bind(_items);
+                    else SyncRoots();
+                }
+                catch (Exception exception) { owner._error(exception); }
+            });
         }
 
         private async void PropertyChanged(object? sender, PropertyChangedEventArgs args)
@@ -461,6 +563,12 @@ internal sealed partial class ShellSidebarViewController : NSViewController
                     switch (args.PropertyName)
                     {
                         case nameof(IMenuItem.IsExpanded):
+                            if (SuppressOutlineSync)
+                            {
+                                // Raised from the outline's own notification: only the chevron needs updating, after the outline finishes.
+                                NSApplication.SharedApplication.BeginInvokeOnMainThread(() => { if (!_disposed) Refresh(item, node, remeasure: false); });
+                                return;
+                            }
                             if (item.IsExpanded) owner._outline.ExpandItem(node);
                             else owner._outline.CollapseItem(node);
                             Refresh(item, node, remeasure: false);
@@ -485,7 +593,7 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             var row = owner._outline.RowForItem(node);
             if (row < 0) return;
             if (remeasure) owner._outline.NoteHeightOfRowsWithIndexesChanged(NSIndexSet.FromIndex(row));
-            if (owner._outline.GetRowView(row, false) is WinoShellRowView rowView) rowView.ShowsIndicator = ShellPaneRows.ShowsIndicator(item);
+            if (owner._outline.GetRowView(row, false) is WinoShellRowView rowView) rowView.ShowsIndicator = ShellMenuItemRules.ShowsIndicator(item);
             owner._selection.Configure(owner._outline.GetView(0, row, false), item, row);
         }
 
@@ -495,10 +603,25 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             if (row >= 0) owner._outline.NoteHeightOfRowsWithIndexesChanged(NSIndexSet.FromIndex(row));
         }
 
+        private readonly Dictionary<object, List<IMenuItem>> _children = new();
+        private static readonly object RootKey = new();
+
+        /// <summary>
+        /// The shown children of a node, cached until the menu changes: AppKit asks for the count, each
+        /// child and the expandability separately, and a fresh filtered list per call made expanding a
+        /// folder with k children cost k² work.
+        /// </summary>
         private IList<IMenuItem> Items(NSObject? item)
         {
-            var items = item is Node node ? ShellPaneRows.Children(node.Item) : _items ?? (IEnumerable<IMenuItem>)Array.Empty<IMenuItem>();
-            return items.Where(ShellPaneRows.IsShown).ToList();
+            var key = item is Node node ? node.Item : RootKey;
+            lock (_children)
+            {
+                if (_children.TryGetValue(key, out var cached)) return cached;
+                var items = item is Node n ? ShellMenuItemRules.Children(n.Item) : _items ?? (IEnumerable<IMenuItem>)Array.Empty<IMenuItem>();
+                var list = items.Where(ShellMenuItemRules.IsShown).ToList();
+                _children[key] = list;
+                return list;
+            }
         }
 
         public override nint GetChildrenCount(NSOutlineView outlineView, NSObject? item) => Items(item).Count;
@@ -605,22 +728,28 @@ internal sealed partial class ShellSidebarViewController : NSViewController
         {
             var menuItem = ((Node)item).Item;
             var row = outlineView.MakeView("WinoShellRow", this) as WinoShellRowView ?? new WinoShellRowView { Identifier = "WinoShellRow" };
-            row.Highlightable = ShellPaneRows.IsHighlightable(menuItem);
+            row.Highlightable = ShellMenuItemRules.IsHighlightable(menuItem);
             row.IsDropTarget = false;
-            row.ShowsIndicator = ShellPaneRows.ShowsIndicator(menuItem);
+            row.ShowsIndicator = ShellMenuItemRules.ShowsIndicator(menuItem);
             return row;
         }
 
-        public override nfloat GetRowHeight(NSOutlineView outlineView, NSObject item) => (nfloat)ShellPaneRows.Height(((Node)item).Item);
+        public override nfloat GetRowHeight(NSOutlineView outlineView, NSObject item) => (nfloat)ShellPaneRows.Height(((Node)item).Item, owner._context.CompactAccounts());
 
-        public override bool ShouldShowOutlineCell(NSOutlineView outlineView, NSObject item) => false;
+        /// <summary>
+        /// Stays true even though the pane never shows the disclosure triangle (the outline subclass
+        /// gives it an empty frame): with false, AppKit's collapseItem: is a no-op and expanded rows
+        /// such as More can never be collapsed again.
+        /// </summary>
+        public override bool ShouldShowOutlineCell(NSOutlineView outlineView, NSObject item) => true;
 
         public override bool ShouldSelectItem(NSOutlineView outlineView, NSObject item)
         {
             var node = (Node)item;
             if (!owner.IsSelectable(node.Item)) return false;
-            // A click on the chevron of an expandable folder toggles it instead of selecting.
-            if (owner._rows.HasChildren(node.Item) && NSApplication.SharedApplication.CurrentEvent is { Type: NSEventType.LeftMouseDown } click)
+            // A click on the chevron of an expandable folder toggles it instead of selecting. The
+            // outline is a drag source, so AppKit may defer the selection to the mouse up.
+            if (owner._rows.HasChildren(node.Item) && NSApplication.SharedApplication.CurrentEvent is { Type: NSEventType.LeftMouseDown or NSEventType.LeftMouseUp } click)
             {
                 var row = outlineView.RowForItem(item);
                 if (row >= 0 && outlineView.GetView(0, row, false) is ShellPaneCell cell && cell.IsInChevronArea(cell.ConvertPointFromView(click.LocationInWindow, null)))
@@ -650,14 +779,21 @@ internal sealed partial class ShellSidebarViewController : NSViewController
             owner.Invoke(node.Item);
         }
 
-        public override void ItemDidExpand(NSNotification notification)
-        {
-            if (notification.UserInfo?["NSObject"] is Node node && !node.Item.IsExpanded && node.Item is MenuItemBase menu) menu.IsExpanded = true;
-        }
+        public override void ItemDidExpand(NSNotification notification) => SyncModel(notification, true);
 
-        public override void ItemDidCollapse(NSNotification notification)
+        public override void ItemDidCollapse(NSNotification notification) => SyncModel(notification, false);
+
+        /// <summary>
+        /// Mirrors the outline's expansion into the model. The model change must not call back into
+        /// ExpandItem/CollapseItem: the notification arrives while NSOutlineView is still inside its
+        /// own expand or collapse, and a re-entrant call leaves the outline unable to collapse later.
+        /// </summary>
+        private void SyncModel(NSNotification notification, bool expanded)
         {
-            if (notification.UserInfo?["NSObject"] is Node node && node.Item.IsExpanded && node.Item is MenuItemBase menu) menu.IsExpanded = false;
+            if (notification.UserInfo?["NSObject"] is not Node node || node.Item.IsExpanded == expanded || node.Item is not MenuItemBase menu) return;
+            owner._rows.SuppressOutlineSync = true;
+            try { menu.IsExpanded = expanded; }
+            finally { owner._rows.SuppressOutlineSync = false; }
         }
     }
 }

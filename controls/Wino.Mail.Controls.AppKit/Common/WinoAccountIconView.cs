@@ -3,6 +3,7 @@ using CoreGraphics;
 using Wino.Core.Domain.Enums;
 using Wino.Mail.Controls.Core.AccountIcon;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Controls;
 
 namespace Wino.Mail.Controls.AppKit.Common;
 
@@ -75,7 +76,8 @@ public sealed class WinoAccountIconView : NSView
         _glyph.Tint = tint;
 
         var path = IsProfilePictureEnabled ? account?.ProfilePicturePath : null;
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        var image = string.IsNullOrWhiteSpace(path) ? null : LoadPicture(path);
+        if (image is null)
         {
             _loadedPath = null;
             _picture.Image = null;
@@ -87,21 +89,32 @@ public sealed class WinoAccountIconView : NSView
         if (_loadedPath != path)
         {
             _loadedPath = path;
-            _picture.Image = new NSImage(path);
+            _picture.Image = image;
         }
-        _picture.Hidden = _picture.Image is null;
-        _glyph.Hidden = !_picture.Hidden;
+        _picture.Hidden = false;
+        _glyph.Hidden = true;
     }
 
-    /// <summary>Same mapping as Windows AccountIconGlyphs: a tinted icon uses the mono twins of the brand logos.</summary>
-    public static WinoIconGlyph ProviderGlyph(AccountIconProvider provider, bool isTinted) => provider switch
+    private static readonly Dictionary<string, NSImage?> PictureCache = new();
+
+    /// <summary>
+    /// Account pictures are few and shared by every row that shows the account, so one decode per path
+    /// serves them all instead of a file check and decode on every configure. A missing file is retried
+    /// on the next call; a decoded image stays until the process ends.
+    /// </summary>
+    private static NSImage? LoadPicture(string path)
     {
-        AccountIconProvider.Microsoft => isTinted ? WinoIconGlyph.MicrosoftMono : WinoIconGlyph.Microsoft,
-        AccountIconProvider.Google => isTinted ? WinoIconGlyph.GoogleMono : WinoIconGlyph.Google,
-        AccountIconProvider.ICloud => WinoIconGlyph.Apple,
-        AccountIconProvider.Yahoo => WinoIconGlyph.Yahoo,
-        _ => WinoIconGlyph.IMAP,
-    };
+        lock (PictureCache)
+        {
+            if (PictureCache.TryGetValue(path, out var cached) && cached is not null) return cached;
+            var image = File.Exists(path) ? new NSImage(path) : null;
+            PictureCache[path] = image;
+            return image;
+        }
+    }
+
+    /// <summary>Same mapping as Windows AccountIconGlyphs (shared <see cref="WinoAccountIconGlyphs"/>).</summary>
+    public static WinoIconGlyph ProviderGlyph(AccountIconProvider provider, bool isTinted) => WinoAccountIconGlyphs.ProviderGlyph(provider, isTinted);
 
     public override CGSize IntrinsicContentSize => new((nfloat)_size, (nfloat)_size);
 }

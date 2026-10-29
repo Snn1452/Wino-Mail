@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Numerics;
+using Microsoft.Graphics.Canvas;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -123,9 +124,14 @@ public sealed partial class CalendarPeriodControl
         {
             ShiftWindow(space, firstVisibleUnit - SpareUnitCount, windowCount);
         }
+        else
+        {
+            UpdateAllDayHeight();
+        }
 
         UpdateDominantMonth(force: !isCovered);
         ApplyRailTranslation();
+        UpdateHiddenEventIndicators();
     }
 
     private void ShiftWindow(CalendarRailSpace space, int windowStart, int windowCount)
@@ -219,6 +225,7 @@ public sealed partial class CalendarPeriodControl
         TimedHeaderRail.Translation = translation;
         TimedAllDayRail.Translation = translation;
         TimedBodyRail.Translation = translation;
+        TimedHiddenEventsRail.Translation = translation;
 
         TimedHeaderCanvasHost.Translation = new Vector3(GetCanvasLag(_timedHeaderCanvasStart), 0f, 0f);
         TimedAllDayCanvasHost.Translation = new Vector3(GetCanvasLag(_timedAllDayCanvasStart), 0f, 0f);
@@ -253,6 +260,7 @@ public sealed partial class CalendarPeriodControl
         TimedAllDayClip.Rect = new Rect(0d, 0d, TimedAllDayHost.ActualWidth, TimedAllDayHost.ActualHeight);
         TimedViewportClip.Rect = new Rect(0d, 0d, TimedViewport.ActualWidth, TimedViewport.ActualHeight);
         MonthViewportClip.Rect = new Rect(0d, 0d, MonthViewport.ActualWidth, MonthViewport.ActualHeight);
+        TimedHiddenEventsClip.Rect = new Rect(0d, 0d, TimedHiddenEventsHost.ActualWidth, TimedHiddenEventsHost.ActualHeight);
     }
 
     private void PlaceUnits()
@@ -278,10 +286,15 @@ public sealed partial class CalendarPeriodControl
 
             Canvas.SetLeft(timedUnit.AllDayCanvas, offset);
             timedUnit.AllDayCanvas.Width = _unitSize;
+            PlaceMoreButton(timedUnit.MoreButton, TimedCalendarLayoutCalculator.GetAllDayMoreButtonBounds(_unitSize));
 
             Canvas.SetLeft(timedUnit.BodyCanvas, offset);
             timedUnit.BodyCanvas.Width = _unitSize;
             timedUnit.BodyCanvas.Height = TimelineHeight;
+
+            Canvas.SetLeft(timedUnit.HiddenEventsColumn, offset);
+            timedUnit.HiddenEventsColumn.Width = _unitSize;
+            timedUnit.HiddenEventsColumn.Height = TimedHiddenEventsHost.ActualHeight;
         }
         else if (unit is MonthRailUnit monthUnit)
         {
@@ -297,7 +310,20 @@ public sealed partial class CalendarPeriodControl
                 Canvas.SetTop(label, MonthDayLabelInsetY);
                 label.Width = Math.Max(0d, _monthCellWidth - MonthDayLabelInsetX);
             }
+
+            for (var column = 0; column < monthUnit.MoreButtons.Length; column++)
+            {
+                PlaceMoreButton(monthUnit.MoreButtons[column], MonthCalendarLayoutCalculator.GetMoreButtonBounds(column, _monthCellWidth, _unitSize));
+            }
         }
+    }
+
+    private static void PlaceMoreButton(CalendarMoreEventsButton button, LayoutRect bounds)
+    {
+        Canvas.SetLeft(button, bounds.X);
+        Canvas.SetTop(button, bounds.Y);
+        button.Width = bounds.Width;
+        button.Height = bounds.Height;
     }
 
     /// <summary>
@@ -306,11 +332,12 @@ public sealed partial class CalendarPeriodControl
     /// </summary>
     private void SizeStructureCanvases()
     {
-        var span = _windowCount * _unitSize;
+        var maximumExtent = GetMaximumCanvasExtent();
+        var span = Math.Min(_windowCount * _unitSize, maximumExtent);
 
         if (IsMonthRail)
         {
-            MonthStructureCanvasHost.Width = _monthRowWidth;
+            MonthStructureCanvasHost.Width = Math.Min(_monthRowWidth, maximumExtent);
             MonthStructureCanvasHost.Height = span;
             return;
         }
@@ -320,7 +347,25 @@ public sealed partial class CalendarPeriodControl
         TimedAllDayCanvasHost.Width = span;
         TimedAllDayCanvasHost.Height = TimedAllDayHeight;
         TimedStructureCanvasHost.Width = span;
-        TimedStructureCanvasHost.Height = TimelineHeight;
+        TimedStructureCanvasHost.Height = Math.Min(TimelineHeight, maximumExtent);
+    }
+
+    // A Win2D canvas larger than the device's bitmap limit throws while drawing, which crashes the app
+    // on wide or high-DPI windows. The farthest spare days lose their grid lines instead.
+    private double GetMaximumCanvasExtent()
+    {
+        int maximumPixels;
+        try
+        {
+            maximumPixels = CanvasDevice.GetSharedDevice().MaximumBitmapSizeInPixels;
+        }
+        catch (Exception)
+        {
+            maximumPixels = 8192;
+        }
+
+        var scale = Math.Max(1d, XamlRoot?.RasterizationScale ?? 1d);
+        return Math.Floor((maximumPixels - 2) / scale);
     }
 
     private void UpdateAllDayHeight()
@@ -331,16 +376,27 @@ public sealed partial class CalendarPeriodControl
         }
 
         var laneCount = 0;
+        var hasMoreRow = false;
+        var firstVisibleUnit = (int)Math.Floor(_position);
+        var lastVisibleUnit = _space is CalendarRailSpace space
+            ? (int)Math.Ceiling(_position + space.VisibleUnitCount) - 1
+            : firstVisibleUnit;
 
         foreach (var unit in _units.Values)
         {
             if (unit is TimedRailUnit timedUnit)
             {
                 laneCount = Math.Max(laneCount, timedUnit.AllDayLaneCount);
+
+                // Only a viewport day grows the strip for its link row; a spare day's link stays clipped.
+                if (timedUnit.HasAllDayOverflow && unit.Index >= firstVisibleUnit && unit.Index <= lastVisibleUnit)
+                {
+                    hasMoreRow = true;
+                }
             }
         }
 
-        var allDayHeight = TimedCalendarLayoutCalculator.GetAllDayHeight(laneCount);
+        var allDayHeight = TimedCalendarLayoutCalculator.GetAllDayHeight(laneCount, hasMoreRow);
 
         if (allDayHeight == TimedAllDayHeight)
         {
@@ -427,6 +483,7 @@ public sealed partial class CalendarPeriodControl
         timedUnit.Header.Visibility = Visibility.Visible;
         timedUnit.AllDayCanvas.Visibility = Visibility.Visible;
         timedUnit.BodyCanvas.Visibility = Visibility.Visible;
+        timedUnit.HiddenEventsColumn.Visibility = Visibility.Visible;
 
         return timedUnit;
     }
@@ -448,12 +505,21 @@ public sealed partial class CalendarPeriodControl
 
         var allDayCanvas = new Canvas();
         var bodyCanvas = new Canvas();
+        var moreButton = new CalendarMoreEventsButton { Visibility = Visibility.Collapsed };
+        var earlierIndicator = CreateHiddenEventsIndicator(isEarlier: true);
+        var laterIndicator = CreateHiddenEventsIndicator(isEarlier: false);
+        var hiddenEventsColumn = new Grid();
+
+        allDayCanvas.Children.Add(moreButton);
+        hiddenEventsColumn.Children.Add(earlierIndicator);
+        hiddenEventsColumn.Children.Add(laterIndicator);
 
         TimedHeaderRail.Children.Add(header);
         TimedAllDayRail.Children.Add(allDayCanvas);
         TimedBodyRail.Children.Add(bodyCanvas);
+        TimedHiddenEventsRail.Children.Add(hiddenEventsColumn);
 
-        return new TimedRailUnit(header, headerText, allDayCanvas, bodyCanvas);
+        return new TimedRailUnit(header, headerText, allDayCanvas, bodyCanvas, moreButton, hiddenEventsColumn, earlierIndicator, laterIndicator);
     }
 
     private MonthRailUnit CreateMonthUnit()
@@ -469,9 +535,19 @@ public sealed partial class CalendarPeriodControl
             row.Children.Add(label);
         }
 
+        var moreButtons = new CalendarMoreEventsButton[MonthCalendarLayoutCalculator.ColumnCount];
+
+        for (var column = 0; column < moreButtons.Length; column++)
+        {
+            var moreButton = new CalendarMoreEventsButton { Visibility = Visibility.Collapsed };
+
+            moreButtons[column] = moreButton;
+            row.Children.Add(moreButton);
+        }
+
         MonthRail.Children.Add(row);
 
-        return new MonthRailUnit(row, labels);
+        return new MonthRailUnit(row, labels, moreButtons);
     }
 
     /// <summary>
@@ -491,13 +567,24 @@ public sealed partial class CalendarPeriodControl
         if (unit is TimedRailUnit timedUnit)
         {
             timedUnit.AllDayLaneCount = 0;
+            timedUnit.HasAllDayOverflow = false;
+            ClearMoreButton(timedUnit.MoreButton);
             timedUnit.Header.Visibility = Visibility.Collapsed;
             timedUnit.AllDayCanvas.Visibility = Visibility.Collapsed;
             timedUnit.BodyCanvas.Visibility = Visibility.Collapsed;
+            timedUnit.ClearTimedSpans();
+            HideHiddenEventsIndicator(timedUnit.EarlierIndicator);
+            HideHiddenEventsIndicator(timedUnit.LaterIndicator);
+            timedUnit.HiddenEventsColumn.Visibility = Visibility.Collapsed;
             _timedUnitPool.Push(timedUnit);
         }
         else if (unit is MonthRailUnit monthUnit)
         {
+            foreach (var moreButton in monthUnit.MoreButtons)
+            {
+                ClearMoreButton(moreButton);
+            }
+
             monthUnit.Row.Visibility = Visibility.Collapsed;
             _monthUnitPool.Push(monthUnit);
         }
@@ -573,14 +660,17 @@ public sealed partial class CalendarPeriodControl
     {
         var date = unit.Dates[0];
         var displayMode = CalendarSettings?.EventDisplayMode ?? CalendarEventDisplayMode.Stacked;
-        var allDayLayouts = TimedCalendarLayoutCalculator.CalculateAllDayItems(date, items, _unitSize);
+        var allDayLayout = TimedCalendarLayoutCalculator.CalculateAllDayItems(date, items, _unitSize);
         var bodyLayouts = TimedCalendarLayoutCalculator.CalculateDay(date, items, _unitSize, GetHourHeight(), displayMode);
 
-        unit.AllDayLaneCount = allDayLayouts.Count;
+        unit.SetTimedSpans(bodyLayouts);
+        unit.AllDayLaneCount = allDayLayout.Items.Count;
+        unit.HasAllDayOverflow = allDayLayout.Overflow is not null;
+        AssignMoreButton(unit, unit.MoreButton, allDayLayout.Overflow);
 
         if (_allDayTemplate is DataTemplate allDayTemplate)
         {
-            foreach (var layout in allDayLayouts)
+            foreach (var layout in allDayLayout.Items)
             {
                 PlacePresenter(unit, new PresenterKey(layout.Item, AllDayPresenterSlot), unit.AllDayCanvas, allDayTemplate, layout.Bounds);
                 PrepareDisplayMetadata(layout.Item, layout.Date);
@@ -606,13 +696,60 @@ public sealed partial class CalendarPeriodControl
             return;
         }
 
-        var layouts = MonthCalendarLayoutCalculator.CalculateRow(unit.Dates, items, _monthCellWidth, _unitSize);
+        var rowLayout = MonthCalendarLayoutCalculator.CalculateRow(unit.Dates, items, _monthCellWidth, _unitSize);
 
-        foreach (var layout in layouts)
+        foreach (var layout in rowLayout.Items)
         {
             PlacePresenter(unit, new PresenterKey(layout.Item, layout.Column), unit.Row, monthTemplate, layout.Bounds);
             PrepareDisplayMetadata(layout.Item, layout.Date);
         }
+
+        for (var column = 0; column < unit.MoreButtons.Length; column++)
+        {
+            CalendarOverflowLayout? columnOverflow = null;
+
+            foreach (var overflow in rowLayout.Overflows)
+            {
+                if (overflow.Column == column)
+                {
+                    columnOverflow = overflow;
+                    break;
+                }
+            }
+
+            AssignMoreButton(unit, unit.MoreButtons[column], columnOverflow);
+        }
+    }
+
+    /// <summary>Hidden items count as shown by the unit, so removing or changing one marks it dirty.</summary>
+    private void AssignMoreButton(RailUnit unit, CalendarMoreEventsButton button, CalendarOverflowLayout? overflow)
+    {
+        if (overflow is not CalendarOverflowLayout dayOverflow || dayOverflow.HiddenItems.Count == 0)
+        {
+            ClearMoreButton(button);
+            return;
+        }
+
+        foreach (var hiddenItem in dayOverflow.HiddenItems)
+        {
+            unit.TrackHiddenItem(hiddenItem);
+            PrepareDisplayMetadata(hiddenItem, dayOverflow.Date);
+        }
+
+        button.Overflow = new CalendarDayOverflow(dayOverflow.Date, dayOverflow.HiddenItems, CalendarSettings?.CultureInfo);
+        button.Visibility = Visibility.Visible;
+    }
+
+    private static void ClearMoreButton(CalendarMoreEventsButton button)
+    {
+        if (button.Visibility == Visibility.Collapsed && button.Overflow is null)
+        {
+            return;
+        }
+
+        button.HideFlyout();
+        button.Visibility = Visibility.Collapsed;
+        button.Overflow = null;
     }
 
     private void PlacePresenter(RailUnit unit, PresenterKey key, Canvas host, DataTemplate template, LayoutRect bounds)
@@ -806,6 +943,7 @@ public sealed partial class CalendarPeriodControl
 
         _dirtyUnits.Clear();
         UpdateAllDayHeight();
+        UpdateHiddenEventIndicators();
     }
 
     private readonly record struct PresenterKey(CalendarItemViewModel Item, int Slot);
@@ -860,6 +998,8 @@ public sealed partial class CalendarPeriodControl
             Items.Add(key.Item);
         }
 
+        public void TrackHiddenItem(CalendarItemViewModel item) => Items.Add(item);
+
         /// <summary>
         /// Ends a layout pass and returns the presenters the pass did not keep.
         /// </summary>
@@ -875,12 +1015,24 @@ public sealed partial class CalendarPeriodControl
 
     private sealed class TimedRailUnit : RailUnit
     {
-        public TimedRailUnit(Grid header, TextBlock headerText, Canvas allDayCanvas, Canvas bodyCanvas)
+        public TimedRailUnit(
+            Grid header,
+            TextBlock headerText,
+            Canvas allDayCanvas,
+            Canvas bodyCanvas,
+            CalendarMoreEventsButton moreButton,
+            Grid hiddenEventsColumn,
+            CalendarHiddenEventsIndicator earlierIndicator,
+            CalendarHiddenEventsIndicator laterIndicator)
         {
             Header = header;
             HeaderText = headerText;
             AllDayCanvas = allDayCanvas;
             BodyCanvas = bodyCanvas;
+            MoreButton = moreButton;
+            HiddenEventsColumn = hiddenEventsColumn;
+            EarlierIndicator = earlierIndicator;
+            LaterIndicator = laterIndicator;
         }
 
         public Grid Header { get; }
@@ -891,19 +1043,102 @@ public sealed partial class CalendarPeriodControl
 
         public Canvas BodyCanvas { get; }
 
+        public CalendarMoreEventsButton MoreButton { get; }
+
         public int AllDayLaneCount { get; set; }
+
+        public bool HasAllDayOverflow { get; set; }
+
+        public Grid HiddenEventsColumn { get; }
+
+        public CalendarHiddenEventsIndicator EarlierIndicator { get; }
+
+        public CalendarHiddenEventsIndicator LaterIndicator { get; }
+
+        public List<TimedSpan> SpansByTop { get; } = new();
+
+        public List<TimedSpan> SpansByBottom { get; } = new();
+
+        public void SetTimedSpans(List<TimedItemLayout> layouts)
+        {
+            ClearTimedSpans();
+
+            foreach (var layout in layouts)
+            {
+                var span = new TimedSpan(layout.Bounds.Y, layout.Bounds.Y + layout.Bounds.Height);
+
+                SpansByTop.Add(span);
+                SpansByBottom.Add(span);
+            }
+
+            SpansByTop.Sort(static (left, right) => left.Top.CompareTo(right.Top));
+            SpansByBottom.Sort(static (left, right) => left.Bottom.CompareTo(right.Bottom));
+        }
+
+        public void ClearTimedSpans()
+        {
+            SpansByTop.Clear();
+            SpansByBottom.Clear();
+        }
+
+        public int CountEndingAtOrBefore(double limit)
+        {
+            var low = 0;
+            var high = SpansByBottom.Count;
+
+            while (low < high)
+            {
+                var middle = low + ((high - low) / 2);
+
+                if (SpansByBottom[middle].Bottom <= limit)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+
+            return low;
+        }
+
+        public int FindFirstStartingAtOrAfter(double limit)
+        {
+            var low = 0;
+            var high = SpansByTop.Count;
+
+            while (low < high)
+            {
+                var middle = low + ((high - low) / 2);
+
+                if (SpansByTop[middle].Top < limit)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+
+            return low;
+        }
     }
 
     private sealed class MonthRailUnit : RailUnit
     {
-        public MonthRailUnit(Canvas row, TextBlock[] dayLabels)
+        public MonthRailUnit(Canvas row, TextBlock[] dayLabels, CalendarMoreEventsButton[] moreButtons)
         {
             Row = row;
             DayLabels = dayLabels;
+            MoreButtons = moreButtons;
         }
 
         public Canvas Row { get; }
 
         public TextBlock[] DayLabels { get; }
+
+        public CalendarMoreEventsButton[] MoreButtons { get; }
     }
 }

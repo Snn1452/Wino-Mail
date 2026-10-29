@@ -18,6 +18,7 @@ internal sealed class MailIdleView : NSView
 
     public MailIdleView()
     {
+        WinoLiveObjects.Track(this);
         TranslatesAutoresizingMaskIntoConstraints = false;
         var glyph = new WinoIconView(WinoIconGlyph.Mail, 56, WinoStyle.TertiaryText);
         _title = WinoStyle.Label(Translator.NoMailSelected, NSFont.SystemFontOfSize(15, NSFontWeight.Semibold), WinoStyle.PrimaryText);
@@ -215,8 +216,10 @@ internal sealed class MailLoadingView : NSView
         stack.TranslatesAutoresizingMaskIntoConstraints = false;
         AddSubview(stack);
 
+        // Below the reading pane's holding priority: a preference must not set the reader's minimum width
+        // (at 500 it held the pane at 576pt against divider drags).
         var preferredWidth = stack.WidthAnchor.ConstraintEqualTo((nfloat)MaxContentWidth);
-        preferredWidth.Priority = 500;
+        preferredWidth.Priority = 240;
         NSLayoutConstraint.ActivateConstraints(
         [
             stack.CenterXAnchor.ConstraintEqualTo(CenterXAnchor),
@@ -440,6 +443,8 @@ internal sealed class MailReaderCommandBar : NSView
     private readonly NSButton _moreButton;
     private readonly WinoSurfaceView _separator;
     private bool _iconOnly;
+    private bool _showsLabels;
+    private bool _hugsCommands;
     private readonly List<Slot> _slots = new();
     private Func<NSMenu>? _moreMenu;
     private bool _labelsHidden;
@@ -504,6 +509,53 @@ internal sealed class MailReaderCommandBar : NSView
         }
     }
 
+    /// <summary>
+    /// Shows command labels on an <see cref="IconOnly"/> bar while they fit (the action labels setting,
+    /// Windows OperationCommandBar). The bar keeps its icon-only chrome and accessibility.
+    /// </summary>
+    public bool ShowsLabels
+    {
+        get => _showsLabels;
+        set
+        {
+            if (_showsLabels == value) return;
+            _showsLabels = value;
+            foreach (var slot in _slots) if (slot.Button is not null) Measure(slot);
+            _shown = -1;
+            if (_hugsCommands) InvalidateIntrinsicContentSize();
+            NeedsLayout = true;
+        }
+    }
+
+    private bool LabelsAllowed => !_iconOnly || _showsLabels;
+
+    /// <summary>
+    /// Icon-only bar sized to its commands, for a row it shares with other content (the reader's
+    /// subject row): its intrinsic width shows every command, and it gives way first when the row
+    /// is narrow, moving trailing commands into More.
+    /// </summary>
+    public bool HugsCommands
+    {
+        get => _hugsCommands;
+        set
+        {
+            _hugsCommands = value;
+            SetContentHuggingPriorityForOrientation(value ? 750 : 250, NSLayoutConstraintOrientation.Horizontal);
+            SetContentCompressionResistancePriority(value ? 250 : 750, NSLayoutConstraintOrientation.Horizontal);
+            InvalidateIntrinsicContentSize();
+        }
+    }
+
+    public override CGSize IntrinsicContentSize
+    {
+        get
+        {
+            if (!_hugsCommands) return base.IntrinsicContentSize;
+            int total = _slots.Count(static slot => slot.Button is not null);
+            return new CGSize((nfloat)RequiredWidth(LabelsAllowed, total, total), NSView.NoIntrinsicMetric);
+        }
+    }
+
     private static NSButton Button(WinoIconGlyph glyph, string title, Action run)
     {
         var button = new NSButton
@@ -553,6 +605,7 @@ internal sealed class MailReaderCommandBar : NSView
                 _shown = -1;
             }
         }
+        if (_hugsCommands) InvalidateIntrinsicContentSize();
         NeedsLayout = true;
     }
 
@@ -605,7 +658,7 @@ internal sealed class MailReaderCommandBar : NSView
     private void Measure(Slot slot)
     {
         var button = slot.Button!;
-        if (_iconOnly)
+        if (!LabelsAllowed)
         {
             button.ImagePosition = NSCellImagePosition.ImageOnly;
             button.Title = string.Empty;
@@ -646,7 +699,7 @@ internal sealed class MailReaderCommandBar : NSView
         int total = _slots.Count(static slot => slot.Button is not null);
         if (total == 0) { _moreButton.Hidden = _moreMenu is null; return; }
         double available = (double)Bounds.Width;
-        bool labels = !_iconOnly && RequiredWidth(true, total, total) <= available;
+        bool labels = LabelsAllowed && RequiredWidth(true, total, total) <= available;
         int shown = total;
         if (!labels) while (shown > 0 && RequiredWidth(false, shown, total) > available) shown--;
         if (labels != _labelsHidden && shown == _shown) return;
@@ -729,7 +782,7 @@ internal sealed class MailReaderStatusRow : NSView
         };
         _unsubscribe.Activated += (_, _) => UnsubscribeInvoked?.Invoke(this, EventArgs.Empty);
         ApplyAccent();
-        WinoStyle.AccentChanged += AccentChanged;
+        WinoStyle.AccentWatchers.Add(this, static row => row.ApplyAccent());
 
         // Certificate glyph with a corner badge, like the Windows InfoBadge on the signature button.
         var certificate = new WinoIconView(WinoIconGlyph.Certificate, 16);
@@ -781,7 +834,6 @@ internal sealed class MailReaderStatusRow : NSView
         => $"row={(Hidden ? "hidden" : "visible")} unsubscribe={!_unsubscribe.Hidden} signed={!_signature.Hidden} " +
            $"badge={(_signaturesValid ? "valid" : "invalid")} encrypted={!_encrypted.Hidden}";
 
-    private void AccentChanged(object? sender, EventArgs args) => ApplyAccent();
 
     private void ApplyAccent()
     {
@@ -796,7 +848,7 @@ internal sealed class MailReaderStatusRow : NSView
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) WinoStyle.AccentChanged -= AccentChanged;
+        if (disposing) WinoStyle.AccentWatchers.Remove(this);
         base.Dispose(disposing);
     }
 }

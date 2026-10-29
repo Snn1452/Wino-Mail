@@ -429,18 +429,23 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <param name="request">Request to queue</param>
     /// <param name="accountId">Account ID to queue the request for</param>
     /// <param name="triggerSynchronization">Whether to automatically trigger synchronization after queuing the request</param>
-    public async Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization)
-        => await QueueRequestsAsync([request], accountId, triggerSynchronization).ConfigureAwait(false);
+    /// <param name="allowUndo">Whether undoable requests may wait in the undo grace period before execution</param>
+    public async Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization, bool allowUndo = true)
+        => await QueueRequestsAsync([request], accountId, triggerSynchronization, allowUndo).ConfigureAwait(false);
 
-    public async Task QueueRequestsAsync(IEnumerable<IRequestBase> requests, Guid accountId, bool triggerSynchronization)
+    public async Task QueueRequestsAsync(IEnumerable<IRequestBase> requests, Guid accountId, bool triggerSynchronization, bool allowUndo = true)
         => await QueueRequestPackAsync(
             new Dictionary<Guid, List<IRequestBase>>
             {
                 [accountId] = requests?.Where(request => request != null).ToList() ?? []
             },
-            triggerSynchronization).ConfigureAwait(false);
+            triggerSynchronization,
+            allowUndo).ConfigureAwait(false);
 
-    public async Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization)
+    public Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization)
+        => QueueRequestPackAsync(requestsByAccount, triggerSynchronization, allowUndo: true);
+
+    private async Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization, bool allowUndo)
     {
         EnsureInitialized();
 
@@ -460,7 +465,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         // resolution or queue failures below revert the exact same request snapshots.
         RequestUiChangeCoordinator.ApplyRequests(allRequests);
 
-        var undoActionSettings = CreateUndoActionSettings(allRequests);
+        var undoActionSettings = allowUndo ? CreateUndoActionSettings(allRequests) : null;
 
         if (undoActionSettings != null)
         {
@@ -527,9 +532,26 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             LogTracedRequests("synchronizer-queued", (IRequestBase[])[request], accountId);
         }
 
+        RaiseRequestsQueued(accountId);
+
         if (triggerSynchronization)
         {
             PublishSynchronizationRequests(accountId, requestList);
+        }
+    }
+
+    public event EventHandler<Guid> RequestsQueued;
+
+    private void RaiseRequestsQueued(Guid accountId)
+    {
+        try
+        {
+            RequestsQueued?.Invoke(this, accountId);
+        }
+        catch (Exception ex)
+        {
+            // A host's listener must never fail the user's action.
+            _logger.Warning(ex, "A queued request listener failed for account {AccountId}", accountId);
         }
     }
 

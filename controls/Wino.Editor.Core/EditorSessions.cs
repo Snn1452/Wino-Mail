@@ -1,6 +1,7 @@
 namespace Wino.Editor;
 
 public enum HtmlMailRenderMode { Original = 0, Readability = 1 }
+public enum HtmlMailDarkModeMethod { Adaptive = 0, Inverted = 1 }
 public enum RemoteContentPolicy { Blocked, ImagesAndFontsAllowed }
 public sealed record HtmlMailReaderRequest(string Html, RemoteContentPolicy ResourcePolicy,
     HtmlMailRenderMode RenderMode = HtmlMailRenderMode.Original, bool ShouldLinkify = true);
@@ -27,10 +28,13 @@ public interface IHtmlMailEditorSession : IEditorCommandTarget, IAsyncDisposable
     Task<string?> GetHtmlBodyAsync(CancellationToken cancellationToken = default);
     Task SetThemeAsync(bool isDarkMode, CancellationToken cancellationToken = default);
     Task SetDefaultTypographyAsync(string? fontFamily, int fontSize, CancellationToken cancellationToken = default);
+    /// <summary>Replaces the signature block; empty <paramref name="html"/> removes it. <paramref name="previousHtml"/> finds a signature inserted without its wrapper.</summary>
+    Task SetSignatureAsync(string? html, string? previousHtml, CancellationToken cancellationToken = default);
     Task FocusEditorAsync(bool focusControlAsWell, CancellationToken cancellationToken = default);
     Task SetApplicationShortcutsAsync(IReadOnlyList<EditorApplicationShortcutGesture> shortcuts, CancellationToken cancellationToken = default);
     Task InsertImagesAsync(IEnumerable<EditorImageInfo> images, CancellationToken cancellationToken = default);
     Task ExecuteCommandAsync(EditorCommand command, CancellationToken cancellationToken);
+    Task SetRemoteContentPolicyAsync(RemoteContentPolicy policy, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
 public interface IHtmlMailReaderSession : IAsyncDisposable
@@ -41,6 +45,7 @@ public interface IHtmlMailReaderSession : IAsyncDisposable
     Task ClearAsync(CancellationToken cancellationToken = default);
     Task<string> GetOriginalHtmlAsync(CancellationToken cancellationToken = default);
     Task SetThemeAsync(bool isDarkMode, CancellationToken cancellationToken = default);
+    Task SetDarkModeMethodAsync(HtmlMailDarkModeMethod method, CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task SetReaderTypographyAsync(string? fontFamily, int fontSize, CancellationToken cancellationToken = default);
     Task SetAccessibilityContextAsync(ReaderAccessibilityContext context, CancellationToken cancellationToken = default);
     Task EnterIdleAsync(CancellationToken cancellationToken = default);

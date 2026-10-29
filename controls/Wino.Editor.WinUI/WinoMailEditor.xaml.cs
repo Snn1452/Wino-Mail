@@ -55,6 +55,8 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _updatingToolbar;
     private bool _disposed;
+    private bool _resourceFilterAttached;
+    private bool _isApplyingTheme;
     private bool _autoCorrectEnabled;
     private bool _spellCheckEnabled = true;
     private string _spellCheckLanguageCode = string.Empty;
@@ -102,6 +104,9 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
     public bool IsPasteOptionsEnabled { get => (bool)GetValue(IsPasteOptionsEnabledProperty); set => SetValue(IsPasteOptionsEnabledProperty, value); }
     public bool IsEditorWebViewEditor { get => (bool)GetValue(IsEditorWebViewEditorProperty); set => SetValue(IsEditorWebViewEditorProperty, value); }
     public CoreWebView2Environment? WebViewEnvironment { get; set; }
+
+    public bool BlockRemoteResources { get; set; }
+
     public EditorState CurrentState { get; private set; } = new();
     public EditorCapabilities Capabilities { get; private set; }
     EditorCommandCapabilities IEditorCommandTarget.Capabilities => new()
@@ -145,7 +150,9 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
     public async Task SetThemeAsync(bool isDarkMode)
     {
         await InitializeAsync();
-        IsEditorDarkMode = isDarkMode;
+        _isApplyingTheme = true;
+        try { IsEditorDarkMode = isDarkMode; }
+        finally { _isApplyingTheme = false; }
         await _bridge!.SetThemeAsync(isDarkMode);
     }
 
@@ -153,6 +160,12 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
     {
         await InitializeAsync();
         await _bridge!.SetTypographyAsync(fontFamily, fontSize);
+    }
+
+    public async Task SetSignatureAsync(string? html, string? previousHtml)
+    {
+        await InitializeAsync();
+        await _bridge!.SetSignatureAsync(html, previousHtml);
     }
 
     public async Task ConfigureSpellCheckAsync(bool isEnabled, string languageCode)
@@ -284,13 +297,16 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
     {
         var environment = WebViewEnvironment ?? await WinoWebViewEnvironment.GetSharedEnvironmentAsync();
         var webView = EditorWebView2 ?? throw new ObjectDisposedException(nameof(WinoMailEditor));
-        await webView.EnsureCoreWebView2Async(environment);
+        await WinoWebViewEnvironment.EnsureInPrivateCoreWebView2Async(webView, environment);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         // The WebView2 can be closed while EnsureCoreWebView2Async is pending, which
         // leaves CoreWebView2 null even though the call completed.
         var coreWebView = webView.CoreWebView2 ?? throw new ObjectDisposedException(nameof(WinoMailEditor));
         WinoWebViewSecurity.Apply(coreWebView);
+        coreWebView.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        coreWebView.WebResourceRequested += CoreWebView2_WebResourceRequested;
+        _resourceFilterAttached = true;
 
         _bridge = new EditorBridge(webView);
         _bridge.SelectionStateChanged += Bridge_SelectionStateChanged;
@@ -329,6 +345,38 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
         _bridge.ApplicationShortcutRequested -= Bridge_ApplicationShortcutRequested;
         _bridge.Dispose();
         _bridge = null;
+    }
+
+    private void CoreWebView2_WebResourceRequested(CoreWebView2 sender, CoreWebView2WebResourceRequestedEventArgs args)
+    {
+        if (IsResourceRequestAllowed(args.ResourceContext, args.Request.Uri)) return;
+        args.Response = sender.Environment.CreateWebResourceResponse(null, 403, "Blocked", string.Empty);
+    }
+
+    private bool IsResourceRequestAllowed(CoreWebView2WebResourceContext context, string? uri)
+    {
+        if (!Uri.TryCreate(uri, UriKind.Absolute, out Uri? parsed)) return false;
+        if (parsed.Scheme is "data" or "blob") return true;
+        if (BlockRemoteResources) return false;
+
+        return context is CoreWebView2WebResourceContext.Image or CoreWebView2WebResourceContext.Font &&
+               (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp);
+    }
+
+    private void DetachResourceFilter()
+    {
+        if (!_resourceFilterAttached) return;
+        _resourceFilterAttached = false;
+
+        try
+        {
+            if (EditorWebView2?.CoreWebView2 is not { } coreWebView) return;
+            coreWebView.WebResourceRequested -= CoreWebView2_WebResourceRequested;
+            coreWebView.RemoveWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException or ObjectDisposedException)
+        {
+        }
     }
 
     private void Bridge_ContentChanged(object? sender, EventArgs e) => ContentChanged?.Invoke(this, EventArgs.Empty);
@@ -424,7 +472,18 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
 
     public async Task ExecuteCommandAsync(EditorCommand command)
     {
-        await FocusEditorAsync(true);
+        if (_disposed)
+            return;
+
+        try
+        {
+            await FocusEditorAsync(true);
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            return;
+        }
+
         switch (command.Kind)
         {
             case EditorCommandKind.Undo: await _bridge!.ExecuteCommandAsync("undo"); break;
@@ -768,6 +827,7 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
     private static async void OnEditorThemeChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
     {
         var editor = (WinoMailEditor)sender;
+        if (editor._isApplyingTheme) return;
         await editor.RunBridgeUpdateAsync(bridge => bridge.SetThemeAsync((bool)args.NewValue));
     }
     private static async void OnPasteModeChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
@@ -815,6 +875,7 @@ public sealed partial class WinoMailEditor : UserControl, IHtmlMailEditor
         Loaded -= WinoMailEditor_Loaded;
         Unloaded -= WinoMailEditor_Unloaded;
         DisposeBridge();
+        DetachResourceFilter();
 
         if (EditorWebView2 is not null)
         {

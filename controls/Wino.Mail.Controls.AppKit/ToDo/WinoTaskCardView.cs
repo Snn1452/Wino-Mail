@@ -3,6 +3,7 @@ using CoreGraphics;
 using Foundation;
 using Wino.Core.Domain.Enums;
 using Wino.Presentation.AppKit;
+using Wino.Mail.Controls.Core.ToDo;
 
 namespace Wino.Mail.Controls.AppKit.ToDo;
 
@@ -35,6 +36,7 @@ public sealed class WinoTaskCardView : NSTableCellView
 
     public WinoTaskCardView()
     {
+        WinoLiveObjects.Track(this);
         Identifier = ReuseIdentifier;
         WinoLayout.Fill(_card, this, 2, 0, 2, 0);
 
@@ -59,12 +61,12 @@ public sealed class WinoTaskCardView : NSTableCellView
         text.SetContentCompressionResistancePriority(250, NSLayoutConstraintOrientation.Horizontal);
 
         _star = WinoToDoStyle.IconButton(WinoIconGlyph.Star, string.Empty, 15, 24, 24, WinoStyle.SecondaryText);
-        _star.Activated += (_, _) => ImportanceToggled?.Invoke(this, EventArgs.Empty);
+        _star.OnActivated(this, static card => card.ImportanceToggled?.Invoke(card, EventArgs.Empty));
 
         var row = WinoLayout.HStack(12, _check, text, WinoLayout.Spacer(), _star);
         row.EdgeInsets = new NSEdgeInsets(10, 12, 10, 12);
         WinoLayout.Fill(row, _card);
-        WinoStyle.AccentChanged += AccentChanged;
+        WinoStyle.AccentWatchers.Add(this, static card => card.AccentChanged(null, EventArgs.Empty));
     }
 
     /// <summary>Checkbox clicked. The owner runs the toggle command and re-applies the model.</summary>
@@ -103,7 +105,7 @@ public sealed class WinoTaskCardView : NSTableCellView
         bool showList = !string.IsNullOrEmpty(model.ListName);
         _listSegment.Hidden = !showList;
         _listName.StringValue = model.ListName ?? string.Empty;
-        _listDot.Tint = model.ListColor ?? WinoStyle.SecondaryText;
+        _listDot.Tint = WinoStyle.FromHexString(model.ListColorHex) ?? WinoStyle.SecondaryText;
 
         _due.Stack.Hidden = string.IsNullOrEmpty(model.DueText);
         _due.Label.StringValue = model.DueText;
@@ -164,7 +166,7 @@ public sealed class WinoTaskCardView : NSTableCellView
     {
         if (disposing)
         {
-            WinoStyle.AccentChanged -= AccentChanged;
+            WinoStyle.AccentWatchers.Remove(this);
             Subscription?.Dispose();
             Subscription = null;
         }

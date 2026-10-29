@@ -60,3 +60,18 @@ model produces for the anchor date, so a settled unit and a loaded range always 
    the event handled before the container scrolls (Shift+wheel in the timed views).
 
 The Windows implementation lives in `src/Wino.Mail.WinUI/Controls/Calendar/CalendarPeriodControl*`.
+
+## Platform notes
+
+- macOS: `controls/Wino.Mail.Controls.AppKit/Calendar/WinoCalendarSurfaceView*` (`.Rail`, `.Motion`).
+- iOS and iPadOS: `controls/Wino.Mail.Controls.UIKit/Calendar/WinoCalendarSurfaceView*` (`.Rail`, `.Motion`). One
+  `UIPanGestureRecognizer` along the rail axis (finger and trackpad scrolling) that begins only when the movement runs
+  along the axis; the hour grid's vertical scroll waits for it to fail. Reduce Motion lands without the glide. The iPhone
+  agenda list keeps its own horizontal pager.
+- Android: `controls/Wino.Mail.Controls.Android/Calendar/WinoCalendarSurfaceView*` (`.Rail`). Day, work week and week rail
+  horizontally over day columns as above. The month view rails **horizontally over whole month pages** instead of vertical
+  week rows (owner decision, 22 Oct 2026), so a vertical pull stays pull to refresh, the only sync gesture. A month page
+  is a unit that snaps one at a time; its anchor is the first of the month. A press becomes a pan after 6 dp of dominant
+  horizontal movement; glides run on a `ValueAnimator`, so the animator duration scale applies (0 jumps). Each strip
+  records its realized content into a `Picture` once per layout and replays it at the rail offset every frame.
+

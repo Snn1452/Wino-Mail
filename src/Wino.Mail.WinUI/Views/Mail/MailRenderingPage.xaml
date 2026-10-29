@@ -124,7 +124,7 @@
                             Grid.Row="1"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Bottom"
-                            Foreground="Gray"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Style="{StaticResource CaptionTextBlockStyle}"
                             Text="{x:Bind ReadableSize}" />
                     </Grid>
@@ -296,6 +296,7 @@
                     Grid.Row="1"
                     HorizontalContentAlignment="Stretch"
                     DefaultLabelPosition="Right"
+                    EditorThemeToggled="RendererCommandBar_EditorThemeToggled"
                     IsEditorThemeDark="{x:Bind ViewModel.IsDarkWebviewRenderer, Mode=TwoWay}"
                     IsEditorThemeToggleVisible="True"
                     IsPopOutButtonVisible="{x:Bind SupportsPopOut, Mode=OneTime}"
@@ -624,6 +625,7 @@
                     AutomationProperties.AutomationId="MailMessageRenderer"
                     AutomationProperties.HelpText="{x:Bind domain:Translator.Reader_MessageBodyAutomationHelpText, Mode=OneTime}"
                     AutomationProperties.Name="{x:Bind domain:Translator.Reader_MessageBodyAutomationName, Mode=OneTime}"
+                    DarkModeMethod="{x:Bind ToRendererDarkModeMethod(ViewModel.ReaderDarkModeMethod), Mode=OneWay}"
                     InitializationFailed="MailRenderer_InitializationFailed"
                     IsDarkMode="{x:Bind ViewModel.IsDarkWebviewRenderer, Mode=OneWay}"
                     NavigationRequested="MailRenderer_NavigationRequested"

@@ -17,12 +17,18 @@ Pass `--translate` or `--skip-translation` to answer without the prompt. With `-
 It runs on a Mac and uses the same manifest version as Windows: `2.0.55.0` becomes app version `2.0.55`.
 It does not change `Info.plist` or any other source file.
 
+Every build also gets its own build number, the UTC time as `yyDDDHHMM` (for example `262981530`), like the Mac App
+Store package. It becomes `CFBundleVersion` and the appcast's `sparkle:version`, which Sparkle and macOS compare, so a
+rebuild of the same version still reaches installed copies. Pass `--build-number <n>` to choose one; it must be
+larger than every build already published. Users see only the app version.
+
 One-time setup on the Mac:
 
 1. Install Xcode and the .NET SDK selected by `global.json`, then run `dotnet workload install macos` (see the [development guide](harness/development-macos.md#requirements)).
 2. Import the **Developer ID Application: Burak Kaan Kose (4VB7YWRAQ9)** certificate with its private key into the login keychain.
-3. Set the notarization variables in [Local script environment](local-script-environment.md).
-4. Have the Sparkle update signing key in the login keychain (account `com.winomail.macos`).
+3. Install the **Wino Mail macOS Developer ID** provisioning profile (type Developer ID, App ID `com.winomail.macos`, Push Notifications). The script picks the newest unexpired one; without it the build stops.
+4. Set the notarization variables in [Local script environment](local-script-environment.md).
+5. Have the Sparkle update signing key in the login keychain (account `com.winomail.macos`).
    It was created on the release Mac on 2026-10-10. Keep an offline backup:
    `generate_keys --account com.winomail.macos -x <file>`, then store the file securely.
    On another Mac, import it with `generate_keys --account com.winomail.macos -f <file>`.
@@ -39,24 +45,38 @@ After the translation question, select **Apple silicon only** or **Universal**. 
 For unattended runs, use `--non-interactive --arch universal` or `--arch arm64`, plus `--translate` or `--skip-translation`.
 
 The script checks the tools, signing identity, and credentials before it compiles.
-It publishes Release with the Developer ID identity, the hardened runtime, and the app's sandbox entitlements, without a provisioning profile.
+It publishes Release with the Developer ID identity and profile, the hardened runtime, and the app's sandbox entitlements plus `com.apple.developer.aps-environment = production` for live notifications.
 Debug builds keep the Apple Development identity and profile.
-It verifies the signature, entitlements, bundle ID, version, and architectures, then creates and signs the DMG.
+It verifies the signature, entitlements (including the APNs entitlement and the embedded profile), bundle ID, version, and architectures.
+It then notarizes the app on its own and staples the ticket to it, so a copy in Applications opens without reaching Apple, even offline. Only then does it create and sign the DMG.
 It also verifies Sparkle: the framework and its helpers carry the Developer ID signature, and the feed URL and public key match `Sparkle.plist`.
-Notarization usually takes a few minutes. When Apple rejects the DMG, the script prints the issues from the notarization log.
-After acceptance, it staples the ticket and requires Gatekeeper to report `source=Notarized Developer ID` for the DMG and the app.
+The DMG is notarized as a second submission. Each submission usually takes a few minutes; when Apple rejects one, the script prints the issues from its notarization log.
+After acceptance, it staples the DMG's ticket, requires Gatekeeper to report `source=Notarized Developer ID` for the DMG and the app, and checks that the app inside the DMG carries its own ticket.
 
 Outputs appear under `~/Wino Releases`, or `WINO_RELEASES_ROOT` or `--output-root`:
 
 ```text
 2.0.55.0/
   macOS/
-    WinoMail_2.0.55_universal.dmg
-    WinoMail_2.0.55_universal.dmg.sha256
-    appcast.xml                         (Sparkle feed for this DMG)
-    WinoMail_2.0.55_universal.notarization.json
-    Symbols/universal/                  (dSYM and PDB files, when produced)
+    262981530/                                    (one folder per build)
+      WinoMail_2.0.55_262981530_universal.dmg
+      WinoMail_2.0.55_262981530_universal.dmg.sha256
+      appcast.xml                                 (Sparkle feed for this DMG)
+      release.json                                (version, build, architecture and the commit it was built from)
+      WinoMail_2.0.55_262981530_universal.notarization.json       (DMG submission log)
+      WinoMail_2.0.55_262981530_universal.app-notarization.json   (app submission log)
+      Symbols/universal/                          (dSYM and PDB files, when produced)
 ```
+
+`release.json` records the commit for the release tag, and whether the tree had uncommitted changes such as
+translations. A checkout copied with `git archive` has no repository, so its record has no commit.
+
+The script stops if the DMG already exists. Failed runs keep their logs under `.staging/macos-<run>` in the output root.
+The DMG opens a standard window with the app and an Applications link.
+
+Codesign needs the login keychain, which is unavailable to SSH sessions (`errSecInternalComponent`).
+To build over SSH, start `screen -dmS winosign` in Terminal on the Mac and run the script inside that session.
+This is not required when the script runs in Terminal.
 
 ### DMG updates (Sparkle)
 
@@ -66,22 +86,36 @@ Settings › General turns automatic checks and automatic installation on or off
 
 After a successful run, the script signs the stapled DMG with the Sparkle key and writes `appcast.xml`.
 It lists only this version and points at `https://download.winomail.app/macos/<DMG name>`.
-To publish an update:
-
-1. Upload the DMG to `macos/` in the `wino-downloads` bucket.
-2. Check that the DMG URL downloads.
-3. Upload `appcast.xml` to `macos/appcast.xml` with `Cache-Control: no-cache`.
-
-Publish the universal build's appcast. An arm64 build's appcast carries `arm64` hardware requirements, so Intel Macs ignore it.
 Do not modify the DMG after the script signs it; Sparkle rejects a changed file.
-See `src/Wino.Core.MacOS.Bindings/README.md` for the integration and for testing an update locally.
+See `src/Wino.Core.Apple.Bindings/README.md` for the integration and for testing an update locally.
 
-The script stops if the DMG already exists. Failed runs keep their logs under `.staging/macos-<run>` in the output root.
-The DMG opens a standard window with the app and an Applications link.
+### Publishing
 
-Codesign needs the login keychain, which is unavailable to SSH sessions (`errSecInternalComponent`).
-To build over SSH, start `screen -dmS winosign` in Terminal on the Mac and run the script inside that session.
-This is not required when the script runs in Terminal.
+`scripts/release/macos/publish-macos-release.sh` uploads a built release to the `wino-downloads` Cloudflare R2 bucket
+behind `https://download.winomail.app`. It needs the R2 variables in [Local script environment](local-script-environment.md)
+on the Mac, and uses the system `curl` (7.86 or later) to sign requests for R2's S3-compatible API.
+
+```bash
+bash scripts/release/macos/publish-macos-release.sh
+bash scripts/release/macos/publish-macos-release.sh --version 2.2.7.0 --dry-run
+bash scripts/release/macos/publish-macos-release.sh --version 2.2.7.0 --build 262981530
+```
+
+The script lists the builds under the release root and the build the live appcast serves. It publishes the newest
+build of the chosen version unless you pass `--build`. It checks that the appcast is valid and signed, that its
+`sparkle:version` is the folder's build, that the DMG exists with the signed length and the `.sha256` checksum, that
+`release.json` describes the same DMG, and that it is not an arm64-only build. An arm64 appcast carries `arm64`
+hardware requirements, so Intel Macs would never see an update again. It refuses to replace a newer live build unless
+you pass `--allow-older`.
+
+It then uploads, all with `Cache-Control: no-cache`:
+
+1. `macos/<DMG name>` and its `.sha256`, then checks that the DMG downloads with the right size.
+2. `macos/WinoMail.dmg`, a copy of the same DMG that the website links to.
+3. `macos/appcast.xml`, last, so the feed never points at a DMG that is not online yet.
+
+Finally it downloads the appcast again and confirms that it serves the new version. `--dry-run` runs every check and
+lists the uploads without credentials or changes; `--non-interactive` publishes the newest release without asking.
 
 ## Mac App Store package
 

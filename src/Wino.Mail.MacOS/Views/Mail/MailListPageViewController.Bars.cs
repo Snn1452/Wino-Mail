@@ -8,6 +8,7 @@ using Wino.Core.Domain.Models.Menus;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Messaging.UI;
 using Wino.Presentation.AppKit;
+using Wino.Core.Domain.Presentation;
 
 namespace Wino.Mail.MacOS.Views.Mail;
 
@@ -34,10 +35,10 @@ public sealed partial class MailListPageViewController
 
     // ---- Action bar (Windows MailListPage.xaml ActionBarGrid) ----
 
-    /// <summary>Icon-only command bar over <see cref="Wino.Mail.ViewModels.MailListPageViewModel.ActionItems"/>; shown while the preference is on.</summary>
+    /// <summary>Command bar over <see cref="Wino.Mail.ViewModels.MailListPageViewModel.ActionItems"/>; shown while the preference is on, labelled per the action labels setting.</summary>
     private NSView BuildActionBar()
     {
-        _actionBar = new MailReaderCommandBar { IconOnly = true };
+        _actionBar = new MailReaderCommandBar { IconOnly = true, ShowsLabels = _preferences.IsShowActionLabelsEnabled };
         var host = new WinoSurfaceView { Fill = WinoStyle.SubtleFill, CornerRadius = WinoStyle.GroupRadius };
         WinoLayout.Fill(_actionBar, host);
         host.AccessibilityElement = true;
@@ -64,14 +65,14 @@ public sealed partial class MailListPageViewController
                 if (commands.Count > 0 && commands[^1] is not null) commands.Add(null);
                 continue;
             }
-            var title = item.Operation == MailOperation.SetFlag ? Translator.MailOperation_Flag : MailOperationPresentation.Title(item.Operation);
+            var title = item.Operation == MailOperation.SetFlag ? Translator.MailOperation_Flag : MailOperationDisplay.GetTitle(item.Operation);
             if (string.IsNullOrEmpty(title)) continue;
             var captured = item;
             // Move opens the folder popover at the clicked button instead of the shared picker.
             Action<NSView>? runFrom = item.Operation == MailOperation.Move
                 ? anchor => ShowMovePopover(ViewModel.SelectedItems.ToArray(), anchor)
                 : null;
-            commands.Add(new MailReaderCommand(MailOperationPresentation.Glyph(item.Operation), title,
+            commands.Add(new MailReaderCommand(MailOperationDisplay.GetGlyph(item.Operation), title,
                 () => Observe(ViewModel.ExecuteTopBarActionCommand.ExecuteAsync(captured)), item.IsEnabled && hasSelection, runFrom));
         }
         if (commands.Count > 0 && commands[^1] is null) commands.RemoveAt(commands.Count - 1);
@@ -173,8 +174,9 @@ public sealed partial class MailListPageViewController
         _undoBar.Title = ViewModel.UndoMailActionBarTitle;
         _undoBar.Severity = MapSeverity(ViewModel.UndoMailActionBarSeverity);
         _undoBar.AutoDismissInterval = TimeSpan.FromSeconds(ViewModel.UndoMailActionBarDismissInterval);
-        _undoBar.Hidden = !open;
+        // Host first: the bar starts its auto-dismiss countdown only when it is really visible.
         _undoBarHost.Hidden = !open;
+        _undoBar.Hidden = !open;
     }
 
     /// <summary>A new pack or interval while the bar is up gets a full countdown again.</summary>
@@ -278,5 +280,6 @@ public sealed partial class MailListPageViewController
     {
         if (name == nameof(_preferences.IsMailListActionBarEnabled)) UpdateActionBar();
         else if (name == nameof(_preferences.IsOtherInboxUnreadNoticeEnabled)) UpdateOtherInboxLink();
+        else if (name == nameof(_preferences.IsShowActionLabelsEnabled)) _actionBar.ShowsLabels = _preferences.IsShowActionLabelsEnabled;
     }
 }

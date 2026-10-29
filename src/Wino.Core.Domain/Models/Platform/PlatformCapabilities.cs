@@ -15,4 +15,14 @@ public sealed record PlatformCapabilities(
     bool GlobalHotkeys = false,
     bool GeneralActivation = false,
     bool MicrosoftStore = false,
-    bool AppleAppStore = false) : IPlatformCapabilities;
+    bool AppleAppStore = false,
+    bool RemoteNotifications = false,
+    bool KeyboardShortcuts = false,
+    bool FileBackup = false,
+    bool Purchases = false,
+    bool AppModeTaskbarIdentity = false,
+    bool PointerHover = false,
+    bool MailListDensity = false,
+    bool PresentationDetection = false,
+    bool ConfigurableSyncIntervals = false,
+    bool BadgeLaunchNavigation = false) : IPlatformCapabilities;

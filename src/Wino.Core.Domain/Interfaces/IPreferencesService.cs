@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Models.Calendar;
@@ -37,9 +38,12 @@ public interface IPreferencesService : INotifyPropertyChanged
     bool IsStoreUpdateNotificationsEnabled { get; set; }
 
     /// <summary>
-    /// Setting: Whether the taskbar icon stays the same when the application mode changes in-app.
+    /// Setting: App modes the user removed from the mode switcher. A mode no account provides
+    /// is hidden regardless; this only covers modes the accounts would otherwise offer.
     /// </summary>
-    bool IsAppModeTaskbarIconSwitchDisabled { get; set; }
+    IReadOnlyCollection<WinoApplicationMode> HiddenApplicationModes { get; set; }
+
+    void SetApplicationModeHidden(WinoApplicationMode mode, bool isHidden);
 
     /// <summary>
     /// Setting: Whether the system tray icon should be created while the shell is available.
@@ -219,6 +223,18 @@ public interface IPreferencesService : INotifyPropertyChanged
     int EmailSyncIntervalMinutes { get; set; }
 
     /// <summary>
+    /// Setting: How mailbox changes reach the app, chosen once for the whole app on desktop. Reads
+    /// <see cref="SyncMethod.Relay"/> when nothing is stored. Platforms without the choice always read Relay.
+    /// </summary>
+    SyncMethod SyncMethod { get; set; }
+
+    /// <summary>
+    /// True once a sync method has been stored. An install that already has accounts but no stored value was
+    /// upgraded from a version without the relay; that is what triggers the Windows introduction window.
+    /// </summary>
+    bool IsSyncMethodConfigured { get; }
+
+    /// <summary>
     /// Setting: Whether sending drafts should be held briefly so it can be undone.
     /// </summary>
     bool IsUndoSendingDraftsEnabled { get; set; }
@@ -307,6 +323,10 @@ public interface IPreferencesService : INotifyPropertyChanged
     /// Setting: Set whether 'img' tags in rendered HTMLs should be removed.
     /// </summary>
     bool RenderImages { get; set; }
+
+    MailContentTheme ReaderContentTheme { get; set; }
+
+    MailDarkModeMethod ReaderDarkModeMethod { get; set; }
 
     /// <summary>
     /// Setting: Set whether 'style' tags in rendered HTMls should be removed.
@@ -449,6 +469,12 @@ public interface IPreferencesService : INotifyPropertyChanged
     /// Setting: Whether the mail rendering page will show the action labels
     /// </summary>
     bool IsShowActionLabelsEnabled { get; set; }
+
+    /// <summary>
+    /// Setting: Order and visibility of the reader command bar actions. Empty means the default layout.
+    /// Read it through <see cref="Models.Reader.ReaderCommandLayout.Parse"/>.
+    /// </summary>
+    string ReaderCommandLayout { get; set; }
 
     /// <summary>
     /// Setting: Enable/disable Gravatar for sender avatars.

@@ -210,6 +210,7 @@
     <Content Include="Assets\AppEntries\People.svg" />
     <Content Include="release-profile.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Wino_Icon.ico" />
+    <Content Include="Assets\Wino_Icon_Unread.ico" />
     <Content Include="Assets\WinoLogo.png" />
     <Content Include="BackgroundImages\Acrylic.jpg" />
     <Content Include="BackgroundImages\Clouds.jpg" />
@@ -294,6 +295,7 @@
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.WinUI\Wino.Mail.Controls.WinUI.csproj" />
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.Core\Wino.Mail.Controls.Core.csproj" />
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+	<ProjectReference Include="..\Wino.PushRelay.Socket\Wino.PushRelay.Socket.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Build the notification host before the app's packaging target publishes it. -->

@@ -7,7 +7,8 @@ using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Editor;
-using Wino.Editor.AppKit;
+using Wino.Editor.WebKit;
+using AppKitHtmlMailEditorSession = Wino.Editor.WebKit.WebKitHtmlMailEditorSession;
 using Wino.Mail.Controls.AppKit.Settings;
 using Wino.Mail.MacOS.Views.Mail.Compose;
 using Wino.Presentation.AppKit;
@@ -184,6 +185,7 @@ internal sealed class WinoRichTextEditorView : NSView
     /// </summary>
     public async Task LoadAsync(string? html, bool dark)
     {
+        await _editor.SetLinkLabelsAsync(Translator.Composer_OpenLink, Translator.Composer_RemoveLink);
         await _editor.InitializeAsync();
         IsDarkTheme = dark;
         await _editor.SetThemeAsync(dark);

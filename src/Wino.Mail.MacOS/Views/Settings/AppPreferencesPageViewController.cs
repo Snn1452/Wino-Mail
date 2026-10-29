@@ -7,7 +7,7 @@ using Wino.Core.Domain.Models.Translations;
 using Wino.Mail.ViewModels;
 using Wino.Presentation.AppKit;
 #if !WINO_APPSTORE
-using Wino.Core.MacOS.Bindings.Sparkle;
+using Wino.Core.Apple.Bindings.Sparkle;
 #endif
 
 namespace Wino.Mail.MacOS.Views.Settings;
@@ -35,8 +35,12 @@ public sealed class AppPreferencesPageViewController(AppPreferencesPageViewModel
 
         AddGroup(null,
             Card(Translator.SettingsLanguage_Title, Translator.SettingsLanguage_Description, WinoIconGlyph.Translate, language),
-            Card(Translator.SettingsAppPreferences_LaunchAtSignIn_Title, Translator.SettingsAppPreferences_LaunchAtSignIn_Description, WinoIconGlyph.Power, startup),
-            Card(Translator.SettingsAppPreferences_CloseBehavior_Title, Translator.SettingsAppPreferences_CloseBehavior_Description, WinoIconGlyph.Desktop, closeBehavior));
+            vm.IsLaunchAtSignInAvailable
+                ? Card(Translator.SettingsAppPreferences_LaunchAtSignIn_Title, Translator.SettingsAppPreferences_LaunchAtSignIn_Description, WinoIconGlyph.Power, startup)
+                : null,
+            vm.IsCloseBehaviorAvailable
+                ? Card(Translator.SettingsAppPreferences_CloseBehavior_Title, Translator.SettingsAppPreferences_CloseBehavior_Description, WinoIconGlyph.Desktop, closeBehavior)
+                : null);
 #if !WINO_APPSTORE
         AddUpdateCards();
 #endif

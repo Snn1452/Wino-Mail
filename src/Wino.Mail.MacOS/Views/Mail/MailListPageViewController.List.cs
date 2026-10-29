@@ -4,6 +4,7 @@ using CoreGraphics;
 using Foundation;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Models.MailItem;
 using Wino.Core.Domain.Models.Reader;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Mail.Controls.AppKit.MailList;
@@ -269,13 +270,16 @@ public sealed partial class MailListPageViewController
         Bind(nameof(ViewModel.IsBarOpen), vm => vm.IsBarOpen, _ => UpdateInfoBar());
         Bind(nameof(ViewModel.BarMessage), vm => vm.BarMessage, _ => UpdateInfoBar());
         Bind(nameof(ViewModel.BarTitle), vm => vm.BarTitle, _ => UpdateInfoBar());
-        Bind(nameof(ViewModel.SelectedItemsCount), vm => vm.SelectedItemsCount, _ =>
+        Bind(nameof(ViewModel.SelectedItemsCount), vm => vm.SelectedItemsCount, count =>
         {
+            // A reader kept under the multi-selection overlay must not reappear once nothing is selected.
+            if (count == 0 && _paneChild is MailRenderingPageViewController && !_detachedComposerActive) ShowIdleContent();
             UpdatePivots();
             UpdateSelectAllCheckbox();
             UpdateMultiSelectionOverlay();
             CommandStateChanged?.Invoke(this, EventArgs.Empty);
         });
+        Bind(nameof(ViewModel.MailActionResolver), vm => vm.MailActionResolver, _ => RefreshHoverActions());
         BindBars();
 
         _preferences.PreferenceChanged += PreferenceChanged;
@@ -333,7 +337,8 @@ public sealed partial class MailListPageViewController
         {
             if (name is nameof(_preferences.MailItemDisplayMode) or nameof(_preferences.IsShowPreviewEnabled)
                 or nameof(_preferences.IsShowSenderPicturesEnabled) or nameof(_preferences.IsHoverActionsEnabled)
-                or nameof(_preferences.AccountNicknamePosition))
+                or nameof(_preferences.HoverActionButtonSize) or nameof(_preferences.HoverActionPosition)
+                or nameof(_preferences.HoverActionAnimation) or nameof(_preferences.AccountNicknamePosition))
                 ReloadNow();
             else BarsPreferenceChanged(name);
         });
@@ -399,8 +404,9 @@ public sealed partial class MailListPageViewController
         _infoBar.Title = ViewModel.BarTitle;
         _infoBar.Message = ViewModel.BarMessage;
         _infoBar.Severity = MapSeverity(ViewModel.BarSeverity);
-        _infoBar.Hidden = !open;
+        // Host first: the bar starts its auto-dismiss countdown only when it is really visible.
         _infoBarHost.Hidden = !open;
+        _infoBar.Hidden = !open;
     }
 
     private void UpdateOverlays()
@@ -537,7 +543,9 @@ public sealed partial class MailListPageViewController
         {
             for (int index = 0; index < previous.Length; index++)
                 if (!Equals(previous[index], _entries[index])) return false;
-            RefreshVisibleCells();
+            // Single messages update through their own property subscriptions; only thread heads
+            // summarise leaves that may have changed inside an unchanged entry list.
+            RefreshVisibleCells(threadHeadsOnly: true);
             return true;
         }
 
@@ -565,13 +573,14 @@ public sealed partial class MailListPageViewController
     }
 
     /// <summary>Rebinds the realized mail cells so thread heads pick up new leaves and counts.</summary>
-    private void RefreshVisibleCells()
+    private void RefreshVisibleCells(bool threadHeadsOnly = false)
     {
         var visible = _table.RowsInRect(_table.VisibleRect());
         var heights = new NSMutableIndexSet();
         for (nint index = visible.Location; index < visible.Location + visible.Length; index++)
         {
             if (RowAt(index) is not { } row || _table.GetView(0, index, false) is not WinoMailRowView cell) continue;
+            if (threadHeadsOnly && !row.IsThreadHead) continue;
             var before = cell.Model;
             BindCell(cell, row);
             if (TileLayoutChanged(before, cell.Model)) heights.Add((nuint)index);
@@ -582,7 +591,7 @@ public sealed partial class MailListPageViewController
     /// <summary>True when the row's tile line appeared, disappeared or got other tiles (which can wrap differently).</summary>
     private static bool TileLayoutChanged(WinoMailRowModel before, WinoMailRowModel after)
         => before.HasTileLine != after.HasTileLine
-            || (after.HasTileLine && !WinoMailRowMetrics.SameTileLayout(before.Tiles, after.Tiles));
+            || (after.HasTileLine && !WinoMailRowMeasure.SameTileLayout(before.Tiles, after.Tiles));
 
     /// <summary>Re-measures rows without the default height animation.</summary>
     private void NoteHeightsChanged(NSIndexSet indexes)
@@ -641,27 +650,10 @@ public sealed partial class MailListPageViewController
         _selectionKeys.Clear();
         foreach (var row in selectedRows) _selectionKeys.Add(SelectionKey(row));
 
-        var items = new List<IMailListSourceItem>();
-        var ids = new HashSet<Guid>();
-        var fullThreads = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var row in selectedRows)
-        {
-            if (row.IsThreadHead && row.Thread is { } thread)
-            {
-                fullThreads.Add(thread.Key);
-                foreach (var leaf in thread.Items)
-                    if (ids.Add(leaf.StableId)) items.Add(leaf);
-            }
-            else if (ids.Add(row.SourceItem.StableId)) items.Add(row.SourceItem);
-        }
-        foreach (var thread in _projection.Threads)
-            if (thread.Items.Count > 0 && thread.Items.All(leaf => ids.Contains(leaf.StableId))) fullThreads.Add(thread.Key);
-
-        var active = RowAt(_table.SelectedRow)?.SourceItem ?? selectedRows.LastOrDefault()?.SourceItem;
-        var signature = string.Join(",", ids.OrderBy(static id => id)) + "|" + active?.StableId;
-        if (signature == _lastPublishedSelection) return;
-        _lastPublishedSelection = signature;
-        ViewModel.ApplyMailSelectionSnapshot(new MailListSelectionSnapshot(items, fullThreads, active));
+        var result = MailListSelectionSnapshotBuilder.Build(selectedRows, _projection, RowAt(_table.SelectedRow));
+        if (result.Signature == _lastPublishedSelection) return;
+        _lastPublishedSelection = result.Signature;
+        ViewModel.ApplyMailSelectionSnapshot(result.Snapshot);
     }
 
     private void ToggleThread(MailListRow row)
@@ -692,7 +684,7 @@ public sealed partial class MailListPageViewController
 
     private nfloat RowHeight(nint index)
     {
-        if (RowAt(index) is not { } row) return (nfloat)WinoMailRowMetrics.GroupRowHeight;
+        if (RowAt(index) is not { } row) return (nfloat)WinoMailRowMeasure.GroupRowHeight;
         var density = Density;
         if (density == WinoMailRowDensity.Compact || !MailRowMapper.HasTiles(row))
             return (nfloat)WinoMailRowModel.HeightFor(density, [], 0);
@@ -717,7 +709,7 @@ public sealed partial class MailListPageViewController
         {
             cell = new WinoMailRowView();
             cell.SetLabels(Translator.MailOperation_Archive, Translator.MailOperation_Delete, Translator.MailOperation_SetFlag,
-                Translator.MailOperation_ClearFlag, Translator.MailOperation_MarkAsRead, Translator.MailOperation_MarkAsUnread);
+                Translator.MailOperation_ClearFlag, Translator.MailOperation_MarkAsRead, Translator.MailOperation_MarkAsUnread, Translator.MailOperation_MoveJunk);
             cell.HoverActionInvoked += (sender, kind) =>
             {
                 if ((sender as WinoMailRowView)?.Item is MailListRow hovered)
@@ -762,11 +754,46 @@ public sealed partial class MailListPageViewController
         UpdateMultiSelectionOverlay();
     });
 
+    private HoverActionSet ResolveHoverActions(MailListRow row)
+    {
+        if (ViewModel.MailActionResolver is { } resolver) return resolver.ResolveHoverActions(row);
+        var defaults = MailListActionPreferences.GetDefaultHoverActions(_preferences);
+        return new HoverActionSet(MailListActionResolver.ToHoverActionKind(defaults.Left),
+            MailListActionResolver.ToHoverActionKind(defaults.Center), MailListActionResolver.ToHoverActionKind(defaults.Right));
+    }
+
+    private void RefreshHoverActions()
+    {
+        if (!_listBound) return;
+        var visible = _table.RowsInRect(_table.VisibleRect());
+        for (nint index = visible.Location; index < visible.Location + visible.Length; index++)
+        {
+            if (RowAt(index) is { } row && _table.GetView(0, index, false) is WinoMailRowView cell)
+                cell.HoverActions = ResolveHoverActions(row);
+        }
+    }
+
     private void BindCell(WinoMailRowView cell, MailListRow row)
     {
         cell.Item = row;
         cell.IsSelectionMode = _selectionMode;
         cell.HoverActionsEnabled = _preferences.IsHoverActionsEnabled;
+        cell.HoverActions = ResolveHoverActions(row);
+        cell.HoverButtonSize = _preferences.HoverActionButtonSize;
+        cell.HoverPosition = _preferences.HoverActionPosition switch
+        {
+            MailHoverActionPosition.RightTop => HoverActionPosition.RightTop,
+            MailHoverActionPosition.RightBottom => HoverActionPosition.RightBottom,
+            MailHoverActionPosition.TopCenter => HoverActionPosition.TopCenter,
+            MailHoverActionPosition.BottomCenter => HoverActionPosition.BottomCenter,
+            _ => HoverActionPosition.RightCenter,
+        };
+        cell.HoverAnimation = _preferences.HoverActionAnimation switch
+        {
+            MailHoverActionAnimation.Slide => HoverActionAnimation.Slide,
+            MailHoverActionAnimation.NoAnimation => HoverActionAnimation.NoAnimation,
+            _ => HoverActionAnimation.Popup,
+        };
         cell.Apply(MapRow(row));
 
         var leaves = (row.IsThreadHead ? row.LeafItems : [row.SourceItem]).OfType<INotifyPropertyChanged>().ToArray();
@@ -775,15 +802,27 @@ public sealed partial class MailListPageViewController
         // its leaves). Coalesce them into one re-map per run-loop turn instead of one per property.
         int pending = 0;
         bool rebind = false;
+        bool commandState = false;
         bool active = true;
-        void Schedule(bool leavesChanged)
+        void Schedule(bool leavesChanged, bool commandStateChanged = false)
         {
             if (leavesChanged) rebind = true;
+            if (commandStateChanged) commandState = true;
             if (Interlocked.Exchange(ref pending, 1) == 1) return;
             NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
             {
                 Interlocked.Exchange(ref pending, 0);
                 if (!active || _released || !ReferenceEquals(cell.Item, row)) return;
+                // Read and flag state of the selection drives the toolbar's Mark as read/unread and Flag/Unflag.
+                if (commandState)
+                {
+                    commandState = false;
+                    if (leaves.OfType<MailItemViewModel>().Any(leaf => ViewModel.SelectedItems.Contains(leaf)))
+                    {
+                        UpdateMultiSelectionOverlay();
+                        CommandStateChanged?.Invoke(this, EventArgs.Empty);
+                    }
+                }
                 // The thread gained or lost leaves: subscribe to the new set.
                 if (rebind) BindCell(cell, row);
                 else cell.Apply(MapRow(row));
@@ -798,7 +837,7 @@ public sealed partial class MailListPageViewController
         PropertyChangedEventHandler handler = (_, args) =>
         {
             if (args.PropertyName is nameof(MailItemViewModel.IsSelected) or nameof(MailItemViewModel.ThumbnailUpdatedEvent)) return;
-            Schedule(false);
+            Schedule(false, args.PropertyName is nameof(MailItemViewModel.IsRead) or nameof(MailItemViewModel.IsFlagged));
         };
         foreach (var leaf in leaves) leaf.PropertyChanged += handler;
         PropertyChangedEventHandler rowHandler = (_, args) =>
@@ -821,23 +860,12 @@ public sealed partial class MailListPageViewController
         return rowView;
     }
 
-    /// <summary>In select mode a plain click toggles the clicked row instead of replacing the selection.</summary>
     private NSIndexSet ProposeSelection(NSIndexSet proposed)
     {
         var filtered = new NSMutableIndexSet();
         foreach (var index in proposed.ToArray())
             if (RowAt((nint)index) is not null) filtered.Add(index);
-
-        if (!_selectionMode || filtered.Count != 1) return filtered;
-        var current = NSApplication.SharedApplication.CurrentEvent;
-        if (current is null || current.Type is not (NSEventType.LeftMouseDown or NSEventType.LeftMouseUp)) return filtered;
-        if ((current.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.ShiftKeyMask)) != 0) return filtered;
-
-        var toggled = new NSMutableIndexSet(_table.SelectedRows);
-        var clicked = filtered.FirstIndex;
-        if (toggled.Contains(clicked)) toggled.Remove(clicked);
-        else toggled.Add(clicked);
-        return toggled;
+        return filtered;
     }
 
     private void TableSelectionChanged()
@@ -873,6 +901,33 @@ public sealed partial class MailListPageViewController
             _table.SelectRows(indexes, false);
             _table.ScrollRowToVisible((nint)indexes.FirstIndex);
             return Task.FromResult("ok");
+        });
+        // "swipe N leading|trailing [run]" prints the resolved swipe operation for mail row N and optionally runs it.
+        MacDebugBridge.Register("swipe", async args =>
+        {
+            int index = MailRowIndex(int.Parse(args[0]));
+            if (index < 0 || RowAt(index) is not { } row) return "no such row";
+            bool leading = args.Length < 2 || args[1] == "leading";
+            var operation = ViewModel.ResolveSwipeOperation(row, leading);
+            if (args.Length > 2 && args[2] == "run") await ViewModel.ExecuteSwipeAsync(row, leading);
+            return operation.ToString();
+        });
+        // "search TEXT" submits a shell search; "search" alone clears it.
+        MacDebugBridge.Register("search", async args =>
+        {
+            if (args.Length == 0) await SearchClearedAsync();
+            else await SearchSubmittedAsync(string.Join(' ', args));
+            await Task.Delay(1500);
+            return $"rows={_entries.Count(static entry => entry.Row is not null)} searching={ViewModel.IsInSearchMode}";
+        });
+        // "rowrect N" prints the screen centre of mail row N in top-left screen coordinates, for synthetic clicks.
+        MacDebugBridge.Register("rowrect", args =>
+        {
+            int index = MailRowIndex(int.Parse(args[0]));
+            if (index < 0 || _table.Window is not { } window || window.Screen is not { } screen) return Task.FromResult("no such row");
+            var inWindow = _table.ConvertRectToView(_table.RectForRow(index), null);
+            var onScreen = window.ConvertRectToScreen(inWindow);
+            return Task.FromResult($"{onScreen.GetMidX():0} {screen.Frame.Height - onScreen.GetMidY():0}");
         });
         // "mailop OPERATION" runs a MailOperation on the selection, as the reading-pane bar does.
         MacDebugBridge.Register("mailop", args =>
@@ -1003,6 +1058,23 @@ public sealed partial class MailListPageViewController
                 owner.ScheduleTileRelayout();
             }
             base.Layout();
+        }
+
+        /// <summary>
+        /// In select mode a plain click toggles the clicked row: the table gets it as a ⌘-click. Rewriting the
+        /// proposed selection instead depended on the current event type, which trackpad pressure and small
+        /// drags change mid-click, and then the click replaced the whole selection.
+        /// </summary>
+        public override void MouseDown(NSEvent theEvent)
+        {
+            if (owner._selectionMode && (theEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.ShiftKeyMask)) == 0
+                && NSEvent.MouseEvent(theEvent.Type, theEvent.LocationInWindow, theEvent.ModifierFlags | NSEventModifierMask.CommandKeyMask,
+                    theEvent.Timestamp, theEvent.WindowNumber, null, theEvent.EventNumber, theEvent.ClickCount, theEvent.Pressure) is { } toggle)
+            {
+                base.MouseDown(toggle);
+                return;
+            }
+            base.MouseDown(theEvent);
         }
 
         public override void KeyDown(NSEvent theEvent)

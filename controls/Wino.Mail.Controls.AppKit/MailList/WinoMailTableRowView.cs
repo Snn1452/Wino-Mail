@@ -1,7 +1,9 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using Wino.Presentation;
 using Wino.Presentation.AppKit;
+using Wino.Mail.Controls.Core;
 
 namespace Wino.Mail.Controls.AppKit.MailList;
 
@@ -62,6 +64,9 @@ public class WinoMailTableRowView : NSTableRowView
         NSBezierPath.FromRoundedRect(ContentBox, 6, 6).Fill();
     }
 
+    private static readonly NSColor SelectionFill = WinoStyle.Dynamic(NSColor.Black.ColorWithAlphaComponent((nfloat)0.06), NSColor.White.ColorWithAlphaComponent((nfloat)0.10));
+    private static readonly NSColor HoverFill = WinoStyle.LabelWithOpacity(0.045);
+
     public override void DrawSelection(CGRect dirtyRect)
     {
         if (IsSelectionMode)
@@ -69,7 +74,7 @@ public class WinoMailTableRowView : NSTableRowView
             FillBox(WinoStyle.Accent.ColorWithAlphaComponent((nfloat)0.12));
             return;
         }
-        FillBox(WinoStyle.Dynamic(NSColor.Black.ColorWithAlphaComponent((nfloat)0.06), NSColor.White.ColorWithAlphaComponent((nfloat)0.10)));
+        FillBox(SelectionFill);
         WinoStyle.Accent.SetFill();
         // Windows ListViewItem pill: inside the fill, vertically centred, shorter than the row.
         var box = ContentBox;
@@ -80,7 +85,7 @@ public class WinoMailTableRowView : NSTableRowView
 
     public override void DrawBackground(CGRect dirtyRect)
     {
-        if (_hovered && !Selected) FillBox(NSColor.Label.ColorWithAlphaComponent((nfloat)0.045));
+        if (_hovered && !Selected) FillBox(HoverFill);
     }
 
     public override void DrawSeparator(CGRect dirtyRect)
@@ -180,8 +185,9 @@ public class WinoMailGroupHeaderView : NSTableCellView
     public WinoMailGroupHeaderView()
     {
         Identifier = ReuseIdentifier;
-        _strip = new WinoSurfaceView { CornerRadius = 6, Fill = WinoMailListTheme.GroupHeaderFill() };
-        _title = WinoStyle.Label(string.Empty, WinoStyle.CaptionStrong, WinoStyle.PrimaryText);
+        // Plain text like Mail's date groups; the theme strip fill only returns with a wallpaper theme.
+        _strip = new WinoSurfaceView { CornerRadius = 6, Fill = HeaderFill() };
+        _title = WinoStyle.Label(string.Empty, WinoStyle.BodyStrong, WinoStyle.SecondaryText);
         AddSubview(_strip);
         _strip.AddSubview(_title);
         NSLayoutConstraint.ActivateConstraints(
@@ -199,7 +205,9 @@ public class WinoMailGroupHeaderView : NSTableCellView
     }
 
     /// <summary>Re-reads the theme colour (accent or backdrop changed).</summary>
-    public void RefreshTheme() => _strip.Fill = WinoMailListTheme.GroupHeaderFill();
+    public void RefreshTheme() => _strip.Fill = HeaderFill();
+
+    private static NSColor? HeaderFill() => WinoStyle.FloatingZones ? WinoMailListTheme.GroupHeaderFill() : null;
 
     public string Title
     {

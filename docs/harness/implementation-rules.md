@@ -1,8 +1,8 @@
 # Wino implementation rules
 
 Read the relevant section before changing C#, XAML, translations, storage, or editor assets.
-The architecture, core, localization, and storage rules apply to both applications. The WinUI and XAML rules apply to the Windows application only.
-Build and runtime commands are in the [Windows](development-windows.md) and [macOS](development-macos.md) development guides.
+The architecture, core, localization, and storage rules apply to all four applications. The WinUI and XAML rules apply to the Windows application only.
+Build and runtime commands are in the [Windows](development-windows.md), [macOS](development-macos.md), [iOS](development-ios.md), and [Android](development-android.md) development guides.
 
 ## Architecture
 
@@ -14,15 +14,23 @@ src/Wino.Mail.ViewModels   Active Mail, Calendar, Contacts, To Do, Settings, and
 src/Wino.Core.ViewModels   Frozen legacy ViewModels for the deprecated UWP host
 src/Wino.Messages          Messenger contracts (Wino.Messaging)
 src/Wino.Platform.Windows  Windows platform services
-src/Wino.Platform.MacOS    macOS platform services
+src/Wino.Platform.Apple    Apple platform services shared by macOS and iOS (Foundation, Keychain, StoreKit, notifications)
+src/Wino.Platform.MacOS    macOS (AppKit-only) platform services
+src/Wino.Platform.iOS      iOS (UIKit-only) platform services
+src/Wino.Platform.Android  Android platform services
+src/Wino.Core.Apple.Bindings  StoreKit 2 (macOS and iOS) and Sparkle (macOS only) native bindings
 src/Wino.Mail.WinUI        Windows application (WinUI 3)
 src/Wino.Mail.MacOS        macOS application (AppKit)
-controls                   Shared control contracts, editor engine, WinUI and AppKit controls, playground
+src/Wino.Mail.UIKit        Idiom-neutral UIKit infrastructure and pages for iPhone and iPad
+src/Wino.Mail.UIKit.Phone  Shell and pages for iPhone and iPad
+src/Wino.Mail.iOS          Universal iOS and iPadOS application head
+src/Wino.Mail.Android      Android application head (Views, XML layouts, AndroidX, Material)
+controls                   Shared control contracts and presentation helpers, editor engine, WinUI, AppKit, UIKit, WebKit and Android controls, playground
 ```
 
 Mail requests flow through `WinoRequestDelegator`, `WinoRequestProcessor`, provider synchronizers, change processors, the local SQLite database, and messenger events. Initial synchronization queues identifiers and downloads MIME content on demand.
 
-Register core services in `CoreContainerSetup` (`RegisterCoreServices`) and shared services in `ServicesContainerSetup` (`RegisterSharedServices`). Each application registers its platform services and ViewModels in its own composition root: `App.xaml.cs` on Windows, `Composition.cs` and `Infrastructure/MacViewModelRegistration*.cs` on macOS. Keep the two ViewModel registration lists and their lifetimes in step.
+Register core services in `CoreContainerSetup` (`RegisterCoreServices`) and shared services in `ServicesContainerSetup` (`RegisterSharedServices`). Each application registers its platform services and views in its own composition root: `App.xaml.cs` on Windows, `src/Wino.Mail.MacOS/Composition.cs` on macOS, `src/Wino.Mail.iOS/Composition.cs` on iOS, and `src/Wino.Mail.Android/AndroidComposition.cs` on Android. All four call `RegisterWinoViewModels()` (`Wino.Mail.ViewModels`), the single list of shared ViewModels and their lifetimes. Add a shared ViewModel there, not in a head; a head registers only its platform-only ViewModels and its views.
 
 Published cross-repository dependencies must use unconditional `PackageReference` items. A sibling checkout must never change the dependency graph.
 
@@ -34,7 +42,7 @@ If a change to a published cross-repository dependency requires a new version, r
 - Use public partial properties with `[ObservableProperty]`.
 - Do not annotate private backing fields.
 - Register messenger handlers in `RegisterRecipients()` and unregister them in `UnregisterRecipients()`.
-- Messenger recipients run on background threads by default. Marshal UI-bound state, collections, navigation, windows, and platform UI APIs (WinRT or AppKit) through `ExecuteUIThread(...)` or the appropriate dispatcher.
+- Messenger recipients run on background threads by default. Marshal UI-bound state, collections, navigation, windows, and platform UI APIs (WinRT, AppKit, UIKit, or Android Views) through `ExecuteUIThread(...)` or the appropriate dispatcher.
 - Treat code after `ConfigureAwait(false)` as background-thread code until explicitly dispatched.
 - Keep ViewModels limited to UI state and interaction. Put authentication, account API, token, preferences, and other business operations in services.
 - Avoid new NuGet packages when existing platform or repository libraries are sufficient.
@@ -69,6 +77,7 @@ Every icon comes from the WinoIcons fonts. Their source is `icons/manifest.json`
 - Inside `Wino.Core.Domain`, do not put `[ObservableProperty]` on a `WinoIconGlyph` property. The enum is generated in that assembly, so the MVVM generator cannot resolve it. Use a plain property.
 - Do not set `FontSize` on a `WinoFontIcon` hosted in an `Icon` or `HeaderIcon` slot or a `Viewbox`. The host sizes it.
 - The icon style (monochrome or colorful) is applied by `NewThemeService`. It rewrites `WinoIconFontFamily` in the theme dictionaries of `Styles/WinoIcons.xaml`, the same way it applies accent colors. Do not set `FontFamily` on an individual `WinoFontIcon`.
+- Each platform draws one fixed icon set; users cannot switch sets. Windows uses Classic (`manifest.json`), macOS and iOS Framework7, Android Material Rounded. Every set keeps the manifest's codepoints, and a new icon also gets an entry in `icons/sets.json`; see [Icon sets](../../icons/README.md#icon-sets).
 - To add an icon, follow [Add an icon](../../icons/README.md#add-an-icon). From an SVG file, run `python icons/tools/add_svg_icon.py <Name> --svg <file>`. From Fluent UI System Icons, run `python icons/tools/add_fluent_icon.py <fluent_name> <Name> [--accent <palette key>]`. Then run `python icons/tools/build_fonts.py`. Commit the manifest, the SVGs and every regenerated font. Never copy an SVG into `icons/svg` by hand; the font build ignores files that are not in the manifest. Only use `--accent` where color carries meaning. Toolbar and menu commands stay monochrome.
 - Check with `.\scripts\maintenance\windows\audit-xaml-icons.ps1` and `python icons/tools/build_fonts.py --check`.
 - Toast button icons cannot use the font. They are PNG files in `Assets/NotificationIcons`: 16 px at 100% scale, in five scales and five variants (`theme-dark`, `theme-light`, `contrast-black`, `contrast-white`, neutral). Create every toast button through `CreateButton` in `NotificationBuilder`, which requires an icon. Windows switches all buttons of a toast to icon style once one has an icon. To add an icon, map its name to an `icons/svg` source in `scripts/maintenance/windows/build-notification-icons.ps1` and run the script.
@@ -87,7 +96,7 @@ The editor extension is a convenience. The pinned command-line result is the for
 - Add English source strings only to `src/Wino.Core.Domain/Translations/en_US/resources.json`.
 - Use generated `Translator` properties. XAML translation bindings use `Mode=OneTime` because `Translator` does not implement `INotifyPropertyChanged`.
 - Treat non-English resource files as externally managed and do not edit them.
-- The main SQLite database and EML files live under `IApplicationConfiguration.ApplicationDataFolderPath`: the package LocalState folder on Windows and the sandbox container's Application Support folder on macOS. Resolve them through `MainDatabasePaths` and `MimeFileService.GetMimeMessagePath()`; never build platform paths in shared code. The Windows publisher cache is read only as a legacy migration source.
+- The main SQLite database and EML files live under `IApplicationConfiguration.ApplicationDataFolderPath`: the package LocalState folder on Windows, the sandbox container's Application Support folder on macOS, and the app container's `Library/Application Support/com.winomail.macos` on iOS, and `NoBackupFilesDir/data` on Android. Resolve them through `MainDatabasePaths` and `MimeFileService.GetMimeMessagePath()`; never build platform paths in shared code. The Windows publisher cache is read only as a legacy migration source.
 - `controls/Wino.Editor.Core` is the only reader/editor HTML, CSS, and JavaScript asset source for WebView2 and WKWebView. Preserve its document-ready bridge and on-demand MIME loading.
 
 

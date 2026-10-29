@@ -8,6 +8,7 @@ using Wino.Mail.Controls.Core;
 using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Core.Domain.Presentation;
 
 namespace Wino.Mail.MacOS.Views.Mail;
 
@@ -16,6 +17,9 @@ public sealed partial class MailListPageViewController
     private MoveFolderPopover? _movePopover;
 
     public event EventHandler? CommandStateChanged;
+
+    /// <summary>The toolbar shows mail actions only while a message is open in the reading pane.</summary>
+    public bool ShowsMailActions => !_released && _paneChild is MailRenderingPageViewController;
 
     // ---- Toolbar and Message menu ----
 
@@ -27,6 +31,17 @@ public sealed partial class MailListPageViewController
             ShellCommand.Reply or ShellCommand.ReplyAll or ShellCommand.Forward
                 => (ViewModel.HasSingleItemSelected || ViewModel.HasSingleFullySelectedThread) && !ViewModel.SelectedItems[0].IsDraft,
             _ => true
+        };
+    }
+
+    public bool IsCommandActive(ShellCommand command)
+    {
+        if (_released || ViewModel.SelectedItemsCount == 0) return false;
+        return command switch
+        {
+            ShellCommand.Flag => ViewModel.SelectedItems.All(static item => item.IsFlagged),
+            ShellCommand.ToggleRead => ViewModel.SelectedItems.All(static item => item.IsRead),
+            _ => false
         };
     }
 
@@ -43,10 +58,10 @@ public sealed partial class MailListPageViewController
                 RunSelectionOperation(MailOperation.SoftDelete);
                 break;
             case ShellCommand.Flag:
-                RunSelectionOperation(items.All(static item => item.IsFlagged) ? MailOperation.ClearFlag : MailOperation.SetFlag);
+                RunSelectionOperation(IsCommandActive(command) ? MailOperation.ClearFlag : MailOperation.SetFlag);
                 break;
             case ShellCommand.ToggleRead:
-                RunSelectionOperation(items.All(static item => item.IsRead) ? MailOperation.MarkAsUnread : MailOperation.MarkAsRead);
+                RunSelectionOperation(IsCommandActive(command) ? MailOperation.MarkAsUnread : MailOperation.MarkAsRead);
                 break;
             case ShellCommand.Move:
                 ShowMovePopover(items.ToArray(), anchor);
@@ -161,23 +176,16 @@ public sealed partial class MailListPageViewController
 
     private NSTableViewRowAction[] SwipeActions(nint index, NSTableRowActionEdge edge)
     {
-        if (!_preferences.IsSwipeActionsEnabled || RowAt(index) is not { } row) return [];
-        var operation = edge == NSTableRowActionEdge.Leading ? _preferences.RightSwipeOperation : _preferences.LeftSwipeOperation;
+        if (RowAt(index) is not { } row) return [];
+        bool leading = edge == NSTableRowActionEdge.Leading;
+        var operation = ViewModel.ResolveSwipeOperation(row, leading);
         if (operation == MailOperation.None) return [];
-        var items = Leaves(row);
-        operation = operation switch
-        {
-            MailOperation.SetFlag or MailOperation.ClearFlag => items.All(static item => item.IsFlagged) ? MailOperation.ClearFlag : MailOperation.SetFlag,
-            MailOperation.MarkAsRead or MailOperation.MarkAsUnread => items.All(static item => item.IsRead) ? MailOperation.MarkAsUnread : MailOperation.MarkAsRead,
-            MailOperation.Archive when ViewModel.IsArchiveSpecialFolder => MailOperation.UnArchive,
-            _ => operation
-        };
         bool destructive = operation is MailOperation.SoftDelete or MailOperation.HardDelete;
         var action = NSTableViewRowAction.FromStyle(destructive ? NSTableViewRowActionStyle.Destructive : NSTableViewRowActionStyle.Regular,
-            MailOperationPresentation.Title(operation), (_, _) =>
+            MailOperationDisplay.GetTitle(operation), (_, _) =>
             {
                 _table.RowActionsVisible = false;
-                RunOperation(operation, items, items.FirstOrDefault(), null);
+                Observe(ViewModel.ExecuteSwipeAsync(row, leading));
             });
         action.BackgroundColor = operation switch
         {
@@ -214,7 +222,7 @@ public sealed partial class MailListPageViewController
                 previousWasSeparator = true;
                 continue;
             }
-            var title = MailOperationPresentation.Title(action.Operation);
+            var title = MailOperationDisplay.GetTitle(action.Operation);
             if (string.IsNullOrEmpty(title)) continue;
             var operation = action.Operation;
             var menuItem = new NSMenuItem(operation == MailOperation.Move ? $"{title}…" : title, (_, _) => RunOperation(operation, targets, item, anchor))
@@ -242,6 +250,15 @@ public sealed partial class MailListPageViewController
             var toggle = new NSMenuItem(row.IsExpanded ? Translator.MacOS_MailList_CollapseThread : Translator.MacOS_MailList_ExpandThread, (_, _) => ToggleThread(row));
             menu.AddItem(toggle);
         }
+
+#if DEBUG
+        // Windows MailContextFlyoutBuilder: shows the real notification for the clicked mails.
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        menu.AddItem(new NSMenuItem(Translator.Buttons_TestNotification, (_, _) => Observe(ViewModel.CreateTestNotificationsAsync(targets)))
+        {
+            Image = WinoIcons.Image(WinoIconGlyph.Reminder, 16)
+        });
+#endif
     }
 
     // ---- Categories (Windows MailContextFlyoutBuilder.CreateCategoriesItem) ----

@@ -221,7 +221,7 @@ public sealed partial class MailRenderingPage : MailRenderingPageAbstract,
     {
         try
         {
-            (await ViewModel.ExternalLauncher.LaunchUriAsync(args.Uri)).ThrowIfNotSucceeded();
+            (await ViewModel.OpenLinkAsync(args.Uri)).ThrowIfNotSucceeded();
         }
         catch (Exception ex)
         {
@@ -410,8 +410,15 @@ public sealed partial class MailRenderingPage : MailRenderingPageAbstract,
 
     private async Task UpdateEditorThemeAsync()
     {
+        await _readerSession.SetDarkModeMethodAsync(ToRendererDarkModeMethod(ViewModel.ReaderDarkModeMethod));
         await _readerSession.SetThemeAsync(ViewModel.IsDarkWebviewRenderer);
     }
+
+    public HtmlMailDarkModeMethod ToRendererDarkModeMethod(MailDarkModeMethod method) => method switch
+    {
+        MailDarkModeMethod.Inverted => HtmlMailDarkModeMethod.Inverted,
+        _ => HtmlMailDarkModeMethod.Adaptive
+    };
 
     private async Task InitializeMailRendererAsync()
     {
@@ -434,8 +441,7 @@ public sealed partial class MailRenderingPage : MailRenderingPageAbstract,
 
     void IRecipient<ApplicationThemeChanged>.Receive(ApplicationThemeChanged message)
     {
-        DispatcherQueue.TryEnqueue(() =>
-            ViewModel.IsDarkWebviewRenderer = message.IsUnderlyingThemeDark);
+        DispatcherQueue.TryEnqueue(() => ViewModel.ApplyApplicationTheme(message.IsUnderlyingThemeDark));
     }
 
     [DynamicWindowsRuntimeCast(typeof(HyperlinkButton))]
@@ -461,6 +467,9 @@ public sealed partial class MailRenderingPage : MailRenderingPageAbstract,
     {
         PopOutRequested?.Invoke(this, PopOutRequestedEventArgs.Default);
     }
+
+    private void RendererCommandBar_EditorThemeToggled(object? sender, bool isDark)
+        => ViewModel.RememberReaderTheme(isDark);
 
     private void ViewModel_CloseRequested(object? sender, EventArgs e)
     {

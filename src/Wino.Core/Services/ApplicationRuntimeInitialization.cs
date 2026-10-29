@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Wino.Core.Domain.Interfaces;
@@ -17,20 +18,34 @@ public sealed class ApplicationRuntimeInitialization(
     Func<AccountSenderPictureDirectory> senderPictures,
     Func<IWinoAccountIntelligenceSnapshotService> entitlement,
     Func<IMailIntelligenceCoordinator> intelligence,
-    Func<IntelligenceResultKeyLifecycle> keys)
+    Func<IntelligenceResultKeyLifecycle> keys,
+    Func<IPushRelayRegistrationService>? pushRelay = null,
+    Func<IRelaySocketCoordinator?>? relaySocket = null,
+    Func<ISyncCoordinator>? syncCoordinator = null,
+    Func<IAppPolicyAcceptanceSyncService?>? policySync = null,
+    Func<IEnumerable<IStartupInitializer>>? startupInitializers = null)
 {
     private int _completedStep;
+    private bool _startupInitializersCompleted;
     private Task _entitlementRefresh = Task.CompletedTask;
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
+        await RunStartupInitializersAsync(cancellationToken);
         await StepAsync(1, () => translations().InitializeAsync(), cancellationToken);
         await StepAsync(2, () => Task.WhenAll(database().InitializeAsync(), intelligenceStore().InitializeAsync(),
             translations().InitializeAsync(), synchronizationInitializer().InitializeAsync()), cancellationToken);
-        await StepAsync(3, () => shortcuts().InitializeAsync(), cancellationToken);
-        await StepAsync(4, () => pictures().MigrateLegacyAsync(), cancellationToken);
-        await StepAsync(5, () => senderPictures().InitializeAsync(), cancellationToken);
-        await StepAsync(6, async () =>
+
+        // Decides timer or relay for this install (fresh: relay; upgraded with accounts: timer plus the Windows
+        // introduction) and the initial per-account coverage. Runs once the database is ready and before the first
+        // synchronizer is created, so nothing reads the unconfigured sync method default.
+        if (syncCoordinator is not null)
+            await StepAsync(3, () => syncCoordinator().InitializeAsync(cancellationToken), cancellationToken);
+
+        await StepAsync(4, () => shortcuts().InitializeAsync(), cancellationToken);
+        await StepAsync(5, () => pictures().MigrateLegacyAsync(), cancellationToken);
+        await StepAsync(6, () => senderPictures().InitializeAsync(), cancellationToken);
+        await StepAsync(7, async () =>
         {
             await entitlement().GetEntitlementAsync();
             _entitlementRefresh = entitlement().RefreshEntitlementAsync(cancellationToken);
@@ -38,7 +53,7 @@ public sealed class ApplicationRuntimeInitialization(
 
         // This method installs several subscriptions before returning. If it throws part
         // way through, the singleton cannot safely be retried without its own rollback.
-        await StepAsync(7, async () =>
+        await StepAsync(8, async () =>
         {
             var coordinator = intelligence();
             try
@@ -58,13 +73,74 @@ public sealed class ApplicationRuntimeInitialization(
             }
         }, cancellationToken);
 
-        await StepAsync(8, () => keys().InitializeAsync(cancellationToken), cancellationToken);
+        await StepAsync(9, () => keys().InitializeAsync(cancellationToken), cancellationToken);
     }
 
     public Task RunBackgroundStartupAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.WhenAll(_entitlementRefresh, pictures().BackfillAsync());
+        return Task.WhenAll(_entitlementRefresh, pictures().BackfillAsync(), StartPushRelayAsync(cancellationToken));
+    }
+
+    /// <summary>The desktop socket follows the relay registration; it starts after the registration service.</summary>
+    private async Task StartRelaySocketAsync(CancellationToken cancellationToken)
+    {
+        if (relaySocket?.Invoke() is not { } coordinator)
+            return;
+
+        try
+        {
+            await coordinator.StartAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "The relay socket could not start.");
+        }
+    }
+
+    /// <summary>Live notifications must never fail startup; the relay service logs its own problems.</summary>
+    private async Task StartPushRelayAsync(CancellationToken cancellationToken)
+    {
+        if (pushRelay is null)
+            return;
+
+        try
+        {
+            // The sync method was decided in initialization step 3 (ISyncCoordinator), before any loop or
+            // synchronizer read it; the registration service starts against the configured value.
+
+            // Retries an app policy upload that failed earlier; never waited on, and it never throws.
+            if (policySync?.Invoke() is { } policy)
+                _ = policy.ReconcileAsync(cancellationToken);
+
+            await pushRelay().StartAsync(cancellationToken);
+            await StartRelaySocketAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Live notifications could not start.");
+        }
+    }
+
+    /// <summary>Runs first so shared configuration is in place even when a later step such as the database fails.</summary>
+    private async Task RunStartupInitializersAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_startupInitializersCompleted || startupInitializers is null)
+            return;
+
+        foreach (var initializer in startupInitializers())
+            await initializer.InitializeAsync();
+
+        _startupInitializersCompleted = true;
     }
 
     private async Task StepAsync(int step, Func<Task> operation, CancellationToken cancellationToken)

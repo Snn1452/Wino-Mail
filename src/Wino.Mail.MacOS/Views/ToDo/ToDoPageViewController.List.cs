@@ -11,6 +11,8 @@ using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.ViewModels;
 using Wino.Mail.ViewModels.Data;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
+using Wino.Mail.Controls.Core.ToDo;
 
 namespace Wino.Mail.MacOS.Views.ToDo;
 
@@ -276,7 +278,23 @@ public sealed partial class ToDoPageViewController
 
     private void GroupsChanged(object? sender, NotifyCollectionChangedEventArgs e) => OnUI(() => { ObserveGroups(); ScheduleReload(); });
     private void GroupChanged(object? sender, NotifyCollectionChangedEventArgs e) => OnUI(ScheduleReload);
-    private void GroupPropertyChanged(object? sender, PropertyChangedEventArgs e) => OnUI(ScheduleReload);
+    private void GroupPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // The count text changes with every toggle; the header row takes it in place. Anything else reshapes the list.
+        if (e.PropertyName == nameof(TaskGroup.HeaderCountText) && sender is TaskGroup group) OnUI(() => RefreshGroupHeader(group));
+        else OnUI(ScheduleReload);
+    }
+
+    private void RefreshGroupHeader(TaskGroup group)
+    {
+        if (_released || _reloadScheduled) return;
+        for (int row = 0; row < _entries.Count; row++)
+        {
+            if (!ReferenceEquals(_entries[row].Group, group)) continue;
+            if (_table.GetView(0, row, false) is WinoTaskGroupHeaderView header) header.Apply(group.Key, group.HeaderCountText);
+            return;
+        }
+    }
 
     private void ObserveGroups()
     {
@@ -303,6 +321,7 @@ public sealed partial class ToDoPageViewController
 
     private void RebuildEntries()
     {
+        var previous = _entries.ToArray();
         _entries.Clear();
         foreach (var group in _previewGroups ?? (IEnumerable<TaskGroup>)ViewModel.TaskGroups)
         {
@@ -312,7 +331,10 @@ public sealed partial class ToDoPageViewController
         _restoringSelection = true;
         try
         {
-            _table.ReloadData();
+            // An unchanged list keeps its cells; anything else reloads, which rebinds the visible cards.
+            bool same = previous.Length == _entries.Count && (nint)previous.Length == _table.RowCount;
+            for (int index = 0; same && index < previous.Length; index++) same = Equals(previous[index], _entries[index]);
+            if (!same) _table.ReloadData();
             ApplySelection(ViewModel.SelectedTasks.ToList());
         }
         finally { _restoringSelection = false; }
@@ -381,44 +403,28 @@ public sealed partial class ToDoPageViewController
     private NSTableRowView CreateRowView(NSTableView table)
         => table.MakeView(WinoTaskTableRowView.ReuseIdentifier, this) as WinoTaskTableRowView ?? new WinoTaskTableRowView();
 
-    private WinoTaskRowModel MapRow(TaskItemViewModel item) => new()
-    {
-        Title = item.Title ?? string.Empty,
-        IsCompleted = item.IsCompleted,
-        IsImportant = item.IsImportant,
-        IsEditable = item.IsEditable,
-        ListName = item.ShowListName && !string.IsNullOrEmpty(item.ListName) ? item.ListName : null,
-        ListColor = ListColor(item),
-        DueText = item.HasDueDate ? item.DueDisplayText : string.Empty,
-        IsOverdue = item.IsOverdue,
-        StepSummary = item.HasSteps ? item.StepSummaryText : string.Empty,
-        IsInMyDay = item.IsInMyDay,
-        HasNote = item.HasNote,
-        MyDayText = Translator.ToDoPage_MyDay,
-        ImportanceActionText = item.ImportanceActionText,
-        CompletionActionText = item.CompletionActionText
-    };
+    private WinoTaskRowModel MapRow(TaskItemViewModel item) => TaskRowPresentation.Describe(item, ListColorHex(item));
 
-    private NSColor? ListColor(TaskItemViewModel item)
+    private string? ListColorHex(TaskItemViewModel item)
     {
         if (_previewColors.TryGetValue(item.Task.TaskListId, out var preview)) return preview;
         var list = ViewModel.TaskLists.FirstOrDefault(candidate => candidate.Id == item.Task.TaskListId);
-        return WinoStyle.FromHexString(list?.ColorHex);
+        return list?.ColorHex;
     }
 
     // ---- Debug preview: synthetic rows that are never persisted, for layout checks on an empty account ----
 
     private List<TaskGroup>? _previewGroups;
-    private readonly Dictionary<Guid, NSColor> _previewColors = new();
+    private readonly Dictionary<Guid, string> _previewColors = new();
 
 #if DEBUG
     private void ShowPreview()
     {
         var today = DateTime.Now.Date;
         var releases = Guid.NewGuid(); var tasks = Guid.NewGuid(); var sprint = Guid.NewGuid();
-        _previewColors[releases] = WinoStyle.Hex(0xE17055);
-        _previewColors[tasks] = WinoStyle.Hex(0x4C5FD7);
-        _previewColors[sprint] = WinoStyle.Hex(0x8764B8);
+        _previewColors[releases] = "#E17055";
+        _previewColors[tasks] = "#4C5FD7";
+        _previewColors[sprint] = "#8764B8";
         TaskItemViewModel Item(string title, Guid list, string listName, DateTime? due = null, bool important = false, bool myDay = false, string? notes = null, bool done = false, params (string Title, bool Done)[] steps)
         {
             var task = new AccountTask { Title = title, TaskListId = list, DueDate = due, IsImportant = important, Notes = notes ?? string.Empty, IsCompleted = done,
@@ -507,12 +513,11 @@ public sealed partial class ToDoPageViewController
         menu.AddItem(MenuItem(task.ImportanceActionText, () => Observe(ViewModel.ToggleImportanceCommand.ExecuteAsync(task)), WinoIconGlyph.Star, enabled: editable));
         menu.AddItem(MenuItem(task.CompletionActionText, () => Observe(ViewModel.ToggleTaskCommand.ExecuteAsync(task)), WinoIconGlyph.Checkmark, enabled: editable));
         menu.AddItem(NSMenuItem.SeparatorItem);
-        menu.AddItem(MenuItem(Translator.ToDoPage_DueToday, () => Observe(ViewModel.SetTaskDueDateAsync(task, DateTime.Now.Date)), WinoIconGlyph.CalendarToday, enabled: editable));
-        menu.AddItem(MenuItem(Translator.ToDoPage_DueTomorrow, () => Observe(ViewModel.SetTaskDueDateAsync(task, DateTime.Now.Date.AddDays(1))), WinoIconGlyph.Calendar, enabled: editable));
+        menu.AddItem(MenuItem(Translator.ToDoPage_DueToday, () => Observe(ViewModel.SetTaskDueDateAsync(task, ToDoPageViewModel.DuePresetDate("today"))), WinoIconGlyph.CalendarToday, enabled: editable));
+        menu.AddItem(MenuItem(Translator.ToDoPage_DueTomorrow, () => Observe(ViewModel.SetTaskDueDateAsync(task, ToDoPageViewModel.DuePresetDate("tomorrow"))), WinoIconGlyph.Calendar, enabled: editable));
         menu.AddItem(MenuItem(Translator.ToDoPage_DuePresetPickDate + "…", () => ShowDueDatePicker(task, row), WinoIconGlyph.Calendar, enabled: editable));
         menu.AddItem(MenuItem(Translator.ToDoPage_RemoveDueDate, () => Observe(ViewModel.SetTaskDueDateAsync(task, null)), WinoIconGlyph.Calendar, enabled: editable && task.HasDueDate));
-        var destinations = ViewModel.TaskLists.Where(list => !list.IsReadOnly && list.Id != task.Task.TaskListId &&
-            list.MailAccountId == task.Task.MailAccountId && list.SourceKind == task.Task.SourceKind).ToList();
+        var destinations = ViewModel.GetMoveDestinations(task);
         if (destinations.Count > 0)
         {
             menu.AddItem(NSMenuItem.SeparatorItem);
@@ -523,6 +528,11 @@ public sealed partial class ToDoPageViewController
         }
         menu.AddItem(NSMenuItem.SeparatorItem);
         menu.AddItem(MenuItem(Translator.ToDoPage_DeleteTask, () => Observe(ViewModel.DeleteTaskCommand.ExecuteAsync(task)), WinoIconGlyph.Delete, WinoToDoStyle.Critical, editable));
+#if DEBUG
+        // Windows ToDoPage: shows the real reminder notification for this task.
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        menu.AddItem(MenuItem(Translator.Buttons_TestNotification, () => Observe(_notifications.CreateTestTaskReminderNotificationAsync(task.Task)), WinoIconGlyph.Reminder));
+#endif
         return menu;
     }
 

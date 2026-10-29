@@ -45,6 +45,12 @@ public interface IWinoAccountApiClient
     Task<ApiEnvelope<JsonElement>> ForgotPasswordAsync(string email, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<JsonElement>> LogoutAsync(string refreshToken, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AuthUserDto>> GetCurrentUserAsync(CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Records that the signed-in Wino Account accepted app privacy policy <paramref name="version"/>
+    /// (<c>POST api/v1/users/me/app-policy/accept</c>). Idempotent; <paramref name="source"/> is an
+    /// <see cref="AppPolicyAcceptanceSources"/> value and <paramref name="platform"/> a relay platform value.
+    /// </summary>
+    Task<ApiEnvelope<AppPolicyAcceptanceDto>> AcceptAppPolicyAsync(int version, string source, string platform, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiSummaryResultDto>> SummarizeAsync(IReadOnlyList<MailContentSegment> segments, string targetLanguage, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiTranslationResultDto>> TranslateAsync(IReadOnlyList<MailContentSegment> segments, string? sourceLanguage, string targetLanguage, CancellationToken cancellationToken = default);
     /// <param name="context">A <see cref="RewriteContexts"/> value: reading a received message or composing a draft.</param>
@@ -60,6 +66,25 @@ public interface IWinoAccountApiClient
     /// </summary>
     Task<ApiEnvelope<AppStoreRedeemResultDto>> RedeemAppStoreTransactionsAsync(IReadOnlyList<string> signedTransactions, CancellationToken cancellationToken = default);
     Task<ApiEnvelope<AiUsageStatusDto>> GetAiUsageAsync(CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Exchanges the Wino access token for a short-lived WinoRelay token (<c>POST /api/v1/relay/token</c>).
+    /// A 503 answers with <see cref="Models.PushRelay.RelayApiErrorCodes.RelayUnavailable"/>.
+    /// </summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayTokenDto>> CreateRelayTokenAsync(CancellationToken cancellationToken = default);
+    /// <summary>Anonymous: a short-lived nonce for device registration (<c>POST api/v1/relay/devices/challenge</c>).</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayDeviceChallengeDto>> CreateRelayDeviceChallengeAsync(string platform, CancellationToken cancellationToken = default);
+    /// <summary>Anonymous: registers this install as a relay device and returns its credential (<c>POST api/v1/relay/devices</c>).</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayDeviceDto>> RegisterRelayDeviceAsync(Models.PushRelay.RegisterRelayDeviceRequest request, CancellationToken cancellationToken = default);
+    /// <summary>Device credential instead of a Wino Account: a relay token for the device subject.</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayTokenDto>> CreateRelayTokenForDeviceAsync(Guid deviceId, string credential, Models.PushRelay.RelayDeviceAssertion? assertion, CancellationToken cancellationToken = default);
+    /// <summary>Signed in: links the device (proven by its credential) to the signed-in Wino Account.</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayDeviceDto>> LinkRelayDeviceAsync(Guid deviceId, string credential, Models.PushRelay.RelayDeviceAssertion? assertion, CancellationToken cancellationToken = default);
+    /// <summary>Device credential: removes the Wino Account from the device; the device keeps working anonymously.</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayDeviceDto>> UnlinkRelayDeviceAsync(Guid deviceId, string credential, Models.PushRelay.RelayDeviceAssertion? assertion, CancellationToken cancellationToken = default);
+    /// <summary>Device credential: revokes the device itself (<c>DELETE api/v1/relay/devices/{id}</c>).</summary>
+    Task<ApiEnvelope<JsonElement>> RevokeRelayDeviceAsync(Guid deviceId, string credential, Models.PushRelay.RelayDeviceAssertion? assertion, CancellationToken cancellationToken = default);
+    /// <summary>Signed in: the devices linked to the Wino Account (<c>GET api/v1/relay/devices</c>).</summary>
+    Task<ApiEnvelope<Models.PushRelay.RelayDeviceListDto>> GetRelayDevicesAsync(CancellationToken cancellationToken = default);
     /// <summary>The stored sync snapshot bytes and revision, or null when the account has none.</summary>
     Task<WinoSyncSnapshotDownload?> GetSyncSnapshotAsync(CancellationToken cancellationToken = default);
     /// <summary>Metadata for the stored sync snapshot without downloading its encrypted payload.</summary>

@@ -10,7 +10,8 @@ using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Menus;
 using Wino.Core.Domain.Models.Navigation;
 using Wino.Editor;
-using Wino.Editor.AppKit;
+using Wino.Editor.WebKit;
+using AppKitHtmlMailReaderSession = Wino.Editor.WebKit.WebKitHtmlMailReaderSession;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Mail.Controls.AppKit.MailList;
 using Wino.Mail.MacOS.Infrastructure;
@@ -18,14 +19,17 @@ using Wino.Mail.ViewModels;
 using Wino.Mail.ViewModels.Data;
 using Wino.Messaging.Client.Mails;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
+using Wino.Core.Domain.Presentation;
 
 namespace Wino.Mail.MacOS.Views.Mail;
 
 /// <summary>
-/// Reading pane message view, laid out like the Windows MailRenderingPage inside the reader zone:
-/// the command bar on top (Reply, Reply all, Forward | Archive, Delete, Move, Flag, Mark read, More),
-/// the header (subject 19 bold, 40pt sender avatar, name, address, recipients, date, the status row
-/// with Unsubscribe and the S/MIME indicators, category chips, the Wino Intelligence header), the
+/// Reading pane message view (Windows MailRenderingPage, in the Mac layout): the subject row (the
+/// subject, then the icon-only commands Reply, Reply all, Forward | Archive, Delete, Move, Flag, Mark
+/// read, Pop out, More at the trailing edge), the sender block (40pt avatar; name, address and the
+/// To, Cc and Bcc rows; the date with Unsubscribe and the S/MIME indicators at the top right),
+/// category chips, the Wino Intelligence header, the
 /// remote-image banner, the HTML body in a card through the shared reader engine, the attachment
 /// strip with Save all, and the loading skeleton. Print and Save as PDF go through
 /// <see cref="MacMailPrintPresenter"/> while the reader is active.
@@ -49,6 +53,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private NSView _intelligenceHost = null!;
     private WinoInfoBar _imageBanner = null!;
     private WKWebView _webView = null!;
+    private readonly ReaderLinkTargetBar _linkTarget = new();
     private AppKitHtmlMailReaderSession? _reader;
     private NSStackView _attachmentTiles = null!;
     private NSView _attachmentStrip = null!;
@@ -58,19 +63,66 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private string _currentRenderedHtml = string.Empty;
     private bool _dark;
     private bool _disposedReader;
-    private bool _readerViewEnabled;
+    private NSStackView _header = null!;
+    private NSStackView _stripRow = null!;
+    private readonly List<NSLayoutConstraint> _headerWidths = new();
+    private NSLayoutConstraint _subjectLeading = null!;
+    private NSLayoutConstraint _bodyLeading = null!;
+    private NSLayoutConstraint _bodyTrailing = null!;
+    private NSLayoutConstraint _bodyBottom = null!;
+    private ReaderWidthState? _widthState;
+
+    /// <summary>Reader widths: Narrow tightens the margins; Compact also drops the avatar.</summary>
+    private enum ReaderWidthState { Wide, Narrow, Compact }
+
+    private const double NarrowWidth = 560;
+    private const double CompactWidth = 430;
+    private const double SubjectMinimumWidth = 160;
 
     public override void LoadView()
     {
         var root = new NSView();
 
-        _commandBar = new MailReaderCommandBar();
-
-        // ---- Header ----
-        _subject = WinoStyle.Label(string.Empty, WinoStyle.ReaderSubject, WinoStyle.PrimaryText, 3);
+        // ---- Subject row: the subject, then the commands at the trailing edge ----
+        _commandBar = new MailReaderCommandBar { IconOnly = true, HugsCommands = true };
+        // IconOnly hands the toolbar role to a host; here the bar is the reader's toolbar itself.
+        _commandBar.AccessibilityElement = true;
+        _subject = WinoStyle.Label(string.Empty, NSFont.SystemFontOfSize(16, NSFontWeight.Semibold), WinoStyle.PrimaryText, 2);
         _subject.SetContentHuggingPriorityForOrientation(1, NSLayoutConstraintOrientation.Horizontal);
         _subject.Selectable = true;
+        _subject.Cell.TruncatesLastVisibleLine = true;
+        var topRow = new NSView { TranslatesAutoresizingMaskIntoConstraints = false };
+        var topSeparator = new WinoSurfaceView { Fill = WinoStyle.ZoneStroke };
+        topRow.AddSubview(_subject);
+        topRow.AddSubview(_commandBar);
+        topRow.AddSubview(topSeparator);
+        _subjectLeading = _subject.LeadingAnchor.ConstraintEqualTo(topRow.LeadingAnchor, 24);
+        // The subject keeps a readable width; below it the commands fold into More instead.
+        var subjectMinimum = _subject.WidthAnchor.ConstraintGreaterThanOrEqualTo((nfloat)SubjectMinimumWidth);
+        subjectMinimum.Priority = 760;
+        var rowHeight = topRow.HeightAnchor.ConstraintEqualTo(50);
+        rowHeight.Priority = 250;
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            _subjectLeading,
+            subjectMinimum,
+            _subject.CenterYAnchor.ConstraintEqualTo(topRow.CenterYAnchor),
+            _subject.TopAnchor.ConstraintGreaterThanOrEqualTo(topRow.TopAnchor, 10),
+            _subject.BottomAnchor.ConstraintLessThanOrEqualTo(topRow.BottomAnchor, -10),
+            _commandBar.LeadingAnchor.ConstraintGreaterThanOrEqualTo(_subject.TrailingAnchor, 12),
+            _commandBar.TrailingAnchor.ConstraintEqualTo(topRow.TrailingAnchor),
+            _commandBar.CenterYAnchor.ConstraintEqualTo(topRow.CenterYAnchor),
+            _commandBar.TopAnchor.ConstraintGreaterThanOrEqualTo(topRow.TopAnchor),
+            _commandBar.BottomAnchor.ConstraintLessThanOrEqualTo(topRow.BottomAnchor),
+            topRow.HeightAnchor.ConstraintGreaterThanOrEqualTo(50),
+            rowHeight,
+            topSeparator.LeadingAnchor.ConstraintEqualTo(topRow.LeadingAnchor),
+            topSeparator.TrailingAnchor.ConstraintEqualTo(topRow.TrailingAnchor),
+            topSeparator.BottomAnchor.ConstraintEqualTo(topRow.BottomAnchor),
+            topSeparator.HeightAnchor.ConstraintEqualTo(1)
+        ]);
 
+        // ---- Sender block: avatar | name, address and the To, Cc, Bcc rows | date and status ----
         _avatar = new WinoContactPicture(40);
         // The sender line is one link that opens the sender's contact card (AttachSenderLink).
         _senderName = WinoStyle.Label(string.Empty, WinoStyle.BodyStrong);
@@ -79,17 +131,26 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         var nameLine = WinoLayout.HStack(6, _senderName, _senderAddress);
         nameLine.Alignment = NSLayoutAttribute.FirstBaseline;
         AttachSenderLink(nameLine);
-        var senderText = WinoLayout.VStack(1, nameLine);
-        senderText.SetContentHuggingPriorityForOrientation(1, NSLayoutConstraintOrientation.Horizontal);
+        var recipientRows = BuildRecipientRows();
+        var senderText = WinoLayout.VStack(3, nameLine, recipientRows);
+        // NSStackView sizes itself by its own hugging priority: the column takes the row's free width.
+        senderText.SetHuggingPriority(1, NSLayoutConstraintOrientation.Horizontal);
         senderText.SetContentCompressionResistancePriority(200, NSLayoutConstraintOrientation.Horizontal);
+        recipientRows.WidthAnchor.ConstraintEqualTo(senderText.WidthAnchor).Active = true;
+
+        // Date, then Unsubscribe and the S/MIME indicators, at the top right like the Windows header.
         _date = WinoStyle.Label(string.Empty, NSFont.SystemFontOfSize(12), WinoStyle.SecondaryText);
         _date.SetContentCompressionResistancePriority(1000, NSLayoutConstraintOrientation.Horizontal);
-        var senderRow = WinoLayout.HStack(12, _avatar, senderText, _date);
-
-        // Unsubscribe link and S/MIME indicators, under the sender like the Windows header.
         _statusRow = new MailReaderStatusRow();
         _statusRow.UnsubscribeInvoked += (_, _) => Observe(ViewModel.UnsubscribeCommand.ExecuteAsync(null));
         _statusRow.SignatureInvoked += (_, _) => Observe(ViewModel.ShowSmimeSigningCertificateInfoCommand.ExecuteAsync(null));
+        var details = WinoLayout.VStack(4, _date, _statusRow);
+        details.Alignment = NSLayoutAttribute.Trailing;
+        details.SetHuggingPriority(750, NSLayoutConstraintOrientation.Horizontal);
+
+        var senderRow = WinoLayout.HStack(12, _avatar, senderText, details);
+        senderRow.Alignment = NSLayoutAttribute.Top;
+        senderRow.DetachesHiddenViews = true;
 
         _chips = WinoLayout.HStack(8);
         _chips.Distribution = NSStackViewDistribution.Fill;
@@ -110,18 +171,13 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         _intelligenceHost = new NSView { TranslatesAutoresizingMaskIntoConstraints = false, Hidden = true };
         BuildIntelligenceHeader(_intelligenceHost);
 
-        // To, Cc and Bcc under the sender, indented to the name column (avatar 40 + spacing 12).
-        var recipients = new NSView { TranslatesAutoresizingMaskIntoConstraints = false };
-        WinoLayout.Fill(BuildRecipientRows(), recipients, 0, 52, 0, 0);
-
-        var header = WinoLayout.VStack(12, _subject, senderRow, recipients, _statusRow, _chips, _intelligenceHost, _imageBanner);
-        header.EdgeInsets = new NSEdgeInsets(18, 24, 10, 24);
-        header.SetCustomSpacing(4, senderRow);
-        foreach (var view in new NSView[] { _subject, senderRow, recipients, _intelligenceHost, _imageBanner })
-            view.WidthAnchor.ConstraintEqualTo(header.WidthAnchor, 1, -48).Active = true;
+        var header = _header = WinoLayout.VStack(12, senderRow, _chips, _intelligenceHost, _imageBanner);
+        header.EdgeInsets = new NSEdgeInsets(14, 24, 10, 24);
+        foreach (var view in new NSView[] { senderRow, _intelligenceHost, _imageBanner })
+            _headerWidths.Add(view.WidthAnchor.ConstraintEqualTo(header.WidthAnchor, 1, -48));
         // The tile row hugs its chips from the leading edge; it is only capped (and clips) at the header width.
-        _chips.WidthAnchor.ConstraintLessThanOrEqualTo(header.WidthAnchor, 1, -48).Active = true;
-        _statusRow.WidthAnchor.ConstraintLessThanOrEqualTo(header.WidthAnchor, 1, -48).Active = true;
+        _headerWidths.Add(_chips.WidthAnchor.ConstraintLessThanOrEqualTo(header.WidthAnchor, 1, -48));
+        NSLayoutConstraint.ActivateConstraints(_headerWidths.ToArray());
 
         // ---- Body card ----
         _webView = new WKWebView(CGRect.Empty, new WKWebViewConfiguration()) { TranslatesAutoresizingMaskIntoConstraints = false };
@@ -135,8 +191,14 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
             Stroke = WinoStyle.ZoneStroke
         };
         WinoLayout.Fill(_webView, card, 1, 1, 1, 1);
+        _linkTarget.Attach(card);
         var body = new NSView { TranslatesAutoresizingMaskIntoConstraints = false };
-        WinoLayout.Fill(card, body, 6, 24, 24, 24);
+        card.TranslatesAutoresizingMaskIntoConstraints = false;
+        body.AddSubview(card);
+        _bodyLeading = card.LeadingAnchor.ConstraintEqualTo(body.LeadingAnchor, 24);
+        _bodyTrailing = card.TrailingAnchor.ConstraintEqualTo(body.TrailingAnchor, -24);
+        _bodyBottom = card.BottomAnchor.ConstraintEqualTo(body.BottomAnchor, -24);
+        NSLayoutConstraint.ActivateConstraints([_bodyLeading, _bodyTrailing, _bodyBottom, card.TopAnchor.ConstraintEqualTo(body.TopAnchor, 6)]);
 
         // ---- Attachments ----
         _attachmentTiles = WinoLayout.HStack(10);
@@ -156,7 +218,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         _saveAllButton.Image = WinoIcons.Image(WinoIconGlyph.ArrowDownload, 12, null, Translator.Reader_SaveAllAttachmentButtonText);
         _saveAllButton.ImagePosition = NSCellImagePosition.ImageLeading;
         _saveAllButton.Activated += (_, _) => Observe(ViewModel.SaveAllAttachmentsCommand.ExecuteAsync(null));
-        var stripRow = WinoLayout.HStack(10, tileScroll, _saveAllButton);
+        var stripRow = _stripRow = WinoLayout.HStack(10, tileScroll, _saveAllButton);
         stripRow.EdgeInsets = new NSEdgeInsets(0, 24, 14, 24);
         _attachmentStrip = stripRow;
         _attachmentStrip.Hidden = true;
@@ -169,7 +231,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
             Alignment = NSLayoutAttribute.Leading,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
-        foreach (var view in new NSView[] { _commandBar, header, body, _attachmentStrip })
+        foreach (var view in new NSView[] { topRow, header, body, _attachmentStrip })
         {
             stack.AddArrangedSubview(view);
             view.WidthAnchor.ConstraintEqualTo(stack.WidthAnchor).Active = true;
@@ -185,7 +247,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         [
             loadingHost.LeadingAnchor.ConstraintEqualTo(root.LeadingAnchor),
             loadingHost.TrailingAnchor.ConstraintEqualTo(root.TrailingAnchor),
-            loadingHost.TopAnchor.ConstraintEqualTo(_commandBar.BottomAnchor),
+            loadingHost.TopAnchor.ConstraintEqualTo(topRow.BottomAnchor),
             loadingHost.BottomAnchor.ConstraintEqualTo(root.BottomAnchor)
         ]);
 
@@ -205,6 +267,11 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         _reader = new AppKitHtmlMailReaderSession(_webView);
         _reader.Configure(ViewModel.ExternalLauncher);
         _reader.OperationFailed += (_, exception) => ReportError(exception);
+        _reader.LinkHovered += (_, args) => _linkTarget.Show(args);
+        _reader.NavigationRequested += (_, _) => _linkTarget.Clear();
+        _commandBar.ShowsLabels = ViewModel.PreferencesService.IsShowActionLabelsEnabled;
+        ViewModel.PreferencesService.PreferenceChanged -= PreferenceChanged;
+        ViewModel.PreferencesService.PreferenceChanged += PreferenceChanged;
         _dark = IsDarkAppearance();
         ViewModel.IsDarkWebviewRenderer = _dark;
         ViewModel.RenderHtmlAsyncFunc = RenderAsync;
@@ -216,6 +283,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         Bind(nameof(ViewModel.Subject), vm => vm.Subject, subject =>
         {
             _subject.StringValue = string.IsNullOrWhiteSpace(subject) ? Translator.MailItemNoSubject : subject;
+            _subject.ToolTip = _subject.StringValue;
             UpdatePopOutTitle(subject);
         });
         Bind(nameof(ViewModel.FromName), vm => vm.FromName, _ => UpdateSender());
@@ -231,6 +299,8 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         Bind(nameof(ViewModel.IsMailContentReady), vm => vm.IsMailContentReady, ready =>
         {
             if (_loading.Superview is { } host) host.Hidden = ready;
+            // The loading treatment covers the reader below the subject row; the previous subject hides with it.
+            _subject.AlphaValue = ready ? 1 : 0;
             _loading.IsAnimating = !ready;
         });
         Bind(nameof(ViewModel.CurrentRenderModel), vm => vm.CurrentRenderModel, _ =>
@@ -270,14 +340,22 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private void Bind<TValue>(string property, Func<MailRenderingPageViewModel, TValue> read, Action<TValue> apply)
         => Bindings.Own(new PropertyBinding<MailRenderingPageViewModel, TValue>(ViewModel, property, read, apply, Dispatcher, ReportError));
 
+    private bool _attachmentsQueued;
+
     private void ObserveCollection(INotifyCollectionChanged collection, bool attachments = false)
     {
-        NotifyCollectionChangedEventHandler handler = (_, _) => _ = Dispatcher.ExecuteOnUIThread(() =>
+        NotifyCollectionChangedEventHandler handler = (_, _) =>
         {
-            if (Bindings.IsDisposed) return;
-            if (attachments) UpdateAttachments();
-            else UpdateRecipients();
-        });
+            if (!attachments) { _ = Dispatcher.ExecuteOnUIThread(() => { if (!Bindings.IsDisposed) UpdateRecipients(); }); return; }
+            // Both attachment collections change item by item while a message loads; one rebuild per turn.
+            if (_attachmentsQueued) return;
+            _attachmentsQueued = true;
+            NSApplication.SharedApplication.BeginInvokeOnMainThread(() =>
+            {
+                _attachmentsQueued = false;
+                if (!Bindings.IsDisposed) UpdateAttachments();
+            });
+        };
         collection.CollectionChanged += handler;
         Bindings.Own(new ActionDisposable(() => collection.CollectionChanged -= handler));
     }
@@ -294,7 +372,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private void UpdateRecipients()
     {
         UpdateRecipientRows();
-        _date.StringValue = MailRowMapper.FormatReaderDate(ViewModel.CreationDate);
+        _date.StringValue = MailRowMapper.FormatReaderDate(ViewModel.CreationDate, ViewModel.PreferencesService.MailTimeFormatPreference);
     }
 
     /// <summary>Category chips under the sender row. The intelligence tiles live in the Wino Intelligence header.</summary>
@@ -321,52 +399,34 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
 
     // ---- Command bar ----
 
-    private static readonly MailOperation[] PrimaryOrder =
+    /// <summary>Operations the unified toolbar shows (<see cref="ShellCommand"/>), so the reader does not repeat them.</summary>
+    private static readonly HashSet<MailOperation> ToolbarOperations =
     [
-        MailOperation.Reply, MailOperation.ReplyAll, MailOperation.Forward, MailOperation.None,
+        MailOperation.Reply, MailOperation.ReplyAll, MailOperation.Forward,
         MailOperation.Archive, MailOperation.UnArchive, MailOperation.SoftDelete, MailOperation.HardDelete, MailOperation.Move,
         MailOperation.SetFlag, MailOperation.ClearFlag, MailOperation.MarkAsRead, MailOperation.MarkAsUnread
     ];
 
-    /// <summary>The short label the Windows command bar shows ("Flag" rather than "Set flag").</summary>
-    private static string BarTitle(MailOperation operation)
-        => operation == MailOperation.SetFlag ? Translator.MailOperation_Flag : MailOperationPresentation.Title(operation);
-
+    /// <summary>The primary commands and the More menu from the shared <see cref="MailReaderCommandLayout"/>.</summary>
     private void UpdateCommandBar()
     {
-        var items = ViewModel.MenuItems.OfType<MailOperationMenuItem>().Where(static item => item.Operation != MailOperation.Seperator).ToArray();
+        var plan = MailReaderCommandLayout.Build(ViewModel.MenuItems, _currentItem is not null, offerMove: false);
         var commands = new List<MailReaderCommand?>();
-        var primary = new HashSet<MailOperation>();
-        if (!items.Any(item => PrimaryOrder.Contains(item.Operation)))
+        foreach (var slot in plan.Primary)
         {
-            if (_currentItem is null && items.Length > 0)
-            {
-                // A saved .eml has only Save As and Print; show just those, like Windows.
-                foreach (var item in items) { var captured = item; commands.Add(new MailReaderCommand(MailOperationPresentation.Glyph(item.Operation), BarTitle(item.Operation), () => Observe(ViewModel.OperationClickedCommand.ExecuteAsync(captured)), item.IsEnabled)); }
-                _commandBar.SetCommands(commands, null);
-                return;
-            }
-            // Nothing loaded yet (or the message failed to load): the default set, disabled, like the Windows bar.
-            foreach (var operation in new[] { MailOperation.Reply, MailOperation.ReplyAll, MailOperation.Forward, MailOperation.None, MailOperation.Archive, MailOperation.SoftDelete, MailOperation.Move, MailOperation.SetFlag, MailOperation.MarkAsRead })
-                commands.Add(operation == MailOperation.None ? null : new MailReaderCommand(MailOperationPresentation.Glyph(operation), BarTitle(operation), () => { }, false));
-            _commandBar.SetCommands(commands, items.Length == 0 ? null : () => BuildMoreMenu(ViewModel.MenuItems.OfType<MailOperationMenuItem>().ToArray()));
-            return;
+            // The window toolbar carries reply, file and mark actions; the reader keeps the rest.
+            if (slot is null) { if (commands.Count > 0 && commands[^1] is not null) commands.Add(null); continue; }
+            if (ToolbarOperations.Contains(slot.Operation)) continue;
+            var captured = slot.Item;
+            commands.Add(new MailReaderCommand(MailOperationDisplay.GetGlyph(slot.Operation), slot.Title,
+                captured is null ? static () => { } : () => Observe(ViewModel.OperationClickedCommand.ExecuteAsync(captured)), slot.IsEnabled));
         }
-
-        foreach (var operation in PrimaryOrder)
-        {
-            if (operation == MailOperation.None) { commands.Add(null); continue; }
-            var item = items.FirstOrDefault(candidate => candidate.Operation == operation);
-            if (item is null) continue;
-            primary.Add(operation);
-            var captured = item;
-            commands.Add(new MailReaderCommand(MailOperationPresentation.Glyph(operation), BarTitle(operation),
-                () => Observe(ViewModel.OperationClickedCommand.ExecuteAsync(captured)), item.IsEnabled));
-        }
-        if (commands.Count > 0 && commands[^1] is null) commands.RemoveAt(commands.Count - 1);
-        AppendPopOutCommand(commands);
-        var overflow = ViewModel.MenuItems.OfType<MailOperationMenuItem>().Where(item => !primary.Contains(item.Operation)).ToArray();
-        _commandBar.SetCommands(commands, () => BuildMoreMenu(overflow));
+        while (commands.Count > 0 && commands[^1] is null) commands.RemoveAt(commands.Count - 1);
+        // A loaded message gets the pop-out command; a saved message file and the placeholder set do not.
+        if (plan.Kind == MailReaderCommandPlanKind.Message)
+            AppendPopOutCommand(commands);
+        var overflow = plan.Overflow;
+        _commandBar.SetCommands(commands, overflow.Count == 0 ? null : () => BuildMoreMenu(overflow));
     }
 
     private NSMenu BuildMoreMenu(IReadOnlyList<MailOperationMenuItem> items)
@@ -381,7 +441,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
                 previousSeparator = true;
                 continue;
             }
-            var title = MailOperationPresentation.Title(item.Operation);
+            var title = MailOperationDisplay.GetTitle(item.Operation);
             if (string.IsNullOrEmpty(title)) continue;
             var captured = item;
             var menuItem = new NSMenuItem(title, (_, _) => Observe(ViewModel.OperationClickedCommand.ExecuteAsync(captured))) { Enabled = item.IsEnabled };
@@ -393,7 +453,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         // Windows OperationCommandBar: the Reader View toggle (simplified Readability layout) and the editor theme toggle.
         var readerView = new NSMenuItem(Translator.Reader_ReaderView, (_, _) => ToggleReaderView())
         {
-            State = _readerViewEnabled ? NSCellStateValue.On : NSCellStateValue.Off,
+            State = ViewModel.IsReaderViewEnabled ? NSCellStateValue.On : NSCellStateValue.Off,
             Enabled = !string.IsNullOrWhiteSpace(_currentRenderedHtml),
             Image = WinoIcons.Image(WinoIconGlyph.Document, 16)
         };
@@ -410,7 +470,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private void ToggleReaderView()
     {
         if (_reader is null || _disposedReader) return;
-        _readerViewEnabled = !_readerViewEnabled;
+        ViewModel.IsReaderViewEnabled = !ViewModel.IsReaderViewEnabled;
         if (!string.IsNullOrWhiteSpace(_currentRenderedHtml)) Observe(RenderActiveContentAsync());
     }
 
@@ -459,10 +519,13 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         tile.AccessibilityLabel = $"{attachment.FileName}, {attachment.ReadableSize}";
         tile.Opened += (_, _) => Observe(ViewModel.OpenAttachmentCommand.ExecuteAsync(attachment));
         tile.Menu = new NSMenu();
-        tile.Menu.AddItem(new NSMenuItem(Translator.Buttons_Open, (_, _) => Observe(ViewModel.OpenAttachmentCommand.ExecuteAsync(attachment))) { Image = WinoIcons.Image(WinoIconGlyph.Open, 16) });
-        tile.Menu.AddItem(new NSMenuItem(Translator.Buttons_Save, (_, _) => Observe(ViewModel.SaveAttachmentCommand.ExecuteAsync(attachment))) { Image = WinoIcons.Image(WinoIconGlyph.Save, 16) });
+        tile.Menu.AddItem(new NSMenuItem(Translator.Buttons_Open, (_, _) => Observe(ViewModel.OpenAttachmentCommand.ExecuteAsync(attachment))) { Image = OpenIcon });
+        tile.Menu.AddItem(new NSMenuItem(Translator.Buttons_Save, (_, _) => Observe(ViewModel.SaveAttachmentCommand.ExecuteAsync(attachment))) { Image = SaveIcon });
         return tile;
     }
+
+    private static readonly NSImage OpenIcon = WinoIcons.Image(WinoIconGlyph.Open, 16);
+    private static readonly NSImage SaveIcon = WinoIcons.Image(WinoIconGlyph.Save, 16);
 
     private static NSColor ExtensionColor(string extension) => extension switch
     {
@@ -479,15 +542,17 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     private async Task RenderAsync(string html)
     {
         if (_reader is null || _disposedReader) return;
+        _linkTarget.Clear();
         _currentRenderedHtml = html ?? string.Empty;
         await _reader.SetThemeAsync(_dark);
+        await _reader.SetReaderTypographyAsync($"{ViewModel.PreferencesService.ReaderFont}, sans-serif", ViewModel.PreferencesService.ReaderFontSize);
         // The intelligence context loads while the body renders, like the Windows reader.
         var intelligence = IntelligenceHtmlRendered(_currentRenderedHtml);
         await RenderActiveContentAsync();
         await _reader.SetAccessibilityContextAsync(new ReaderAccessibilityContext(
             string.IsNullOrWhiteSpace(ViewModel.Subject) ? Translator.MailItemNoSubject : ViewModel.Subject,
             string.IsNullOrWhiteSpace(ViewModel.FromName) ? ViewModel.FromAddress : $"{ViewModel.FromName} <{ViewModel.FromAddress}>",
-            MailRowMapper.FormatReaderDate(ViewModel.CreationDate),
+            MailRowMapper.FormatReaderDate(ViewModel.CreationDate, ViewModel.PreferencesService.MailTimeFormatPreference),
             Translator.Reader_MessageBodyAutomationName,
             Translator.Reader_PlainTextFallbackAutomationName,
             ViewModel.CurrentRenderModel?.AccessibleText ?? string.Empty));
@@ -502,12 +567,13 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         var options = ViewModel.CurrentRenderModel?.MailRenderingOptions;
         var policy = (options?.LoadImages ?? true) ? RemoteContentPolicy.ImagesAndFontsAllowed : RemoteContentPolicy.Blocked;
         await _reader.RenderAsync(new HtmlMailReaderRequest(string.IsNullOrEmpty(html) ? " " : html, policy,
-            _readerViewEnabled ? HtmlMailRenderMode.Readability : HtmlMailRenderMode.Original, options?.RenderPlaintextLinks ?? true));
+            ViewModel.IsReaderViewEnabled ? HtmlMailRenderMode.Readability : HtmlMailRenderMode.Original, options?.RenderPlaintextLinks ?? true));
     }
 
     private Task ClearAsync()
     {
         _currentRenderedHtml = string.Empty;
+        _linkTarget.Clear();
         IntelligenceContentCleared();
         return _reader is null || _disposedReader ? Task.CompletedTask : _reader.ClearAsync();
     }
@@ -518,11 +584,34 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
     public override void ViewDidLayout()
     {
         base.ViewDidLayout();
+        ApplyWidthState(View.Bounds.Width);
         var dark = IsDarkAppearance();
         if (dark == _dark || _reader is null || _disposedReader) return;
         _dark = dark;
         ViewModel.IsDarkWebviewRenderer = dark;
         Observe(_reader.SetThemeAsync(dark));
+    }
+
+    /// <summary>
+    /// The reader's adaptive layout. The command bar folds into More on its own (it gives way to the
+    /// subject); at Mac reading pane and pop-out widths the margins also tighten.
+    /// </summary>
+    private void ApplyWidthState(nfloat width)
+    {
+        if (width <= 0) return;
+        var state = width < CompactWidth ? ReaderWidthState.Compact : width < NarrowWidth ? ReaderWidthState.Narrow : ReaderWidthState.Wide;
+        if (state == _widthState) return;
+        _widthState = state;
+
+        double inset = state == ReaderWidthState.Wide ? 24 : 14;
+        _subjectLeading.Constant = (nfloat)inset;
+        _header.EdgeInsets = new NSEdgeInsets(state == ReaderWidthState.Wide ? 14 : 12, (nfloat)inset, 10, (nfloat)inset);
+        foreach (var constraint in _headerWidths) constraint.Constant = (nfloat)(-2 * inset);
+        _bodyLeading.Constant = (nfloat)inset;
+        _bodyTrailing.Constant = (nfloat)(-inset);
+        _bodyBottom.Constant = (nfloat)(-inset);
+        _stripRow.EdgeInsets = new NSEdgeInsets(0, (nfloat)inset, 14, (nfloat)inset);
+        _avatar.Hidden = state == ReaderWidthState.Compact;
     }
 
     // ---- Wino Intelligence hooks (MailRenderingPageViewController.Intelligence.cs) ----
@@ -576,8 +665,8 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         });
         MacDebugBridge.Register("reader-view", args => ReaderDebugAsync(() =>
         {
-            if (args.Length > 0 && (args[0] == "on") != _readerViewEnabled) ToggleReaderView();
-            return $"readerView={_readerViewEnabled} rendered={!string.IsNullOrWhiteSpace(_currentRenderedHtml)}";
+            if (args.Length > 0 && (args[0] == "on") != ViewModel.IsReaderViewEnabled) ToggleReaderView();
+            return $"readerView={ViewModel.IsReaderViewEnabled} rendered={!string.IsNullOrWhiteSpace(_currentRenderedHtml)}";
         }));
         MacDebugBridge.Register("reader-recipients", args => ReaderDebugAsync(() =>
         {
@@ -620,18 +709,26 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         ViewModel.CloseRequested -= CloseRequested;
         ViewModel.ComposeRequested -= ComposeRequested;
         CloseContactCard();
+        ViewModel.PreferencesService.PreferenceChanged -= PreferenceChanged;
         ViewModel.RenderHtmlAsyncFunc = null;
         ViewModel.ClearRenderedHtmlAsyncFunc = null;
         ViewModel.PrintPresenter = null!;
-        ViewModel.OnNavigatedFrom(NavigationMode.New, null!);
+        ViewModel.OnNavigatedFrom(NavigationMode.New, null);
         IntelligenceDispose();
         await DisposeReaderAsync();
+    }
+
+    private void PreferenceChanged(object? sender, string name)
+    {
+        if (name != nameof(IPreferencesService.IsShowActionLabelsEnabled)) return;
+        NSApplication.SharedApplication.BeginInvokeOnMainThread(() => _commandBar.ShowsLabels = ViewModel.PreferencesService.IsShowActionLabelsEnabled);
     }
 
     private async Task DisposeReaderAsync()
     {
         if (_reader is null || _disposedReader) return;
         _disposedReader = true;
+        _linkTarget.Clear();
         ViewModel.PrintPresenter = null!;
         try { await _reader.DisposeAsync(); }
         catch (Exception exception) { ReportError(exception); }
@@ -643,6 +740,7 @@ public sealed partial class MailRenderingPageViewController(MailRenderingPageVie
         {
             ViewModel.CloseRequested -= CloseRequested;
             ViewModel.ComposeRequested -= ComposeRequested;
+            ViewModel.PreferencesService.PreferenceChanged -= PreferenceChanged;
             IntelligenceDispose();
             if (!_disposedReader && _reader is not null) _ = DisposeReaderAsync();
         }

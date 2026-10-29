@@ -120,16 +120,14 @@ internal sealed partial class EditorBridge : IDisposable
         return ExecuteScriptAsync($"window.WinoEditor.setApplicationShortcuts({json})");
     }
 
-    public Task SetThemeAsync(bool isDarkMode)
-    {
-        if (_webView.CoreWebView2 is not null)
-        {
-            _webView.CoreWebView2.Profile.PreferredColorScheme = isDarkMode
-                ? CoreWebView2PreferredColorScheme.Dark
-                : CoreWebView2PreferredColorScheme.Light;
-        }
+    public Task SetThemeAsync(bool isDarkMode) =>
+        ExecuteScriptAsync($"window.WinoEditor.setTheme({isDarkMode.ToString().ToLowerInvariant()})");
 
-        return ExecuteScriptAsync($"window.WinoEditor.setTheme({isDarkMode.ToString().ToLowerInvariant()})");
+    public Task SetSignatureAsync(string? html, string? previousHtml)
+    {
+        string htmlJson = JsonSerializer.Serialize(Convert.ToBase64String(Encoding.UTF8.GetBytes(html ?? string.Empty)), EditorJsonContext.Default.String);
+        string previousJson = JsonSerializer.Serialize(Convert.ToBase64String(Encoding.UTF8.GetBytes(previousHtml ?? string.Empty)), EditorJsonContext.Default.String);
+        return ExecuteScriptAsync($"window.WinoEditor.setSignature({htmlJson}, {previousJson})");
     }
 
     public Task SetTypographyAsync(string? fontFamily, int fontSize)

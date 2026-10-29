@@ -99,6 +99,13 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
     {
         if (IsAccountCreationBlocked)
         {
+            // Nothing is sold on this platform (Android v1): explain the limit without a purchase button.
+            if (!PlatformCapabilities.Purchases)
+            {
+                await DialogService.ShowMessageAsync(Translator.DialogMessage_AccountLimitMessage, Translator.DialogMessage_AccountLimitTitle, WinoCustomMessageDialogIcon.Warning);
+                return;
+            }
+
             var isPurchaseClicked = await DialogService.ShowConfirmationDialogAsync(Translator.DialogMessage_AccountLimitMessage, Translator.DialogMessage_AccountLimitTitle, Translator.Buttons_Purchase);
 
             if (!isPurchaseClicked) return;
@@ -119,6 +126,8 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
     [RelayCommand]
     private async Task PurchaseUnlimitedAccountAsync()
     {
+        if (!PlatformCapabilities.Purchases) return;
+
         if (!PlatformCapabilities.MicrosoftStore && !PlatformCapabilities.AppleAppStore)
         {
             await PurchaseUnlimitedAccountWithWinoAccountAsync();
@@ -330,7 +339,7 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
     private Task<string?> PromptSyncSecretAsync(SyncSnapshotSecretRequest request)
         => ExecuteUIThreadAsync(() => MailDialogService.ShowWinoAccountSyncSecretDialogAsync(request));
 
-    public override void OnNavigatedFrom(NavigationMode mode, object parameters)
+    public override void OnNavigatedFrom(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
 
@@ -352,10 +361,10 @@ public partial class AccountManagementViewModel : AccountManagementPageViewModel
         }
     }
 
-    public override async void OnNavigatedTo(NavigationMode mode, object parameters)
+    public override async void OnNavigatedTo(NavigationMode mode, object? parameters)
         => await InitializeAsync(mode, parameters);
 
-    public async Task InitializeAsync(NavigationMode mode, object parameters)
+    public async Task InitializeAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedTo(mode, parameters);
 

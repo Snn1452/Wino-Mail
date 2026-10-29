@@ -20,9 +20,20 @@ public sealed class WindowsHtmlMailEditorSession(WinoMailEditor control) : IHtml
     public Task<string?> GetHtmlBodyAsync(CancellationToken cancellationToken = default) => RunAsync(control.GetHtmlBodyAsync, cancellationToken);
     public Task SetThemeAsync(bool isDarkMode, CancellationToken cancellationToken = default) => RunAsync(() => control.SetThemeAsync(isDarkMode), cancellationToken);
     public Task SetDefaultTypographyAsync(string? fontFamily, int fontSize, CancellationToken cancellationToken = default) => RunAsync(() => control.SetDefaultTypographyAsync(fontFamily, fontSize), cancellationToken);
+    public Task SetSignatureAsync(string? html, string? previousHtml, CancellationToken cancellationToken = default) => RunAsync(() => control.SetSignatureAsync(html, previousHtml), cancellationToken);
     public Task FocusEditorAsync(bool focusControlAsWell, CancellationToken cancellationToken = default) => RunAsync(() => control.FocusEditorAsync(focusControlAsWell), cancellationToken);
     public Task SetApplicationShortcutsAsync(IReadOnlyList<EditorApplicationShortcutGesture> shortcuts, CancellationToken cancellationToken = default) => RunAsync(() => control.SetApplicationShortcutsAsync(shortcuts), cancellationToken);
     public Task InsertImagesAsync(IEnumerable<EditorImageInfo> images, CancellationToken cancellationToken = default) => RunAsync(() => control.InsertImagesAsync(images), cancellationToken);
+    public Task SetRemoteContentPolicyAsync(RemoteContentPolicy policy, CancellationToken cancellationToken = default) => RunAsync(() =>
+    {
+        control.BlockRemoteResources = policy switch
+        {
+            RemoteContentPolicy.Blocked => true,
+            RemoteContentPolicy.ImagesAndFontsAllowed => false,
+            _ => throw new ArgumentOutOfRangeException(nameof(policy))
+        };
+        return Task.CompletedTask;
+    }, cancellationToken);
     public Task ExecuteCommandAsync(EditorCommand command) => ExecuteCommandAsync(command, default);
     public Task ExecuteCommandAsync(EditorCommand command, CancellationToken cancellationToken) => RunAsync(() => control.ExecuteCommandAsync(command), cancellationToken);
     private Task RunAsync(Func<Task> operation, CancellationToken cancellationToken) =>
@@ -62,17 +73,18 @@ public sealed class WindowsHtmlMailReaderSession(WinoMailRenderer control) : IHt
     public Task InitializeAsync(CancellationToken cancellationToken = default) => RunAsync(control.InitializeAsync, cancellationToken);
     public Task RenderAsync(HtmlMailReaderRequest request, CancellationToken cancellationToken = default) => RunAsync(() =>
     {
-        control.BlockRemoteResources = request.ResourcePolicy switch
+        bool blockRemoteResources = request.ResourcePolicy switch
         {
             RemoteContentPolicy.Blocked => true,
             RemoteContentPolicy.ImagesAndFontsAllowed => false,
             _ => throw new ArgumentOutOfRangeException(nameof(request))
         };
-        return control.RenderHtmlAsync(request.Html, request.RenderMode, request.ShouldLinkify);
+        return control.RenderHtmlAsync(request.Html, request.RenderMode, request.ShouldLinkify, blockRemoteResources);
     }, cancellationToken);
     public Task ClearAsync(CancellationToken cancellationToken = default) => RunAsync(control.ClearAsync, cancellationToken, initialize: false);
     public Task<string> GetOriginalHtmlAsync(CancellationToken cancellationToken = default) => _operations.RunAsync(_ => WindowsSessionThread.InvokeAsync(_dispatcher, control.GetOriginalHtmlAsync), cancellationToken);
     public Task SetThemeAsync(bool isDarkMode, CancellationToken cancellationToken = default) => RunAsync(() => control.SetThemeAsync(isDarkMode), cancellationToken);
+    public Task SetDarkModeMethodAsync(HtmlMailDarkModeMethod method, CancellationToken cancellationToken = default) => RunAsync(() => control.SetDarkModeMethodAsync(method), cancellationToken);
     public Task SetReaderTypographyAsync(string? fontFamily, int fontSize, CancellationToken cancellationToken = default) => RunAsync(() => control.SetReaderTypographyAsync(fontFamily, fontSize), cancellationToken);
     public Task SetAccessibilityContextAsync(ReaderAccessibilityContext context, CancellationToken cancellationToken = default) => RunAsync(() => control.SetAccessibilityContextAsync(context.Subject, context.Sender, context.Date, context.BodyAutomationName, context.PlainTextFallbackAutomationName, context.AccessibleText), cancellationToken);
     public Task EnterIdleAsync(CancellationToken cancellationToken = default) => RunAsync(control.EnterIdleAsync, cancellationToken, initialize: false);

@@ -9,12 +9,14 @@ using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Navigation;
 using Wino.Editor;
-using Wino.Editor.AppKit;
+using Wino.Editor.WebKit;
+using AppKitHtmlMailEditorSession = Wino.Editor.WebKit.WebKitHtmlMailEditorSession;
 using Wino.Mail.Controls.AppKit.Common;
 using Wino.Mail.MacOS.Infrastructure;
 using Wino.Mail.MacOS.Views.Mail.Compose;
 using Wino.Mail.ViewModels;
 using Wino.Presentation.AppKit;
+using Wino.Presentation.Bindings;
 
 namespace Wino.Mail.MacOS.Views.Mail;
 
@@ -59,10 +61,8 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
     private NSTextField _subjectField = null!;
     private NSWindow? _window;
     private IReadingPaneHost? _lastHost;
-    private CancellationTokenSource? _autosave;
     private bool _editorDisposed;
     private bool _docking;
-    private string _lastSavedStatus = string.Empty;
 
     public ComposePageViewController(ComposePageViewModel viewModel, IDispatcher dispatcher, IWinoLogger logger, IExternalLauncher launcher, AppKitNavigationService navigation,
         ITranslationService translations, IKeyboardShortcutService shortcuts, IPictureStorageService pictures)
@@ -103,6 +103,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         // ---- Command row ----
         _sendButton = new ComposeSendButton(() => IsSendKeyEquivalentInScope()) { Title = Translator.Buttons_Send, BezelStyle = NSBezelStyle.Rounded, TranslatesAutoresizingMaskIntoConstraints = false };
         _sendButton.Image = WinoIcons.Image(WinoIconGlyph.Send, 14, null, Translator.Buttons_Send);
+        _sendButton.BezelColor = WinoStyle.Accent;
         _sendButton.ImagePosition = NSCellImagePosition.ImageLeading;
         _sendButton.BezelColor = WinoStyle.Accent;
         _sendButton.KeyEquivalent = "\r";
@@ -280,6 +281,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
 
         ViewModel.GetHTMLBodyFunction = GetHtmlBodyAsync;
         ViewModel.RenderHtmlBodyAsyncFunc = RenderBodyAsync;
+        ViewModel.BeforeAutosave = BeforeAutosaveAsync;
         ViewModel.CloseRequested += CloseRequested;
         ViewModel.ApplySignatureHtmlFunc = ApplySignatureHtmlAsync;
         ViewModel.RewriteErrorHandler = ShowRewriteError;
@@ -319,6 +321,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         Bind(nameof(ViewModel.ComposingAccount), vm => vm.ComposingAccount, _ => UpdateFrom());
         Bind(nameof(ViewModel.CurrentMailDraftItem), vm => vm.CurrentMailDraftItem, _ => UpdateSendButtons());
         Bind(nameof(ViewModel.IsDraftBusy), vm => vm.IsDraftBusy, _ => { UpdateSendButtons(); UpdateDraftStatus(); });
+        Bind(nameof(ViewModel.LastSavedText), vm => vm.LastSavedText, _ => UpdateDraftStatus());
         Bind(nameof(ViewModel.IsDraftSyncFailed), vm => vm.IsDraftSyncFailed, _ => UpdateSyncFailedBar());
         Bind(nameof(ViewModel.DraftSyncErrorMessage), vm => vm.DraftSyncErrorMessage, _ => UpdateSyncFailedBar());
         Bind(nameof(ViewModel.SelectedMessageImportance), vm => vm.SelectedMessageImportance, importance =>
@@ -338,6 +341,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         BindSendShortcut();
         BindRecipientPopup();
 
+        await _editor.SetLinkLabelsAsync(Translator.Composer_OpenLink, Translator.Composer_RemoveLink);
         await _editor.InitializeAsync();
         await _editor.SetThemeAsync(_darkEditor);
         await Dispatcher.ExecuteOnUIThread(UpdateThemeButton);
@@ -348,10 +352,11 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
 
     protected override async Task DeactivateAsync()
     {
-        _autosave?.Cancel();
+        ViewModel.CancelAutosave();
         ViewModel.CloseRequested -= CloseRequested;
         ViewModel.RewriteSession.Reset();
         ViewModel.RenderHtmlBodyAsyncFunc = null;
+        ViewModel.BeforeAutosave = null;
         ViewModel.ApplySignatureHtmlFunc = null;
         ViewModel.RewriteErrorHandler = null;
         RemoveKeyMonitor();
@@ -366,7 +371,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         {
             ViewModel.GetHTMLBodyFunction = null;
             await DisposeEditorAsync();
-            ViewModel.OnNavigatedFrom(NavigationMode.New, null!);
+            ViewModel.OnNavigatedFrom(NavigationMode.New, null);
         }
     }
 
@@ -452,7 +457,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         else
         {
             _draftSpinner.StopAnimation(null);
-            _draftStatus.StringValue = _lastSavedStatus;
+            _draftStatus.StringValue = ViewModel.LastSavedText ?? string.Empty;
         }
     }
 
@@ -479,27 +484,13 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
         if (docked && _lastHost is null) _popOutButton.Hidden = true;
     }
 
-    private void ScheduleAutosave()
-    {
-        _autosave?.Cancel();
-        var source = _autosave = new CancellationTokenSource();
-        Observe(AutosaveAsync(source.Token));
-    }
+    private void ScheduleAutosave() => Observe(ViewModel.ScheduleAutosave());
 
-    private async Task AutosaveAsync(CancellationToken token)
+    private async Task<bool> BeforeAutosaveAsync()
     {
-        try { await Task.Delay(TimeSpan.FromSeconds(3), token); }
-        catch (OperationCanceledException) { return; }
-        if (token.IsCancellationRequested || _editorDisposed || Bindings.IsDisposed) return;
+        if (_editorDisposed || Bindings.IsDisposed) return false;
         await SyncAllRecipientsAsync();
-        if (await ViewModel.UpdateMimeChangesAsync())
-        {
-            await Dispatcher.ExecuteOnUIThread(() =>
-            {
-                _lastSavedStatus = string.Format(Translator.MacOS_Composer_DraftSaved, DateTime.Now.ToString("t", System.Globalization.CultureInfo.CurrentCulture));
-                UpdateDraftStatus();
-            });
-        }
+        return true;
     }
 
     private async Task SendAsync()
@@ -639,7 +630,7 @@ public sealed partial class ComposePageViewController : WinoViewController<Compo
     {
         if (disposing)
         {
-            _autosave?.Cancel();
+            ViewModel.CancelAutosave();
             ViewModel.CloseRequested -= CloseRequested;
             RemoveKeyMonitor();
             DisposeExtras();
