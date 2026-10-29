@@ -143,37 +143,7 @@ jobs:
         with:
           ref: ${{ inputs.target_sha || github.sha }}
 
-      - name: Skip a duplicate publication of this exact commit
-        id: duplicate
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ inputs.target_sha || github.sha }}
-        run: |
-          "skip=false" >> $env:GITHUB_OUTPUT
-          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
-          $version = [string]$manifest.Package.Identity.Version
-          $tag = "beta/v$version"
-          $existing = gh release view $tag --json assets 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $tagSha = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>$null
-            if ($LASTEXITCODE -eq 0 -and $tagSha -ceq $env:COMMIT_SHA) {
-              $assetNames = @((($existing | ConvertFrom-Json).assets) | ForEach-Object { [string]$_.name })
-              if ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle" -and
-                  $assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer') {
-                Write-Host "Release '$tag' already contains the expected assets and points to $env:COMMIT_SHA; skipping duplicate upload."
-                "skip=true" >> $env:GITHUB_OUTPUT
-              }
-            }
-          }
-
-          # gh release view returns exit code 1 when this version has not been published yet.
-          # That is expected on a new version; do not let the native exit code fail this step.
-          $global:LASTEXITCODE = 0
-          exit 0
-
       - name: Download the already-tested MSIXBundle artifact
-        if: steps.duplicate.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         with:
           name: Installable-Beta-MSIXBundle
@@ -183,7 +153,6 @@ jobs:
           run-id: ${{ needs.gate.outputs.runtime_run_id }}
 
       - name: Validate artifact and publish versioned Release
-        if: steps.duplicate.outputs.skip != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -228,25 +197,41 @@ jobs:
           MSIXBundle SHA-256: $bundleHash
           Test certificate SHA-256: $certificateHash
           "@ | Set-Content -LiteralPath $notes -Encoding utf8
-          $existing = gh release view $tag --json tagName 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $bundle.FullName $certificate.FullName --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release assets.' }
-            gh release edit $tag --title "Wino Mail Beta $version" --notes-file $notes --prerelease
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to update existing Release metadata.' }
+          # Only decide whether to skip an existing publication after all artifact provenance
+          # and SHA-256 checks above have passed. Never replace existing Release assets or move tags.
+          $existingJson = gh release view $tag --json assets,tagName 2>$null
+          $releaseExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
 
-            # A same-version Release may already exist from an earlier verified commit.
-            # Keep its Git tag aligned with the newly verified bundle source commit.
-            # force=false permits only a fast-forward; never rewrite a divergent tag.
-            $tagRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha
-            if ($LASTEXITCODE -ne 0) { throw "Could not read existing Release tag '$tag'; refusing to leave unverified tag provenance." }
-            if ($tagRef -ne $env:COMMIT_SHA) {
-              gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" -f "sha=$env:COMMIT_SHA" -F force=false
-              if ($LASTEXITCODE -ne 0) { throw "Could not fast-forward existing Release tag '$tag' to verified commit $env:COMMIT_SHA." }
-              $updatedTagSha = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha
-              if ($LASTEXITCODE -ne 0 -or $updatedTagSha -ne $env:COMMIT_SHA) { throw "Release tag '$tag' did not resolve to verified commit $env:COMMIT_SHA after update." }
+          if ($releaseExitCode -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            $tagInfoJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "Release '$tag' exists but its tag cannot be verified; refusing to modify it." }
+            $tagInfo = $tagInfoJson | ConvertFrom-Json
+            if ([string]$tagInfo.object.type -cne 'commit' -or [string]$tagInfo.object.sha -cne $env:COMMIT_SHA) {
+              throw "Release '$tag' already exists but does not point directly to verified commit $env:COMMIT_SHA; refusing to overwrite its assets or tag."
             }
-          } else {
-            gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to create versioned Release.' }
+
+            $assetNames = @($existing.assets | ForEach-Object { [string]$_.name })
+            if (-not ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle") -or
+                -not ($assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer')) {
+              throw "Release '$tag' is missing expected assets; refusing to overwrite or repair an existing publication."
+            }
+
+            Write-Host "Release '$tag' already points to verified commit $env:COMMIT_SHA and has the expected assets. All new-artifact checks passed; skipping duplicate publication without modifying the Release."
+            exit 0
           }
+
+          # A pre-existing tag may be used only if it already points to this exact commit.
+          # Never create, move, or overwrite a tag as a side effect of publication.
+          $remoteTag = git ls-remote --refs origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Could not check whether tag '$tag' already exists; refusing to publish." }
+          if ($remoteTag) {
+            $remoteTagSha = (($remoteTag.Trim() -split '\s+')[0])
+            if ($remoteTagSha -cne $env:COMMIT_SHA) {
+              throw "Tag '$tag' already exists at $remoteTagSha, not $env:COMMIT_SHA; refusing to overwrite the tag."
+            }
+          }
+
+          gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create versioned Release '$tag'; existing tags and Release assets were not overwritten." }
