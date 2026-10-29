@@ -145,6 +145,7 @@ internal static class ConsoleDefaults
 internal sealed class ConsoleMicrosoftStoreService : IMicrosoftStoreService
 {
     public bool HasAvailableUpdate => false;
+    public string? AvailableUpdateVersion => null;
 
     public Task<bool> HasProductAsync(WinoAddOnProductType productType) => Task.FromResult(false);
 
@@ -157,7 +158,7 @@ internal sealed class ConsoleMicrosoftStoreService : IMicrosoftStoreService
     public Task PromptRatingDialogAsync() => Task.CompletedTask;
     public Task LaunchStorePageForReviewAsync() => Task.CompletedTask;
     public Task<bool> RefreshAvailabilityAsync() => Task.FromResult(false);
-    public Task<bool> StartUpdateAsync() => Task.FromResult(false);
+    public Task<bool> StartUpdateAsync(IProgress<double>? progress = null) => Task.FromResult(false);
 }
 
 internal sealed class ConsoleNotificationBuilder : INotificationBuilder
@@ -201,6 +202,7 @@ internal sealed class ConsoleNativeAppService : IAppMetadataService
     public string SentryEnvironment => "intelligence-console";
     public string SentryRelease => $"{PackageName}@{AppVersion}";
     public string SentryDist => AppVersion;
+    public string PlatformDisplayName => "Windows";
 
     public string GetWebAuthenticationBrokerUri() => string.Empty;
 

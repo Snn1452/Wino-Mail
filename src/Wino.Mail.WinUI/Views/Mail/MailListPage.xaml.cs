@@ -485,7 +485,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     async void IRecipient<ClearMailSelectionsRequested>.Receive(ClearMailSelectionsRequested message)
     {
-        MailListView.ClearSelection();
+        await DispatcherQueue.EnqueueAsync(() => MailListView.ClearSelection());
         await MailListView.WaitForSelectionSyncAsync();
     }
 

@@ -1,0 +1,246 @@
+name: Publish verified GitHub Release
+
+on:
+  # A lightweight push gate cancels legacy polling runs; publication happens in reusable calls.
+  push:
+    branches:
+      - integration/msix-release-upstream-main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/release/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'global.json'
+      - 'nuget.config'
+      - '.github/workflows/**'
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact commit SHA whose verification artifacts may be published
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA whose verification artifacts may be published
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+# Keep push-only cancellation separate from actual publishers. Actual publishers share one
+# group across SHAs so two commits cannot race to publish the same version tag.
+concurrency:
+  group: ${{ inputs.target_sha == '' && format('publish-github-release-{0}', github.ref) || 'publish-github-release-integration' }}
+  # The short push gate cancels legacy polling runs; actual publishers are never cancelled mid-release.
+  cancel-in-progress: ${{ inputs.target_sha == '' }}
+
+jobs:
+  gate:
+    name: Check verification jobs without waiting
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+      runtime_run_id: ${{ steps.check.outputs.runtime_run_id }}
+    steps:
+      - name: Check both required verification jobs once
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+        run: |
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" != "refs/heads/integration/msix-release-upstream-main" || "$TARGET_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::notice::The requested SHA is not the current workflow commit on the integration branch; skipping publication."
+            exit 0
+          fi
+
+          branch_head="$(gh api "repos/$REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha)" || {
+            echo "::error::Could not verify the current integration branch head."
+            exit 1
+          }
+          if [[ "$branch_head" != "$TARGET_SHA" ]]; then
+            echo "::notice::Commit $TARGET_SHA is stale; the branch now points to $branch_head. Skipping publication."
+            exit 0
+          fi
+
+          runs="$(gh api "repos/$REPOSITORY/actions/runs?head_sha=$TARGET_SHA&per_page=100")" || {
+            echo "::error::Could not query verification runs for $TARGET_SHA."
+            exit 1
+          }
+          runtime_run_id=""
+
+          while IFS='|' read -r workflow_name job_name; do
+            run_json="$(jq -c --arg name "$workflow_name" --arg sha "$TARGET_SHA" '
+              [.workflow_runs[]
+                | select(.name == $name
+                    and .head_sha == $sha
+                    and (.event == "push" or .event == "workflow_dispatch"))]
+              | sort_by(.created_at)
+              | last // empty
+            ' <<< "$runs")"
+
+            if [[ -z "$run_json" || "$run_json" == "null" ]]; then
+              echo "::notice::$workflow_name has no run for $TARGET_SHA yet; skipping publication without waiting."
+              exit 0
+            fi
+
+            run_id="$(jq -r '.id' <<< "$run_json")"
+            jobs="$(gh api "repos/$REPOSITORY/actions/runs/$run_id/jobs?per_page=100")" || {
+              echo "::error::Could not query jobs for verification run $run_id."
+              exit 1
+            }
+            job="$(jq -c --arg name "$job_name" '
+              [.jobs[] | select(.name == $name)]
+              | sort_by(.started_at // "")
+              | last // empty
+            ' <<< "$jobs")"
+
+            if [[ -z "$job" || "$job" == "null" ]]; then
+              echo "::notice::Required job '$job_name' is not available in run $run_id; skipping publication."
+              exit 0
+            fi
+
+            job_status="$(jq -r '.status' <<< "$job")"
+            job_conclusion="$(jq -r '.conclusion // ""' <<< "$job")"
+            echo "$workflow_name / $job_name: $job_status/$job_conclusion (run $run_id)"
+
+            if [[ "$job_status" != "completed" || "$job_conclusion" != "success" ]]; then
+              echo "::notice::Verification '$workflow_name' is not successful on this exact SHA; skipping publication."
+              exit 0
+            fi
+
+            if [[ "$workflow_name" == "Background notification runtime smoke" ]]; then
+              runtime_run_id="$run_id"
+            fi
+          done <<'VERIFICATION_JOBS'
+          Native AOT Compatibility|Publish x64 and run SQLite AOT smoke test
+          Background notification runtime smoke|Install package and test BackgroundSyncHost toast
+          VERIFICATION_JOBS
+
+          if [[ -z "$runtime_run_id" ]]; then
+            echo "::notice::The verified runtime artifact run ID was not found; skipping publication."
+            exit 0
+          fi
+
+          echo "runtime_run_id=$runtime_run_id" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish only the fully verified commit
+    needs: gate
+    if: needs.gate.outputs.ready == 'true' && inputs.target_sha != '' && github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+
+      - name: Download the already-tested MSIXBundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Installable-Beta-MSIXBundle
+          path: ${{ runner.temp }}/verified-msix
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.gate.outputs.runtime_run_id }}
+
+      - name: Validate artifact and publish versioned Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ inputs.target_sha || github.sha }}
+          RUNTIME_RUN_ID: ${{ needs.gate.outputs.runtime_run_id }}
+        run: |
+          $branchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify current integration branch head; refusing to publish.' }
+          if ($branchHead -ne $env:COMMIT_SHA) { throw "This commit ($env:COMMIT_SHA) is stale; current branch head is $branchHead. Refusing to publish an outdated Release." }
+
+          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
+          $version = [string]$manifest.Package.Identity.Version
+          if ($version -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw "Invalid package version: $version" }
+          $tag = "beta/v$version"
+          $assets = Join-Path $env:RUNNER_TEMP 'verified-msix'
+          $bundle = Get-ChildItem -LiteralPath $assets -Recurse -Filter "WinoMail_Beta_$version.msixbundle" | Select-Object -First 1
+          $certificate = Get-ChildItem -LiteralPath $assets -Recurse -Filter 'WinoMail_Beta_TestCertificate.cer' | Select-Object -First 1
+          if (-not $bundle -or -not $certificate) { Get-ChildItem -LiteralPath $assets -Recurse | Format-Table FullName; throw 'Verified bundle or matching test certificate missing from runtime workflow artifact.' }
+          $metadataFile = Get-ChildItem -LiteralPath $assets -Recurse -Filter 'artifact-metadata.json' | Select-Object -First 1
+          if (-not $metadataFile) { throw 'Artifact provenance metadata is missing; refusing to publish.' }
+          $artifactMetadata = Get-Content -LiteralPath $metadataFile.FullName -Raw | ConvertFrom-Json
+          if ([int]$artifactMetadata.SchemaVersion -ne 1) { throw 'Unsupported artifact provenance metadata schema.' }
+          if ([string]$artifactMetadata.CommitSha -cne $env:COMMIT_SHA) { throw "Artifact commit mismatch: expected $env:COMMIT_SHA, got $($artifactMetadata.CommitSha)." }
+          if ([long]$artifactMetadata.RuntimeRunId -ne [long]$env:RUNTIME_RUN_ID) { throw "Artifact runtime run mismatch: expected $env:RUNTIME_RUN_ID, got $($artifactMetadata.RuntimeRunId)." }
+          if ([string]$artifactMetadata.PackageVersion -cne $version) { throw "Artifact version mismatch: manifest is $version, artifact is $($artifactMetadata.PackageVersion)." }
+          if ([string]$artifactMetadata.BundleFile -cne $bundle.Name) { throw "Artifact bundle filename mismatch: metadata says $($artifactMetadata.BundleFile), found $($bundle.Name)." }
+          if ([string]$artifactMetadata.TestCertificateFile -cne $certificate.Name) { throw 'Artifact test certificate filename does not match provenance metadata.' }
+          $bundleHash = (Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $certificateHash = (Get-FileHash -LiteralPath $certificate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($bundleHash -cne ([string]$artifactMetadata.BundleSha256).ToLowerInvariant()) { throw 'MSIXBundle SHA-256 does not match runtime workflow provenance.' }
+          if ($certificateHash -cne ([string]$artifactMetadata.TestCertificateSha256).ToLowerInvariant()) { throw 'Test certificate SHA-256 does not match runtime workflow provenance.' }
+          $notes = Join-Path $env:RUNNER_TEMP 'RELEASE-NOTES.md'
+          @"
+          Wino Mail Beta $version
+
+          Published only after the Release build/tests/Native AOT/SQLite AOT workflow and the packaged Beta runtime smoke workflow both succeeded for commit $env:COMMIT_SHA.
+
+          **Signing:** this bundle is signed with an ephemeral CI test certificate, not a trusted production signing certificate. The attached certificate is required to install this test build and must not be treated as a production trust root.
+          
+          Verified runtime workflow run: $env:RUNTIME_RUN_ID
+          Commit: $env:COMMIT_SHA
+          MSIXBundle SHA-256: $bundleHash
+          Test certificate SHA-256: $certificateHash
+          "@ | Set-Content -LiteralPath $notes -Encoding utf8
+          # Only decide whether to skip an existing publication after all artifact provenance
+          # and SHA-256 checks above have passed. Never replace existing Release assets or move tags.
+          $existingJson = gh release view $tag --json assets,tagName 2>$null
+          $releaseExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+
+          if ($releaseExitCode -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            $tagInfoJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "Release '$tag' exists but its tag cannot be verified; refusing to modify it." }
+            $tagInfo = $tagInfoJson | ConvertFrom-Json
+            if ([string]$tagInfo.object.type -cne 'commit' -or [string]$tagInfo.object.sha -cne $env:COMMIT_SHA) {
+              throw "Release '$tag' already exists but does not point directly to verified commit $env:COMMIT_SHA; refusing to overwrite its assets or tag."
+            }
+
+            $assetNames = @($existing.assets | ForEach-Object { [string]$_.name })
+            if (-not ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle") -or
+                -not ($assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer')) {
+              throw "Release '$tag' is missing expected assets; refusing to overwrite or repair an existing publication."
+            }
+
+            Write-Host "Release '$tag' already points to verified commit $env:COMMIT_SHA and has the expected assets. All new-artifact checks passed; skipping duplicate publication without modifying the Release."
+            exit 0
+          }
+
+          # A pre-existing tag may be used only if it already points to this exact commit.
+          # Never create, move, or overwrite a tag as a side effect of publication.
+          $remoteTag = git ls-remote --refs origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Could not check whether tag '$tag' already exists; refusing to publish." }
+          if ($remoteTag) {
+            $remoteTagSha = (($remoteTag.Trim() -split '\s+')[0])
+            if ($remoteTagSha -cne $env:COMMIT_SHA) {
+              throw "Tag '$tag' already exists at $remoteTagSha, not $env:COMMIT_SHA; refusing to overwrite the tag."
+            }
+          }
+
+          # The branch may have advanced during artifact validation or tag inspection.
+          # Re-check immediately before the only Release-creation operation.
+          $finalBranchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
+          if ($LASTEXITCODE -ne 0) { throw 'Could not re-check integration branch head before publication; refusing to publish.' }
+          if ($finalBranchHead -cne $env:COMMIT_SHA) {
+            throw "Commit $env:COMMIT_SHA became stale before publication; current branch head is $finalBranchHead. Refusing to create a Release."
+          }
+
+          gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create versioned Release '$tag'; existing tags and Release assets were not overwritten." }

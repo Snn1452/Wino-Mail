@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using Wino.Mail.Controls.Playground.Lifetime;
 using Wino.Mail.Controls.Playground.Pages;
+using WinRT;
 
 namespace Wino.Mail.Controls.Playground;
 
@@ -43,6 +44,7 @@ public sealed partial class MainPage : Page
         UpdateFrameState();
     }
 
+    [DynamicWindowsRuntimeCast(typeof(NavigationViewItem))]
     private async void NavigationSelectionChanged(
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
@@ -57,6 +59,7 @@ public sealed partial class MainPage : Page
         await NavigateAndVerifyAsync(route, prepareForSweep: false, CancellationToken.None);
     }
 
+    [DynamicWindowsRuntimeCast(typeof(Page))]
     private async Task<bool> NavigateAndVerifyAsync(
         PlaygroundRoute route,
         bool prepareForSweep,
