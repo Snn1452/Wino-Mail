@@ -31,11 +31,12 @@ permissions:
   actions: read
   contents: write
 
-# Serialize all Beta publications across commits so two SHAs cannot race for the same version tag.
+# Keep push-only cancellation separate from actual publishers. Actual publishers share one
+# group across SHAs so two commits cannot race to publish the same version tag.
 concurrency:
-  group: publish-github-release-integration
-  # Do not cancel an active publish midway through creating a Release; the final head check rejects stale SHAs.
-  cancel-in-progress: false
+  group: ${{ inputs.target_sha == '' && format('publish-github-release-{0}', github.ref) || 'publish-github-release-integration' }}
+  # The short push gate cancels legacy polling runs; actual publishers are never cancelled mid-release.
+  cancel-in-progress: ${{ inputs.target_sha == '' }}
 
 jobs:
   gate:
@@ -134,7 +135,7 @@ jobs:
   publish:
     name: Publish only the fully verified commit
     needs: gate
-    if: needs.gate.outputs.ready == 'true' && github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    if: needs.gate.outputs.ready == 'true' && inputs.target_sha != '' && github.ref == 'refs/heads/integration/msix-release-upstream-main'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
