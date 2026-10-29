@@ -25,4 +25,5 @@ internal sealed class BackgroundAppMetadataService : IAppMetadataService
 #endif
     public string SentryRelease => AppTelemetryMetadata.GetRelease(AppVersion);
     public string SentryDist => AppTelemetryMetadata.NormalizeAppVersion(AppVersion);
+    public string PlatformDisplayName => "Windows";
 }

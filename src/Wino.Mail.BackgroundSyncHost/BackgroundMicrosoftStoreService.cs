@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
@@ -7,6 +8,7 @@ namespace Wino.Mail.BackgroundSyncHost;
 internal sealed class BackgroundMicrosoftStoreService : IMicrosoftStoreService
 {
     public bool HasAvailableUpdate => false;
+    public string? AvailableUpdateVersion => null;
 
     public Task<bool> HasProductAsync(WinoAddOnProductType productType)
         => Task.FromResult(false);
@@ -26,6 +28,6 @@ internal sealed class BackgroundMicrosoftStoreService : IMicrosoftStoreService
     public Task<bool> RefreshAvailabilityAsync()
         => Task.FromResult(false);
 
-    public Task<bool> StartUpdateAsync()
+    public Task<bool> StartUpdateAsync(IProgress<double>? progress = null)
         => Task.FromResult(false);
 }
