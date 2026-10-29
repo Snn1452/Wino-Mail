@@ -31,11 +31,11 @@ permissions:
   actions: read
   contents: write
 
-# Serialize publishers for one SHA. A second caller checks for the already-published result.
+# Serialize all Beta publications across commits so two SHAs cannot race for the same version tag.
 concurrency:
-  group: publish-github-release-${{ inputs.target_sha || github.ref }}
-  # A plain push cancels any legacy branch waiter; reusable calls for a SHA do not cancel one another.
-  cancel-in-progress: ${{ inputs.target_sha == '' }}
+  group: publish-github-release-integration
+  # Do not cancel an active publish midway through creating a Release; the final head check rejects stale SHAs.
+  cancel-in-progress: false
 
 jobs:
   gate:
@@ -231,6 +231,14 @@ jobs:
             if ($remoteTagSha -cne $env:COMMIT_SHA) {
               throw "Tag '$tag' already exists at $remoteTagSha, not $env:COMMIT_SHA; refusing to overwrite the tag."
             }
+          }
+
+          # The branch may have advanced during artifact validation or tag inspection.
+          # Re-check immediately before the only Release-creation operation.
+          $finalBranchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
+          if ($LASTEXITCODE -ne 0) { throw 'Could not re-check integration branch head before publication; refusing to publish.' }
+          if ($finalBranchHead -cne $env:COMMIT_SHA) {
+            throw "Commit $env:COMMIT_SHA became stale before publication; current branch head is $finalBranchHead. Refusing to create a Release."
           }
 
           gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
