@@ -1,87 +1,175 @@
 name: Publish verified GitHub Release
 
 on:
-  push:
-    branches:
-      - integration/msix-release-upstream-main
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'scripts/release/**'
-      - 'Directory.*'
-      - 'WinoMail.slnx'
-      - 'global.json'
-      - 'nuget.config'
-      - '.github/workflows/**'
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact commit SHA whose verification artifacts may be published
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA whose verification artifacts may be published
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: write
 
+# Serialize publishers for one SHA. A second caller checks for the already-published result.
 concurrency:
-  group: publish-github-release-${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-github-release-${{ inputs.target_sha }}
+  cancel-in-progress: false
 
 jobs:
+  gate:
+    name: Check verification jobs without waiting
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+      runtime_run_id: ${{ steps.check.outputs.runtime_run_id }}
+    steps:
+      - name: Check both required verification jobs once
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" != "refs/heads/integration/msix-release-upstream-main" || "$TARGET_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::notice::The requested SHA is not the current workflow commit on the integration branch; skipping publication."
+            exit 0
+          fi
+
+          branch_head="$(gh api "repos/$REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha)" || {
+            echo "::error::Could not verify the current integration branch head."
+            exit 1
+          }
+          if [[ "$branch_head" != "$TARGET_SHA" ]]; then
+            echo "::notice::Commit $TARGET_SHA is stale; the branch now points to $branch_head. Skipping publication."
+            exit 0
+          fi
+
+          runs="$(gh api "repos/$REPOSITORY/actions/runs?head_sha=$TARGET_SHA&per_page=100")" || {
+            echo "::error::Could not query verification runs for $TARGET_SHA."
+            exit 1
+          }
+          runtime_run_id=""
+
+          while IFS='|' read -r workflow_name job_name; do
+            run_json="$(jq -c --arg name "$workflow_name" --arg sha "$TARGET_SHA" '
+              [.workflow_runs[]
+                | select(.name == $name
+                    and .head_sha == $sha
+                    and (.event == "push" or .event == "workflow_dispatch"))]
+              | sort_by(.created_at)
+              | last // empty
+            ' <<< "$runs")"
+
+            if [[ -z "$run_json" || "$run_json" == "null" ]]; then
+              echo "::notice::$workflow_name has no run for $TARGET_SHA yet; skipping publication without waiting."
+              exit 0
+            fi
+
+            run_id="$(jq -r '.id' <<< "$run_json")"
+            jobs="$(gh api "repos/$REPOSITORY/actions/runs/$run_id/jobs?per_page=100")" || {
+              echo "::error::Could not query jobs for verification run $run_id."
+              exit 1
+            }
+            job="$(jq -c --arg name "$job_name" '
+              [.jobs[] | select(.name == $name)]
+              | sort_by(.started_at // "")
+              | last // empty
+            ' <<< "$jobs")"
+
+            if [[ -z "$job" || "$job" == "null" ]]; then
+              echo "::notice::Required job '$job_name' is not available in run $run_id; skipping publication."
+              exit 0
+            fi
+
+            job_status="$(jq -r '.status' <<< "$job")"
+            job_conclusion="$(jq -r '.conclusion // ""' <<< "$job")"
+            echo "$workflow_name / $job_name: $job_status/$job_conclusion (run $run_id)"
+
+            if [[ "$job_status" != "completed" || "$job_conclusion" != "success" ]]; then
+              echo "::notice::Verification '$workflow_name' is not successful on this exact SHA; skipping publication."
+              exit 0
+            fi
+
+            if [[ "$workflow_name" == "Background notification runtime smoke" ]]; then
+              runtime_run_id="$run_id"
+            fi
+          done <<'VERIFICATION_JOBS'
+          Native AOT Compatibility|Publish x64 and run SQLite AOT smoke test
+          Background notification runtime smoke|Install package and test BackgroundSyncHost toast
+          VERIFICATION_JOBS
+
+          if [[ -z "$runtime_run_id" ]]; then
+            echo "::notice::The verified runtime artifact run ID was not found; skipping publication."
+            exit 0
+          fi
+
+          echo "runtime_run_id=$runtime_run_id" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
   publish:
     name: Publish only the fully verified commit
-    if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    needs: gate
+    if: needs.gate.outputs.ready == 'true' && github.ref == 'refs/heads/integration/msix-release-upstream-main'
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 45
     steps:
       - name: Checkout exact commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.target_sha }}
 
-      - name: Wait for required workflows on this exact commit
-        id: gate
+      - name: Skip a duplicate publication of this exact commit
+        id: duplicate
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ inputs.target_sha }}
         run: |
-          $deadline = (Get-Date).AddMinutes(120)
-          $required = @('Native AOT Compatibility', 'Background notification runtime smoke')
-          $matched = @{}
-          while ((Get-Date) -lt $deadline) {
-            $response = gh api "repos/$env:REPOSITORY/actions/runs?head_sha=$env:COMMIT_SHA&per_page=100"
-            if ($LASTEXITCODE -ne 0) { throw 'Could not query Actions runs for the release commit.' }
-            $runs = ($response | ConvertFrom-Json).workflow_runs
-            foreach ($name in $required) {
-              $run = $runs | Where-Object { $_.name -eq $name -and $_.event -eq 'push' -and $_.head_sha -eq $env:COMMIT_SHA } | Sort-Object created_at -Descending | Select-Object -First 1
-              if ($null -ne $run) { $matched[$name] = $run }
-            }
-            if ($matched.Count -eq 2 -and @($required | Where-Object { $matched[$_].status -ne 'completed' }).Count -eq 0) { break }
-            Start-Sleep -Seconds 20
-          }
-          if ($matched.Count -ne 2) { throw 'Both required workflows did not start for this exact commit; refusing to publish.' }
-          foreach ($name in $required) {
-            $run = $matched[$name]
-            Write-Host "$name run $($run.id): $($run.status)/$($run.conclusion), SHA $($run.head_sha)"
-            if ($run.status -ne 'completed' -or $run.conclusion -ne 'success' -or $run.head_sha -ne $env:COMMIT_SHA) {
-              throw "Required verification failed for '$name'; refusing to publish."
+          "skip=false" >> $env:GITHUB_OUTPUT
+          $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
+          $version = [string]$manifest.Package.Identity.Version
+          $tag = "beta/v$version"
+          $existing = gh release view $tag --json assets 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $tagSha = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>$null
+            if ($LASTEXITCODE -eq 0 -and $tagSha -ceq $env:COMMIT_SHA) {
+              $assetNames = @((($existing | ConvertFrom-Json).assets) | ForEach-Object { [string]$_.name })
+              if ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle" -and
+                  $assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer') {
+                Write-Host "Release '$tag' already contains the expected assets and points to $env:COMMIT_SHA; skipping duplicate upload."
+                "skip=true" >> $env:GITHUB_OUTPUT
+              }
             }
           }
-          $runtimeRun = $matched['Background notification runtime smoke']
-          "RUNTIME_RUN_ID=$($runtimeRun.id)" >> $env:GITHUB_ENV
 
       - name: Download the already-tested MSIXBundle artifact
+        if: steps.duplicate.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         with:
           name: Installable-Beta-MSIXBundle
           path: ${{ runner.temp }}/verified-msix
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ env.RUNTIME_RUN_ID }}
+          run-id: ${{ needs.gate.outputs.runtime_run_id }}
 
       - name: Validate artifact and publish versioned Release
+        if: steps.duplicate.outputs.skip != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ inputs.target_sha }}
+          RUNTIME_RUN_ID: ${{ needs.gate.outputs.runtime_run_id }}
         run: |
           $branchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
           if ($LASTEXITCODE -ne 0) { throw 'Could not verify current integration branch head; refusing to publish.' }

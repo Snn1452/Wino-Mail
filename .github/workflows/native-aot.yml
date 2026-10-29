@@ -135,3 +135,14 @@ jobs:
 
           & tests/Wino.Services.AotSmoke/bin/x64/Release/net10.0/win-x64/publish/Wino.Services.AotSmoke.exe
           if ($LASTEXITCODE -ne 0) { throw 'SQLite Native AOT smoke test failed.' }
+
+  publish-release:
+    name: Publish Beta only after verification jobs pass
+    needs: native-aot
+    if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    uses: ./.github/workflows/publish-github-release.yml
+    with:
+      target_sha: ${{ github.sha }}
+    permissions:
+      actions: read
+      contents: write

@@ -420,3 +420,13 @@ jobs:
             Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
           }
 
+  publish-release:
+    name: Publish Beta only after verification jobs pass
+    needs: notification-runtime
+    if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    uses: ./.github/workflows/publish-github-release.yml
+    with:
+      target_sha: ${{ github.sha }}
+    permissions:
+      actions: read
+      contents: write
