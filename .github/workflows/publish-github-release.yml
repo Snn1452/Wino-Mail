@@ -1,6 +1,19 @@
 name: Publish verified GitHub Release
 
 on:
+  # A lightweight push gate cancels legacy polling runs; publication happens in reusable calls.
+  push:
+    branches:
+      - integration/msix-release-upstream-main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/release/**'
+      - 'Directory.*'
+      - 'WinoMail.slnx'
+      - 'global.json'
+      - 'nuget.config'
+      - '.github/workflows/**'
   workflow_call:
     inputs:
       target_sha:
@@ -20,8 +33,9 @@ permissions:
 
 # Serialize publishers for one SHA. A second caller checks for the already-published result.
 concurrency:
-  group: publish-github-release-${{ inputs.target_sha }}
-  cancel-in-progress: false
+  group: publish-github-release-${{ inputs.target_sha || github.ref }}
+  # A plain push cancels any legacy branch waiter; reusable calls for a SHA do not cancel one another.
+  cancel-in-progress: ${{ inputs.target_sha == '' }}
 
 jobs:
   gate:
@@ -38,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           echo "ready=false" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" != "refs/heads/integration/msix-release-upstream-main" || "$TARGET_SHA" != "$GITHUB_SHA" ]]; then
@@ -127,14 +141,14 @@ jobs:
       - name: Checkout exact commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ inputs.target_sha || github.sha }}
 
       - name: Skip a duplicate publication of this exact commit
         id: duplicate
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ inputs.target_sha }}
+          COMMIT_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           "skip=false" >> $env:GITHUB_OUTPUT
           $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
@@ -168,7 +182,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ inputs.target_sha }}
+          COMMIT_SHA: ${{ inputs.target_sha || github.sha }}
           RUNTIME_RUN_ID: ${{ needs.gate.outputs.runtime_run_id }}
         run: |
           $branchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
