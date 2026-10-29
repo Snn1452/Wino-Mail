@@ -167,6 +167,11 @@ jobs:
             }
           }
 
+          # gh release view returns exit code 1 when this version has not been published yet.
+          # That is expected on a new version; do not let the native exit code fail this step.
+          $global:LASTEXITCODE = 0
+          exit 0
+
       - name: Download the already-tested MSIXBundle artifact
         if: steps.duplicate.outputs.skip != 'true'
         uses: actions/download-artifact@v4
