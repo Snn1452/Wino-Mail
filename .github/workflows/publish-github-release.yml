@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: publish-github-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -51,7 +51,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Could not query Actions runs for the release commit.' }
             $runs = ($response | ConvertFrom-Json).workflow_runs
             foreach ($name in $required) {
-              $run = $runs | Where-Object { $_.name -eq $name -and $_.head_sha -eq $env:COMMIT_SHA } | Sort-Object created_at -Descending | Select-Object -First 1
+              $run = $runs | Where-Object { $_.name -eq $name -and $_.event -eq 'push' -and $_.head_sha -eq $env:COMMIT_SHA } | Sort-Object created_at -Descending | Select-Object -First 1
               if ($null -ne $run) { $matched[$name] = $run }
             }
             if ($matched.Count -eq 2 -and @($required | Where-Object { $matched[$_].status -ne 'completed' }).Count -eq 0) { break }

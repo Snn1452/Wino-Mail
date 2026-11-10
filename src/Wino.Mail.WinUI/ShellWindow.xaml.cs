@@ -33,6 +33,7 @@ using Wino.Messaging.Client.Shell;
 using Wino.Messaging.UI;
 using Wino.Views.Mail;
 using WinUIEx;
+using WinRT;
 
 namespace Wino.Mail.WinUI;
 
@@ -147,6 +148,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         TitleBarSearchBox.HorizontalAlignment = isCompact ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
     }
 
+    [DynamicWindowsRuntimeCast(typeof(OverlappedPresenter))]
     private void ConfigureStartupLayout()
     {
         // Every newly created application window starts maximized.
@@ -245,6 +247,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     public Frame? GetFrame(NavigationReferenceFrame frameType)
         => frameType == NavigationReferenceFrame.ShellFrame ? MainShellFrame : null;
 
+    [DynamicWindowsRuntimeCast(typeof(Grid))]
     public FrameworkElement GetRootContent() => Content as Grid ?? throw new Exception("RootContent is not a Grid or empty.");
 
     private void BackButtonClicked(Microsoft.UI.Xaml.Controls.TitleBar sender, object args)
@@ -492,8 +495,9 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             var applicationMode = StatePersistanceService.ApplicationMode;
 
             // Settings belongs to whichever app entry opened it. The three primary modes,
-            // however, must follow their own taskbar entries even when switched in-app.
-            if (applicationMode != WinoApplicationMode.Settings)
+            // however, must follow their own taskbar entries even when switched in-app, unless the
+            // user chose to keep the taskbar icon fixed across mode switches.
+            if (applicationMode != WinoApplicationMode.Settings && !PreferencesService.IsAppModeTaskbarIconSwitchDisabled)
             {
                 WindowAppUserModelIdHelper.TrySet(this, AppEntryConstants.GetAppUserModelId(applicationMode));
             }
@@ -582,6 +586,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         TitleBarSearchBox.SearchHistoryItemsSource = [];
     }
 
+    [DynamicWindowsRuntimeCast(typeof(Control))]
     private void TitleBarSearchDismissed(object? sender, EventArgs args)
     {
         if (_activeTitleBarSearchHost is BasePage page)
@@ -870,7 +875,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             return;
 
         ShellTitleHost.Margin = margin;
-        ShellTitleBar.UpdateLayout();
+        // ShellTitleBar.UpdateLayout();
         ShellTitleBar.RecomputeDragRegions();
     }
 
