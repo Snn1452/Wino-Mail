@@ -24,33 +24,26 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);AppPackages\**</DefaultItemExcludes>
     <!-- Bundle the Windows App SDK and .NET runtime into per-architecture MSIX outputs. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Ships UniversalBGTask.dll, the host for the session-start background task (Activation/SessionStartActivation.cs). -->
+    <WindowsAppSDKBackgroundTask>true</WindowsAppSDKBackgroundTask>
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
     <UseNativeAot Condition="'$(UseNativeAot)' == ''">true</UseNativeAot>
     <PublishAot Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishAot>
     <PublishTrimmed Condition="'$(WinoIsReleaseBuild)' == 'true'">$(UseNativeAot)</PublishTrimmed>
     <TrimMode Condition="'$(WinoIsReleaseBuild)' == 'true'">full</TrimMode>
     <IncludePublishItemsOutputGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true' and '$(GenerateAppxPackageOnBuild)' == 'true'">true</IncludePublishItemsOutputGroup>
-    <!--
-      Ical.Net 5.2.3 intentionally reflects over its RFC 5545 model and serializer types,
-      MimeKit's otherwise-unused default context probes SQLite dynamically, and CsWinRT's
-      generic WinRT fallback marshaler lacks the linker annotations required by IL2081.
-      Wino.Mail.AI.Abstractions also carries the package-level IL3053 summary for its
-      contract JSON converters; Wino serializes the concrete payloads it uses through
-      generated JSON contexts.
-      Wino roots Ical.Net and the explicit Windows S/MIME context below, so only these
-      upstream analyzer limitations are suppressed during the whole-program AOT link.
-      Ordinary Release analyzer builds remain unsuppressed and continue to reject
-      first-party IL warnings.
-    -->
-    <NoWarn Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">$(NoWarn);IL2026;IL2070;IL2072;IL2075;IL2077;IL2080;IL2081;IL2087;IL3053</NoWarn>
     <Nullable>enable</Nullable>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<!-- Single instancing -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
 	<NotificationHostBuildSuffix>bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</NotificationHostBuildSuffix>
-	<NotificationHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Platform)\$(Configuration)\NotificationHosts'))</NotificationHostPublishRoot>
+	<NotificationHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Platform)', '$(Configuration)', 'NotificationHosts'))</NotificationHostPublishRoot>
 	<NotificationHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.NotificationHost\$(NotificationHostBuildSuffix)</NotificationHostOutput>
 	<NotificationHostOutput Condition="'$(WinoIsReleaseBuild)' == 'true'">$(NotificationHostPublishRoot)</NotificationHostOutput>
+	<!-- ArtifactsPath makes BaseIntermediateOutputPath absolute; NormalizeDirectory keeps an absolute part as is. -->
+	<WidgetHostPublishRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Platform)', '$(Configuration)', 'WidgetHosts'))</WidgetHostPublishRoot>
+	<WidgetHostOutput Condition="'$(WinoIsReleaseBuild)' != 'true'">$(MSBuildProjectDirectory)\..\Wino.WidgetHost\$(NotificationHostBuildSuffix)</WidgetHostOutput>
+	<WidgetHostOutput Condition="'$(WinoIsReleaseBuild)' == 'true'">$(WidgetHostPublishRoot)</WidgetHostOutput>
     <BackgroundSyncHostOutput>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)\..\Wino.Mail.BackgroundSyncHost\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\publish'))\</BackgroundSyncHostOutput>
 </PropertyGroup>
 
@@ -221,6 +214,7 @@
     <Content Include="Assets\AppEntries\People.svg" />
     <Content Include="release-profile.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Wino_Icon.ico" />
+    <Content Include="Assets\Wino_Icon_Unread.ico" />
     <Content Include="Assets\WinoLogo.png" />
     <Content Include="BackgroundImages\Acrylic.jpg" />
     <Content Include="BackgroundImages\Clouds.jpg" />
@@ -248,6 +242,10 @@
     <Content Include="$(NotificationHostOutput)Wino.NotificationHost.dll" Link="Wino.NotificationHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(NotificationHostOutput)Wino.NotificationHost.deps.json" Link="Wino.NotificationHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
     <Content Include="$(NotificationHostOutput)Wino.NotificationHost.runtimeconfig.json" Link="Wino.NotificationHost.runtimeconfig.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
+    <Content Include="$(WidgetHostOutput)Wino.WidgetHost.exe" Link="Wino.WidgetHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(WidgetHostOutput)Wino.WidgetHost.dll" Link="Wino.WidgetHost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
+    <Content Include="$(WidgetHostOutput)Wino.WidgetHost.deps.json" Link="Wino.WidgetHost.deps.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
+    <Content Include="$(WidgetHostOutput)Wino.WidgetHost.runtimeconfig.json" Link="Wino.WidgetHost.runtimeconfig.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(WinoIsReleaseBuild)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>
@@ -305,10 +303,12 @@
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.WinUI\Wino.Mail.Controls.WinUI.csproj" />
 	<ProjectReference Include="..\..\controls\Wino.Mail.Controls.Core\Wino.Mail.Controls.Core.csproj" />
 	<ProjectReference Include="..\Wino.Services\Wino.Services.csproj" />
+	<ProjectReference Include="..\Wino.PushRelay.Socket\Wino.PushRelay.Socket.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Build the notification host before the app's packaging target publishes it. -->
+    <!-- Build the notification and widget hosts before the app's packaging target publishes them. -->
     <ProjectReference Include="..\Wino.NotificationHost\Wino.NotificationHost.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\Wino.WidgetHost\Wino.WidgetHost.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
   <ItemDefinitionGroup>
     <!-- Project-only runs have no solution/global Platform or RID. Propagate the
@@ -322,6 +322,7 @@
   <ItemGroup Condition="'$(WinoIsReleaseBuild)' == 'true' and '$(PublishAot)' == 'true'">
     <TrimmerRootAssembly Include="Ical.Net" />
     <TrimmerRootDescriptor Include="ILLink.AotRoots.xml" />
+    <IlcArg Include="--substitution:$(MSBuildProjectDirectory)\ILLink.AotSubstitutions.xml" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wino.SourceGenerators\Wino.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;SelfContained" />
@@ -503,11 +504,16 @@
     <AppxSymbolPackageEnabled>True</AppxSymbolPackageEnabled>
   </PropertyGroup>
 
-  <Import Project="..\..\scripts\release\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
+  <Import Project="..\..\scripts\release\windows\Wino.Release.targets" Condition="'$(WinoReleaseStagingRoot)' != ''" />
 
   <Target Name="PublishNotificationHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
     <MakeDir Directories="$(NotificationHostOutput)" />
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.NotificationHost\Wino.NotificationHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(NotificationHostOutput);Restore=false" />
+  </Target>
+
+  <Target Name="PublishWidgetHost" BeforeTargets="PrepareForBuild" Condition="'$(WinoIsReleaseBuild)' == 'true'">
+    <MakeDir Directories="$(WidgetHostOutput)" />
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\Wino.WidgetHost\Wino.WidgetHost.csproj" Targets="Publish" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishDir=$(WidgetHostOutput);Restore=false" />
   </Target>
 
 
