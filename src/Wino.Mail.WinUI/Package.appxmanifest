@@ -4,12 +4,13 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap10 rescap com desktop">
+  IgnorableNamespaces="uap uap3 uap10 rescap com desktop">
 	
 	<!-- Publisher Cache Folders -->
 	<Extensions>
@@ -18,12 +19,19 @@
 				<Folder Name="WinoShared" />
 			</PublisherCacheFolders>
 		</Extension>
+		<!-- Windows App SDK background task host. The Mail entry's windows.backgroundTasks extension names it. -->
+		<Extension Category="windows.activatableClass.inProcessServer">
+			<InProcessServer>
+				<Path>Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.dll</Path>
+				<ActivatableClass ActivatableClassId="Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.Task" ThreadingModel="both" />
+			</InProcessServer>
+		</Extension>
 	</Extensions>
 	
   <Identity
     Name="58272BurakKSE.WinoMailPreview"
     Publisher="CN=51FBDAF3-E212-4149-89A2-A2636B3BC911"
-    Version="2.2.2.0" />
+    Version="2.2.11.0" />
 
   <mp:PhoneIdentity PhoneProductId="7b7e90e9-cc55-4409-9769-99b4b5ed6e9b" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -64,6 +72,30 @@
       </uap:VisualElements>
 
 		<Extensions>
+			<uap5:Extension Category="windows.startupTask">
+				<uap5:StartupTask
+					TaskId="WinoStartupId"
+					Enabled="true"
+					DisplayName="Wino Mail" />
+			</uap5:Extension>
+
+			<!-- Session-start background task: Windows activates the application through this class seconds after
+			     logon, ahead of the startup queue that runs the StartupTask above. The permission string lets the
+			     app-container background task host activate it. See Activation/SessionStartActivation.cs. -->
+			<Extension Category="windows.backgroundTasks" EntryPoint="Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.Task">
+				<BackgroundTasks>
+					<Task Type="systemEvent" />
+					<Task Type="general" />
+				</BackgroundTasks>
+			</Extension>
+			<com:Extension Category="windows.comServer">
+				<com:ComServer>
+					<com:ExeServer Executable="Wino.Mail.WinUI.exe" Arguments="--wino-mail --wino-session-start" DisplayName="Wino Mail startup service"
+					               LaunchAndActivationPermission="O:PSG:BUD:(A;;11;;;IU)(A;;11;;;S-1-15-2-1)S:(ML;;NX;;;LW)">
+						<com:Class Id="13437e7f-4198-4d62-bf1a-8cf5186397b3" DisplayName="Wino Mail startup service" />
+					</com:ExeServer>
+				</com:ComServer>
+			</com:Extension>
 
 			<!-- Protocol activation: mailto -->
 			<uap:Extension Category="windows.protocol">
@@ -77,7 +109,7 @@
 				</uap:Protocol>
 			</uap:Extension>
 
-			<!-- Protocol activation: Wino deep links -->
+			<!-- Protocol activation: Wino deep links and the Wino Account browser sign-in redirect (wino://auth-complete) -->
 			<uap:Extension Category="windows.protocol">
 				<uap:Protocol Name="wino">
 					<uap:DisplayName>Wino Mail Protocol</uap:DisplayName>
@@ -114,6 +146,123 @@
 					</com:ExeServer>
 				</com:ComServer>
 			</com:Extension>
+
+			<!-- Windows 11 Widgets Board provider. The Board activates Wino.WidgetHost.exe, never the UI executable. -->
+			<com:Extension Category="windows.comServer">
+				<com:ComServer>
+					<com:ExeServer Executable="Wino.WidgetHost.exe" Arguments="-RegisterProcessAsComServer" DisplayName="Wino Mail widget provider">
+						<com:Class Id="976b4902-858b-44d2-af92-de5a1b20ee3d" DisplayName="Wino Mail widget provider" />
+					</com:ExeServer>
+				</com:ComServer>
+			</com:Extension>
+			<uap3:Extension Category="windows.appExtension">
+				<uap3:AppExtension Name="com.microsoft.windows.widgets" DisplayName="Wino Mail" Id="WinoWidgets" PublicFolder="Assets\AppEntries\MailAssets">
+					<uap3:Properties>
+						<WidgetProvider>
+							<ProviderIcons>
+								<Icon Path="Assets\AppEntries\MailAssets\Square44x44Logo.altform-unplated_targetsize-48.png" />
+							</ProviderIcons>
+							<Activation>
+								<CreateInstance ClassId="976b4902-858b-44d2-af92-de5a1b20ee3d" />
+							</Activation>
+							<Definitions>
+								<Definition Id="Wino_Mail" DisplayName="Wino Mail" Description="Your newest unread mail" AllowMultiple="false" IsCustomizable="false">
+									<Capabilities>
+										<Capability>
+											<Size Name="small" />
+										</Capability>
+										<Capability>
+											<Size Name="medium" />
+										</Capability>
+										<Capability>
+											<Size Name="large" />
+										</Capability>
+									</Capabilities>
+									<ThemeResources>
+										<Icons>
+											<Icon Path="Assets\AppEntries\MailAssets\Square44x44Logo.altform-unplated_targetsize-48.png" />
+										</Icons>
+										<Screenshots>
+											<Screenshot Path="Assets\AppEntries\MailAssets\Square150x150Logo.scale-200.png" DisplayAltText="Wino Mail" />
+										</Screenshots>
+										<DarkMode />
+										<LightMode />
+									</ThemeResources>
+								</Definition>
+								<Definition Id="Wino_Calendar" DisplayName="Wino Calendar" Description="Your upcoming events" AllowMultiple="false" IsCustomizable="false">
+									<Capabilities>
+										<Capability>
+											<Size Name="small" />
+										</Capability>
+										<Capability>
+											<Size Name="medium" />
+										</Capability>
+										<Capability>
+											<Size Name="large" />
+										</Capability>
+									</Capabilities>
+									<ThemeResources>
+										<Icons>
+											<Icon Path="Assets\AppEntries\CalendarAssets\Square44x44Logo.altform-unplated_targetsize-48.png" />
+										</Icons>
+										<Screenshots>
+											<Screenshot Path="Assets\AppEntries\CalendarAssets\Square150x150Logo.scale-200.png" DisplayAltText="Wino Calendar" />
+										</Screenshots>
+										<DarkMode />
+										<LightMode />
+									</ThemeResources>
+								</Definition>
+								<Definition Id="Wino_ToDo" DisplayName="Wino To Do" Description="Your My Day tasks" AllowMultiple="false" IsCustomizable="false">
+									<Capabilities>
+										<Capability>
+											<Size Name="small" />
+										</Capability>
+										<Capability>
+											<Size Name="medium" />
+										</Capability>
+										<Capability>
+											<Size Name="large" />
+										</Capability>
+									</Capabilities>
+									<ThemeResources>
+										<Icons>
+											<Icon Path="Assets\AppEntries\ToDoAssets\Square44x44Logo.altform-unplated_targetsize-48.png" />
+										</Icons>
+										<Screenshots>
+											<Screenshot Path="Assets\AppEntries\ToDoAssets\Square150x150Logo.scale-200.png" DisplayAltText="Wino To Do" />
+										</Screenshots>
+										<DarkMode />
+										<LightMode />
+									</ThemeResources>
+								</Definition>
+								<Definition Id="Wino_People" DisplayName="Wino People" Description="Your favorite people" AllowMultiple="false" IsCustomizable="false">
+									<Capabilities>
+										<Capability>
+											<Size Name="small" />
+										</Capability>
+										<Capability>
+											<Size Name="medium" />
+										</Capability>
+										<Capability>
+											<Size Name="large" />
+										</Capability>
+									</Capabilities>
+									<ThemeResources>
+										<Icons>
+											<Icon Path="Assets\AppEntries\PeopleAssets\Square44x44Logo.altform-unplated_targetsize-48.png" />
+										</Icons>
+										<Screenshots>
+											<Screenshot Path="Assets\AppEntries\PeopleAssets\Square150x150Logo.scale-200.png" DisplayAltText="Wino People" />
+										</Screenshots>
+										<DarkMode />
+										<LightMode />
+									</ThemeResources>
+								</Definition>
+							</Definitions>
+						</WidgetProvider>
+					</uap3:Properties>
+				</uap3:AppExtension>
+			</uap3:Extension>
 		</Extensions>
     </Application>
 
@@ -250,15 +399,6 @@
         <uap:DefaultTile />
       </uap:VisualElements>
       <Extensions>
-        <uap5:Extension
-          Category="windows.startupTask"
-          Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe"
-          EntryPoint="Windows.FullTrustApplication">
-          <uap5:StartupTask
-            TaskId="WinoBackgroundSyncStartupId"
-            Enabled="true"
-            DisplayName="Wino Startup Service" />
-        </uap5:Extension>
         <desktop:Extension
           Category="windows.fullTrustProcess"
           Executable="BackgroundSyncHost\Wino.Mail.BackgroundSyncHost.exe">

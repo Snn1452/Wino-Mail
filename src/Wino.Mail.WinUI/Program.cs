@@ -10,6 +10,7 @@ using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppLifecycle;
 using Wino.Core.Activation;
 using Wino.Mail.WinUI.Activation;
+using WinRT;
 
 namespace Wino.Mail.WinUI;
 
@@ -90,6 +91,9 @@ public class Program
         if (!isRedirect)
         {
             EnsureMailHostRunningMutex();
+            // Before Application.Start: when the background task broker launched this process, COM is
+            // waiting for the class object. Every primary instance registers it (see SessionStartComServer).
+            SessionStartComServer.TryStart(Wino.NotificationHost.Contracts.ReleaseIdentity.Current.StartupTaskActivatorId);
             StartApplication();
         }
 
@@ -338,10 +342,18 @@ public class Program
         }
     }
 
+    [DynamicWindowsRuntimeCast(typeof(AppNotificationActivatedEventArgs))]
     internal static bool ShouldBringWindowToForegroundAfterRedirection(AppActivationArguments args)
     {
         if (args.Kind == ExtendedActivationKind.StartupTask)
             return false;
+
+        if (args.Kind == ExtendedActivationKind.Launch &&
+            args.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs sessionStartArgs &&
+            SessionStartActivation.Matches(sessionStartArgs.Arguments))
+        {
+            return false;
+        }
 
         if (args.Kind == ExtendedActivationKind.AppNotification &&
             args.Data is AppNotificationActivatedEventArgs toastArgs)

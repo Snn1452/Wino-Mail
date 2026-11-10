@@ -55,6 +55,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     private bool _allowClose;
     public IStatePersistanceService StatePersistanceService { get; } = WinoApplication.Current.Services.GetService<IStatePersistanceService>() ?? throw new Exception("StatePersistanceService not registered in DI container.");
     public IPreferencesService PreferencesService { get; } = WinoApplication.Current.Services.GetService<IPreferencesService>() ?? throw new Exception("PreferencesService not registered in DI container.");
+    private WindowsShellPreferences ShellPreferences { get; } = WinoApplication.Current.Services.GetService<WindowsShellPreferences>() ?? throw new Exception("WindowsShellPreferences not registered in DI container.");
     public INavigationService NavigationService { get; } = WinoApplication.Current.Services.GetService<INavigationService>() ?? throw new Exception("NavigationService not registered in DI container.");
     private IMailDialogService MailDialogService { get; } = WinoApplication.Current.Services.GetRequiredService<IMailDialogService>();
     private IWinoAccountProfileService WinoAccountProfileService { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoAccountProfileService>();
@@ -62,6 +63,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     private ILocalIntelligenceService LocalIntelligenceService { get; } = WinoApplication.Current.Services.GetRequiredService<ILocalIntelligenceService>();
     private IWhatsNewService WhatsNewService { get; } = WinoApplication.Current.Services.GetRequiredService<IWhatsNewService>();
     private IWinoWindowManager WindowManager { get; } = WinoApplication.Current.Services.GetRequiredService<IWinoWindowManager>();
+    private IRelayHealth? RelayHealth { get; } = WinoApplication.Current.Services.GetService<IRelayHealth>();
 
     private bool _calendarReminderServerStartAttempted;
     private ITitleBarSearchHost? _activeTitleBarSearchHost;
@@ -101,10 +103,13 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
         ApplyShellSynchronizationProvider();
         _ = RefreshDailyBriefingStateAsync();
         _ = RefreshWhatsNewButtonAsync();
+        _ = ShowRelayIntroductionTipIfPendingAsync();
+        AttachRelayFallbackIndicator();
         _ = EntitlementService.RefreshEntitlementAsync();
 
         // Handle window closing event for terminate vs background/tray behavior.
         Closed += OnWindowClosed;
+        Activated += OnWindowActivated;
 
         // Use the AppWindow.Closing event to handle the close request
         AppWindow.Closing += OnAppWindowClosing;
@@ -352,6 +357,95 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     public void Receive(WhatsNewOpened message)
         => DispatcherQueue.TryEnqueue(() => WhatsNewButton.Visibility = Visibility.Collapsed);
 
+    /// <summary>
+    /// An install that already had accounts when instant push arrived gets one teaching tip, anchored to the Wino Account
+    /// button. The service keeps such installs on timer-based sync until the user turns instant push on; fresh installs
+    /// start on it and never see the tip.
+    /// </summary>
+    private async Task ShowRelayIntroductionTipIfPendingAsync()
+    {
+        try
+        {
+            var introduction = WinoApplication.Current.Services.GetRequiredService<IRelayIntroductionService>();
+            if (!await introduction.IsIntroductionPendingAsync().ConfigureAwait(false))
+                return;
+
+            DispatcherQueue.TryEnqueue(OpenRelayIntroductionTip);
+        }
+        catch (Exception exception)
+        {
+            Serilog.Log.Error(exception, "The instant push introduction check failed.");
+        }
+    }
+
+    private void OpenRelayIntroductionTip()
+    {
+        // Anchored to the account button when it is shown; otherwise the tip opens in the top right corner of the window.
+        if (WinoAccountButton.Visibility == Visibility.Visible)
+        {
+            RelayIntroductionTip.Target = WinoAccountButton;
+        }
+        else
+        {
+            RelayIntroductionTip.Target = null;
+            RelayIntroductionTip.PreferredPlacement = TeachingTipPlacementMode.TopRight;
+        }
+
+        // The colorful style's Flash glyph (amber accent), whatever icon style the user picked.
+        var isDark = ShellRoot.ActualTheme == ElementTheme.Dark;
+        RelayIntroductionTip.IconSource = new FontIconSource
+        {
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(isDark
+                ? "ms-appx:///Assets/WinoIconsColor-Dark.ttf#WinoIconsColorDark"
+                : "ms-appx:///Assets/WinoIconsColor-Light.ttf#WinoIconsColorLight"),
+            Glyph = WinoIconGlyphs.GetGlyph(WinoIconGlyph.Flash)
+        };
+
+        RelayIntroductionTip.IsOpen = true;
+    }
+
+    /// <summary>
+    /// Coming to the foreground is a moment where a stalled relay registration or socket deserves another try. The
+    /// coordinator decides whether anything is stalled and throttles repeated activations.
+    /// </summary>
+    private void OnWindowActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated)
+            return;
+
+        WinoApplication.Current.Services.GetService<ISyncCoordinator>()?.RequestRelayRetry(Wino.Core.Domain.Enums.RelayRetryTrigger.Foreground);
+    }
+
+    private void AttachRelayFallbackIndicator()
+    {
+        if (RelayHealth is null)
+            return;
+
+        RelayHealth.Changed += RelayHealthChanged;
+        UpdateRelayFallbackIndicator();
+    }
+
+    private void RelayHealthChanged(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(UpdateRelayFallbackIndicator);
+
+    private void UpdateRelayFallbackIndicator()
+        => RelayFallbackIndicator.Visibility = RelayHealth?.IsFallbackActive == true ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Closing the tip ends the introduction; the Notifications page keeps the setting reachable.</summary>
+    private void RelayIntroductionTipCloseClicked(TeachingTip sender, object args)
+        => WinoApplication.Current.Services.GetRequiredService<IRelayIntroductionService>().DismissIntroduction();
+
+    private void RelayIntroductionTipActionClicked(TeachingTip sender, object args)
+    {
+        sender.IsOpen = false;
+        WinoApplication.Current.Services.GetRequiredService<IRelayIntroductionService>().DismissIntroduction();
+
+        // Settings > Notifications, which turns instant push on and shows the privacy policy when it is not accepted.
+        WinoApplication.Current.Services.GetRequiredService<INavigationService>().Navigate(
+            WinoPage.SettingsPage,
+            new SettingsPageActivationContext(WinoPage.NotificationSettingsPage, new NotificationSettingsNavigationContext(OfferInstantPush: true)));
+    }
+
     /// <summary>The button stays until the window has been opened once for the running version.</summary>
     private async Task RefreshWhatsNewButtonAsync()
     {
@@ -497,7 +591,7 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
             // Settings belongs to whichever app entry opened it. The three primary modes,
             // however, must follow their own taskbar entries even when switched in-app, unless the
             // user chose to keep the taskbar icon fixed across mode switches.
-            if (applicationMode != WinoApplicationMode.Settings && !PreferencesService.IsAppModeTaskbarIconSwitchDisabled)
+            if (applicationMode != WinoApplicationMode.Settings && !ShellPreferences.IsAppModeTaskbarIconSwitchDisabled)
             {
                 WindowAppUserModelIdHelper.TrySet(this, AppEntryConstants.GetAppUserModelId(applicationMode));
             }
@@ -935,6 +1029,8 @@ public sealed partial class ShellWindow : WindowEx, IWinoShellWindow,
     {
         Closed -= OnWindowClosed;
         AppWindow.Closing -= OnAppWindowClosing;
+        if (RelayHealth is not null)
+            RelayHealth.Changed -= RelayHealthChanged;
 
         // No need to prepare for close or cleanup if the application is exiting, as the process will be terminated shortly after.
         if ((Application.Current as App)?.IsExiting == true)
