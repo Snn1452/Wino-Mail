@@ -1276,19 +1276,12 @@ public class MailService : BaseDatabaseService, IMailService
             return null;
         }
 
-        // Assignment copies come from a lookup without the account loaded; the target folder knows the account.
-        var accountId = mailCopy.AssignedAccount?.Id ?? mailCopy.AssignedFolder?.MailAccountId ?? Guid.Empty;
-        if (accountId == Guid.Empty)
-        {
-            _logger.Warning("Unknown account for MailCopyId {Id} in InsertMailAsync", mailCopy.Id);
-            return null;
-        }
-
-        _logger.Debug("Inserting mail {MailCopyId} to {FolderName}", mailCopy.Id, mailCopy.AssignedFolder?.FolderName);
+        _logger.Debug("Inserting mail {MailCopyId} to {FolderName}", mailCopy.Id, mailCopy.AssignedFolder.FolderName);
 
         var inserted = false;
         await Connection.RunInTransactionAsync(connection =>
         {
+            var accountId = mailCopy.AssignedAccount.Id;
             if (_draftUpdates?.IsRemoteProtected(accountId, mailCopy) == true ||
                 _draftUpdates?.IsStaleRemote(accountId, mailCopy.Id) == true) return;
             connection.Insert(mailCopy, typeof(MailCopy));
@@ -1303,7 +1296,7 @@ public class MailService : BaseDatabaseService, IMailService
         return hydratedMailCopy;
     }
 
-    public async Task<bool> SaveDraftMetadataAsync(Guid accountId, MailCopy snapshot)
+    public async Task SaveDraftMetadataAsync(Guid accountId, MailCopy snapshot)
     {
         var gate = _draftUpdates?.Get(accountId, snapshot.UniqueId).PersistenceLock
                    ?? _draftLifecycleLocks.GetOrAdd(snapshot.UniqueId, _ => new SemaphoreSlim(1, 1));
@@ -1311,13 +1304,8 @@ public class MailService : BaseDatabaseService, IMailService
         try
         {
             var current = await GetSingleMailItemAsync(snapshot.UniqueId).ConfigureAwait(false);
-            if (current == null || current.AssignedAccount?.Id != accountId || !current.IsDraft)
-            {
-                // The draft was deleted, sent or moved (often remotely) while compose was still open.
-                _logger.Warning("Draft {UniqueId} no longer exists for account {AccountId}; metadata save skipped.",
-                    snapshot.UniqueId, accountId);
-                return false;
-            }
+            if (current?.AssignedAccount?.Id != accountId || !current.IsDraft)
+                throw new InvalidOperationException("Draft no longer exists.");
 
             current.Subject = snapshot.Subject;
             current.PreviewText = NormalizePreviewText(snapshot.PreviewText);
@@ -1327,7 +1315,6 @@ public class MailService : BaseDatabaseService, IMailService
             current.Importance = snapshot.Importance;
             await Connection.UpdateAsync(current, typeof(MailCopy)).ConfigureAwait(false);
             ReportUpdatedMails([current]);
-            return true;
         }
         finally { gate.Release(); }
     }
@@ -1801,8 +1788,7 @@ public class MailService : BaseDatabaseService, IMailService
         MailCopy removedMail = null;
         var mailCopyToInsert = mailCopy;
 
-        // A copy whose folder row was removed mid-sync has no AssignedFolder; treat it as a plain assignment.
-        if (mailCopy.AssignedFolder?.SpecialFolderType == SpecialFolderType.Sent &&
+        if (mailCopy.AssignedFolder.SpecialFolderType == SpecialFolderType.Sent &&
             localFolder.SpecialFolderType == SpecialFolderType.Deleted)
         {
             // Sent item is deleted.
@@ -2201,7 +2187,8 @@ public class MailService : BaseDatabaseService, IMailService
             return false;
 
         var id = mailCopy.Id ?? string.Empty;
-        var messageId = MailHeaderExtensions.NormalizeMessageId(mailCopy.MessageId) ?? string.Empty;
+        var storedMessageId = mailCopy.MessageId?.Trim() ?? string.Empty;
+        var messageId = MailHeaderExtensions.NormalizeMessageId(storedMessageId) ?? string.Empty;
 
         if (keysInBatch != null)
         {
@@ -2215,11 +2202,12 @@ public class MailService : BaseDatabaseService, IMailService
             "SELECT COUNT(*) FROM MailCopy " +
             "INNER JOIN MailItemFolder ON MailCopy.FolderId = MailItemFolder.Id " +
             "WHERE MailItemFolder.MailAccountId = ? AND MailCopy.IsDraft = 0 " +
-            "AND (MailCopy.Id = ? OR (? <> '' AND MailCopy.MessageId = ?))",
+            "AND (MailCopy.Id = ? OR (? <> '' AND (MailCopy.MessageId = ? OR MailCopy.MessageId = ?)))",
             accountId,
             id,
             messageId,
-            messageId).ConfigureAwait(false);
+            messageId,
+            storedMessageId).ConfigureAwait(false);
 
         return existingCount == 0;
     }
@@ -2299,8 +2287,7 @@ public class MailService : BaseDatabaseService, IMailService
             Headers = { { Constants.WinoLocalDraftHeader, Guid.NewGuid().ToString() } },
         };
 
-        selectedAlias ??= await _accountService.EnsurePrimaryAccountAliasAsync(account.Id).ConfigureAwait(false)
-            ?? throw new MissingAliasException();
+        selectedAlias ??= await _accountService.GetPrimaryAccountAliasAsync(account.Id) ?? throw new MissingAliasException();
 
         // Set FromName and FromAddress by alias.
         message.From.Add(new MailboxAddress(selectedAlias.AliasSenderName ?? account.SenderName, selectedAlias.AliasAddress));
@@ -2333,17 +2320,6 @@ public class MailService : BaseDatabaseService, IMailService
     private async Task<MailAccountAlias> ResolveDraftAliasAsync(MailAccount account, DraftCreationOptions draftCreationOptions)
     {
         var aliases = await _accountService.GetAccountAliasesAsync(account.Id).ConfigureAwait(false);
-
-        if (aliases.Count == 0)
-        {
-            // Accounts restored or migrated without alias rows cannot compose. Repair them with the root alias.
-            var repairedAlias = await _accountService.EnsurePrimaryAccountAliasAsync(account.Id).ConfigureAwait(false);
-            if (repairedAlias == null)
-                throw new MissingAliasException();
-
-            aliases = [repairedAlias];
-        }
-
         var primaryAlias = aliases.FirstOrDefault(a => a.IsPrimary) ?? aliases.FirstOrDefault();
 
         if (draftCreationOptions?.ReferencedMessage?.MimeMessage == null)
@@ -2444,16 +2420,6 @@ public class MailService : BaseDatabaseService, IMailService
 
             if (draftCreationOptions.MailToUri.Bcc.Any())
                 message.Bcc.AddRange(draftCreationOptions.MailToUri.Bcc.Select(x => new MailboxAddress(x, x)));
-
-            var inReplyTo = MailHeaderExtensions.NormalizeMessageId(draftCreationOptions.MailToUri.InReplyTo);
-            if (!string.IsNullOrEmpty(inReplyTo))
-            {
-                message.InReplyTo = inReplyTo;
-
-                var existingReferences = MailHeaderExtensions.SplitMessageIds(draftCreationOptions.MailToUri.References);
-                foreach (var referenceId in MailHeaderExtensions.BuildReferencesChain(existingReferences, inReplyTo))
-                    message.References.Add(referenceId);
-            }
         }
 
         if (signature != null)
@@ -2523,41 +2489,19 @@ public class MailService : BaseDatabaseService, IMailService
             }
 
             // Reply target follows Reply-To first, then From, then Sender.
-            List<MailboxAddress> replyTargets = referenceMessage.ReplyTo.Mailboxes.Any()
-                ? referenceMessage.ReplyTo.Mailboxes.ToList()
-                : referenceMessage.From.Mailboxes.Any()
-                    ? referenceMessage.From.Mailboxes.ToList()
-                    : referenceMessage.Sender is MailboxAddress senderMailbox
-                        ? [senderMailbox]
-                        : [];
-
-            // Replying to a message the user sent (e.g. from the Sent folder) targets its original recipients instead of the user.
-            var isReplyToOwnMessage = replyTargets.Count > 0
-                && replyTargets.All(m => !string.IsNullOrWhiteSpace(m.Address) && ownAddresses.Contains(m.Address.Trim()));
-
-            if (isReplyToOwnMessage)
+            if (referenceMessage.ReplyTo.Mailboxes.Any())
             {
-                foreach (var mailbox in referenceMessage.To.Mailboxes)
-                    AddToRecipient(mailbox, allowSelf: false);
-
-                // Message had no To recipients other than the user; fall back to Cc.
-                if (toRecipients.Count == 0)
-                {
-                    foreach (var mailbox in referenceMessage.Cc.Mailboxes)
-                        AddToRecipient(mailbox, allowSelf: false);
-                }
-
-                // Message was sent only to the user's own addresses; reply to self.
-                if (toRecipients.Count == 0)
-                {
-                    foreach (var mailbox in replyTargets)
-                        AddToRecipient(mailbox, allowSelf: true);
-                }
-            }
-            else
-            {
-                foreach (var mailbox in replyTargets)
+                foreach (var mailbox in referenceMessage.ReplyTo.Mailboxes)
                     AddToRecipient(mailbox, allowSelf: true);
+            }
+            else if (referenceMessage.From.Mailboxes.Any())
+            {
+                foreach (var mailbox in referenceMessage.From.Mailboxes)
+                    AddToRecipient(mailbox, allowSelf: true);
+            }
+            else if (referenceMessage.Sender is MailboxAddress senderMailbox)
+            {
+                AddToRecipient(senderMailbox, allowSelf: true);
             }
 
             if (reason == DraftCreationReason.ReplyAll)
