@@ -351,6 +351,8 @@ function Get-ReleaseBuildArguments {
         'msbuild', $Plan.Project, '-nologo', '-m', '-nr:false', '-verbosity:normal',
         '-p:Configuration=Release', "-p:Platform=$platform", "-p:ArtifactsPath=$buildArtifacts",
         '-p:UseNativeAot=true',
+        '-p:TreatWarningsAsErrors=true',
+        '-p:TrimmerSingleWarn=false',
         "-p:NotificationHostPublishRoot=$notificationHosts\"
     )
     if ($Plan.Selection.Architectures.Count -eq 1) { $arguments += "-p:RuntimeIdentifiers=win-$($platform.ToLowerInvariant())" }
