@@ -599,13 +599,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Release '$tag' exists but its tag cannot be verified; refusing to modify it." }
             $tagInfo = $tagInfoJson | ConvertFrom-Json
             if ([string]$tagInfo.object.type -cne 'commit' -or [string]$tagInfo.object.sha -cne $env:COMMIT_SHA) {
-              throw "Release '$tag' already exists but does not point directly to verified commit $env:COMMIT_SHA; refusing to overwrite its assets or tag."
+              Write-Warning "Beta version $version is already published from commit $($tagInfo.object.sha). The validated commit $env:COMMIT_SHA will not replace or move that Release. Increment Package.appxmanifest to publish a new version."
+              exit 0
             }
 
             $assetNames = @($existing.assets | ForEach-Object { [string]$_.name })
             if (-not ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle") -or
                 -not ($assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer')) {
-              throw "Release '$tag' is missing expected assets; refusing to overwrite or repair an existing publication."
+              throw "Release '$tag' is missing expected assets for its own commit; refusing to overwrite or repair an existing publication."
             }
 
             Write-Host "Release '$tag' already points to verified commit $env:COMMIT_SHA and has the expected assets. All new-artifact checks passed; skipping duplicate publication without modifying the Release."
