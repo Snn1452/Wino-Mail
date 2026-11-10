@@ -100,6 +100,31 @@ jobs:
           if ([string]$manifest.Package.Identity.Version -cne $expectedVersion) {
             throw "Installed package version mismatch: expected $expectedVersion, got $($manifest.Package.Identity.Version)."
           }
+
+          $startupTasks = @($manifest.SelectNodes("//*[local-name()='StartupTask']"))
+          if ($startupTasks.Count -ne 1) {
+            throw "Expected exactly one installed Windows startup task; found $($startupTasks.Count)."
+          }
+          if ($startupTasks[0].GetAttribute('TaskId') -cne 'WinoStartupId') {
+            throw "Unexpected Windows startup task: $($startupTasks[0].GetAttribute('TaskId'))."
+          }
+          $startupOwner = $startupTasks[0].SelectSingleNode("ancestor::*[local-name()='Application'][1]")
+          if ($null -eq $startupOwner -or $startupOwner.GetAttribute('Id') -cne 'App') {
+            throw 'The single user startup task must belong to the Wino Mail UI application.'
+          }
+          $backgroundHostTasks = $manifest.SelectNodes("//*[local-name()='Application'][@Id='BackgroundSyncHost']//*[local-name()='StartupTask']")
+          if ($backgroundHostTasks.Count -ne 0) {
+            throw 'BackgroundSyncHost must be activated on demand, not registered as a second Windows startup entry.'
+          }
+          $backgroundHostActivation = $manifest.SelectNodes("//*[local-name()='Application'][@Id='BackgroundSyncHost']//*[local-name()='FullTrustProcess']")
+          if ($backgroundHostActivation.Count -ne 1) {
+            throw 'Packaged BackgroundSyncHost on-demand full-trust activation is missing.'
+          }
+          $sessionStartHost = $manifest.SelectNodes("//*[local-name()='Extension'][@Category='windows.backgroundTasks' and @EntryPoint='Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.Task']")
+          if ($sessionStartHost.Count -ne 1) {
+            throw 'The UI session-start background-task host registration is missing.'
+          }
+
           "PACKAGE_VERSION=$expectedVersion" >> $env:GITHUB_ENV
 
       - name: Create artifact provenance metadata
@@ -395,3 +420,13 @@ jobs:
             Get-ChildItem 'Cert:\CurrentUser\My' -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $env:CERT_THUMBPRINT | ForEach-Object { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue }
           }
 
+  publish-release:
+    name: Publish Beta only after verification jobs pass
+    needs: notification-runtime
+    if: github.ref == 'refs/heads/integration/msix-release-upstream-main'
+    uses: ./.github/workflows/publish-github-release.yml
+    with:
+      target_sha: ${{ github.sha }}
+    permissions:
+      actions: read
+      contents: write
