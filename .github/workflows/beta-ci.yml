@@ -589,7 +589,8 @@ jobs:
           "@ | Set-Content -LiteralPath $notes -Encoding utf8
           # Existing versions are updated in place, matching the established Beta publishing behavior.
           # Before mutating an existing Release, prove its tag can be safely fast-forwarded to this commit.
-          $releaseResponse = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
+          $encodedTag = [uri]::EscapeDataString($tag)
+          $releaseResponse = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$encodedTag" 2>&1
           $releaseQueryExitCode = $LASTEXITCODE
           $releaseExists = $false
           $existing = $null
