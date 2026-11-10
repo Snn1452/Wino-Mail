@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Wino.Mail.BackgroundSyncHost;
 using Wino.NotificationHost.Contracts;
 using Xunit;
 
@@ -42,8 +43,30 @@ public sealed class ReleaseIdentityTests
         wrongPublisher.Should().Throw<InvalidDataException>();
     }
 
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public void AutomaticSynchronizationStartsOnlyWhenUiIsClosedAndNotTerminating(
+        bool isWinUiProcessRunning,
+        bool terminateRequested,
+        bool expected)
+    {
+        BackgroundSyncLoopPolicy
+            .ShouldStartLoops(isWinUiProcessRunning, terminateRequested)
+            .Should()
+            .Be(expected);
+    }
+
     [Fact]
-    public void PackageManifestHasOneBackgroundStartupTaskAndKeepsUiOutOfStartupTaskList()
+    public void ActiveBackgroundSynchronizationYieldsWhenWinUiStarts()
+    {
+        BackgroundSyncLoopPolicy.ShouldYieldToUi(isWinUiProcessRunning: true).Should().BeTrue();
+        BackgroundSyncLoopPolicy.ShouldYieldToUi(isWinUiProcessRunning: false).Should().BeFalse();
+    }
+
+    [Fact]
+    public void PackageManifestHasSingleUserStartupTaskAndKeepsBackgroundHostOnDemand()
     {
         var root = FindRepository();
         var manifestPath = Path.Combine(root, "src/Wino.Mail.WinUI/Package.appxmanifest");
@@ -58,16 +81,33 @@ public sealed class ReleaseIdentityTests
         startupTasks.Should().ContainSingle();
         var startupTask = startupTasks[0].Elements().SingleOrDefault(element => element.Name.LocalName == "StartupTask");
         startupTask.Should().NotBeNull();
-        startupTask!.Attribute("TaskId")!.Value.Should().Be("WinoBackgroundSyncStartupId");
+        var confirmedStartupTask = startupTask!;
+        var startupTaskId = confirmedStartupTask.Attribute("TaskId")!.Value;
+        startupTaskId.Should().Be("WinoStartupId");
 
-        document.Descendants(ns + "Application")
+        var activationSourcePath = Path.Combine(root, "src/Wino.Mail.WinUI/Activation/SessionStartActivation.cs");
+        File.ReadAllText(activationSourcePath)
             .Should()
-            .ContainSingle(application => (string?)application.Attribute("Id") == "BackgroundSyncHost");
+            .Contain($"private const string StartupTaskId = \"{startupTaskId}\";");
+
+        var startupOwner = confirmedStartupTask.Ancestors().Single(element => element.Name.LocalName == "Application");
+        ((string?)startupOwner.Attribute("Id")).Should().Be("App");
+
+        var backgroundSyncHost = document.Descendants(ns + "Application")
+            .SingleOrDefault(application => (string?)application.Attribute("Id") == "BackgroundSyncHost");
+        backgroundSyncHost.Should().NotBeNull();
+        var confirmedBackgroundSyncHost = backgroundSyncHost!;
+        confirmedBackgroundSyncHost.Descendants().Should().NotContain(element => element.Name.LocalName == "StartupTask");
+        confirmedBackgroundSyncHost.Descendants().Should().Contain(element => element.Name.LocalName == "FullTrustProcess");
 
         document.Descendants()
-            .Where(element => element.Name.LocalName == "StartupTask")
             .Should()
-            .NotContain(task => (string?)task.Attribute("TaskId") == "WinoStartupId");
+            .Contain(element => (string?)element.Attribute("Category") == "windows.backgroundTasks");
+
+        document.Descendants()
+            .Should()
+            .Contain(element => element.Name.LocalName == "ActivatableClass" &&
+                (string?)element.Attribute("ActivatableClassId") == "Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.Task");
     }
 
     private static string FindRepository()

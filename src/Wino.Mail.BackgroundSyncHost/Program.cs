@@ -82,6 +82,9 @@ internal static class Program
             var isNotificationSmokeTest = args.Any(argument =>
                 string.Equals(argument, "--notification-smoke-test", StringComparison.OrdinalIgnoreCase));
 
+            var isBackgroundLoopGateSmokeTest = args.Any(argument =>
+                string.Equals(argument, "--background-loop-gate-smoke-test", StringComparison.OrdinalIgnoreCase));
+
             if (isIdentitySmokeTest)
             {
                 WriteStartupDiagnostic("SMOKE", "Release identity initialized successfully.");
@@ -90,7 +93,7 @@ internal static class Program
 
             stage = "instance lock";
             FileStream? instanceLock = null;
-            if (!isNotificationSmokeTest)
+            if (!isNotificationSmokeTest && !isBackgroundLoopGateSmokeTest)
             {
                 instanceLock = AcquireInstanceLock();
                 if (instanceLock is null)
@@ -101,13 +104,20 @@ internal static class Program
             }
             else
             {
-                WriteStartupDiagnostic("LOCK", "Notification smoke test is running without the normal singleton lock.");
+                WriteStartupDiagnostic(
+                    "LOCK",
+                    isNotificationSmokeTest
+                        ? "Notification smoke test is running without the normal singleton lock."
+                        : "Background-loop gate smoke test is running without the normal singleton lock.");
             }
 
             using (instanceLock)
             {
                 WriteStartupDiagnostic("STARTING", "Dependency initialization starting.");
-                var exitCode = RunAsync(isInitializationSmokeTest, isNotificationSmokeTest).GetAwaiter().GetResult();
+                var exitCode = RunAsync(
+                    isInitializationSmokeTest,
+                    isNotificationSmokeTest,
+                    isBackgroundLoopGateSmokeTest).GetAwaiter().GetResult();
                 WriteStartupDiagnostic("EXIT", $"Background synchronization host exited with code {exitCode}.");
                 return exitCode;
             }
@@ -147,7 +157,10 @@ internal static class Program
         }
     }
 
-    private static async Task<int> RunAsync(bool isInitializationSmokeTest, bool isNotificationSmokeTest)
+    private static async Task<int> RunAsync(
+        bool isInitializationSmokeTest,
+        bool isNotificationSmokeTest,
+        bool isBackgroundLoopGateSmokeTest)
     {
         var services = new ServiceCollection();
 
@@ -203,6 +216,31 @@ internal static class Program
 
         WriteStartupDiagnostic("LOGGING", "Configuring structured logging.");
         ConfigureLogging(provider);
+
+        if (isBackgroundLoopGateSmokeTest)
+        {
+            var uiIsRunning = TryIsWinUiProcessRunning();
+            if (uiIsRunning is null)
+            {
+                WriteStartupDiagnostic(
+                    "FAIL",
+                    "Background-loop gate smoke test could not inspect WinUI process state.");
+                return 3;
+            }
+
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(uiIsRunning.Value, terminateRequested: false))
+            {
+                WriteStartupDiagnostic(
+                    "SMOKE",
+                    "WinUI process detected; automatic synchronization loops correctly remain inactive.");
+                return 0;
+            }
+
+            WriteStartupDiagnostic(
+                "FAIL",
+                "Background-loop gate smoke test requires WinUI to be running, but no WinUI process was detected.");
+            return 2;
+        }
 
         if (isNotificationSmokeTest)
         {
@@ -302,7 +340,9 @@ internal static class Program
                 return;
             }
 
-            if (IsWinUiProcessRunning())
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(
+                    IsWinUiProcessRunning(),
+                    terminateRequested: false))
             {
                 if (!waitingForUi)
                 {
@@ -336,7 +376,7 @@ internal static class Program
                     break;
                 }
 
-                if (IsWinUiProcessRunning())
+                if (BackgroundSyncLoopPolicy.ShouldYieldToUi(IsWinUiProcessRunning()))
                 {
                     WriteStartupDiagnostic("YIELD", "WinUI was activated; stopping background loops to avoid duplicate scheduling.");
                     yieldedToUi = true;
@@ -369,6 +409,9 @@ internal static class Program
     }
 
     private static bool IsWinUiProcessRunning()
+        => TryIsWinUiProcessRunning() ?? true;
+
+    private static bool? TryIsWinUiProcessRunning()
     {
         Process[] processes;
 
@@ -378,9 +421,9 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            // Prefer pausing the background scheduler over risking two active schedulers.
+            // Production must fail closed and keep the scheduler idle if process inspection fails.
             WriteStartupDiagnostic("PROCESS", $"Could not inspect WinUI process state; keeping host loops idle. {ex.Message}");
-            return true;
+            return null;
         }
 
         try

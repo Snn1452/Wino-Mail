@@ -8,7 +8,6 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/release/**'
-      - 'release-assets/Beta/**'
       - 'Directory.*'
       - 'WinoMail.slnx'
       - 'global.json'
@@ -54,7 +53,7 @@ jobs:
       - name: Read Beta package identity
         shell: pwsh
         run: |
-          $profile = Get-Content -LiteralPath 'scripts/release/profiles/Beta.json' -Raw | ConvertFrom-Json
+          $profile = Get-Content -LiteralPath 'scripts/release/windows/profiles/Beta.json' -Raw | ConvertFrom-Json
           if ($profile.Distribution -cne 'Beta' -or $profile.PackageName -cne 'WinoMail.Beta') { throw 'Beta profile identity mismatch.' }
           "PACKAGE_PUBLISHER=$($profile.Publisher)" >> $env:GITHUB_ENV
           "PACKAGE_NAME=$($profile.PackageName)" >> $env:GITHUB_ENV
@@ -70,7 +69,7 @@ jobs:
       - name: Build installable Beta MSIXBundle
         shell: pwsh
         run: |
-          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\release-assets\Beta
+          pwsh -NoProfile -File .\tests\scripts\Build-Beta-TestBundle.ps1 -CertificateThumbprint $env:CERT_THUMBPRINT -BetaAssetsPath .\scripts\release\Assets\Beta
           if ($LASTEXITCODE -ne 0) { throw 'Beta MSIXBundle build failed.' }
 
           $manifest = [xml](Get-Content -LiteralPath 'src/Wino.Mail.WinUI/Package.appxmanifest' -Raw)
@@ -160,6 +159,47 @@ jobs:
           }
 
           if ($null -eq $ui) { throw 'Packaged Wino Mail UI process did not start.' }
+
+          # Exercise the real process detector while WinUI is alive. This mode exits before
+          # database initialization or scheduler startup, and fails if the UI process is absent.
+          $diagnosticPaths = @(
+            (Join-Path $env:LOCALAPPDATA 'Wino Mail/background-sync-host-startup.log'),
+            (Join-Path $env:TEMP 'Wino Mail/background-sync-host-startup.log')
+          ) | Select-Object -Unique
+          $diagnosticStartLengths = @{}
+          foreach ($path in $diagnosticPaths) {
+            $diagnosticStartLengths[$path] = if (Test-Path -LiteralPath $path -PathType Leaf) {
+              (Get-Content -LiteralPath $path -Raw).Length
+            } else {
+              0
+            }
+          }
+
+          $gateSmokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--background-loop-gate-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
+
+          $newDiagnosticText = foreach ($path in $diagnosticPaths) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+              $text = Get-Content -LiteralPath $path -Raw
+              $startLength = [int]$diagnosticStartLengths[$path]
+              if ($text.Length -ge $startLength) { $text.Substring($startLength) } else { $text }
+            }
+          }
+          $newDiagnosticText = $newDiagnosticText -join [Environment]::NewLine
+
+          # Exit code 0 is emitted only by the gate smoke branch after it detects WinUI
+          # and confirms the scheduler policy keeps automatic loops inactive. Logs are
+          # best-effort diagnostics because packaged processes may redirect local paths.
+          if ($newDiagnosticText -match '\[LOOPS\] Starting automatic synchronization only while WinUI is closed\.') {
+            throw 'Background loop gate smoke unexpectedly entered the background synchronization loops while WinUI was running.'
+          }
+          if ($newDiagnosticText) {
+            Write-Host "Background loop gate diagnostics: $newDiagnosticText"
+          }
+          if ($gateSmokeProcess.ExitCode -ne 0) {
+            throw "Background loop gate smoke failed while WinUI was running with exit code $($gateSmokeProcess.ExitCode). Diagnostics: $newDiagnosticText"
+          }
+
+          Write-Host 'Verified: WinUI is running and the background synchronization loops remain inactive.'
 
           $smokeProcess = Start-Process -FilePath $backgroundHostPath -ArgumentList '--notification-smoke-test' -WorkingDirectory $package.InstallLocation -PassThru -Wait
           $smokeExitCode = $smokeProcess.ExitCode

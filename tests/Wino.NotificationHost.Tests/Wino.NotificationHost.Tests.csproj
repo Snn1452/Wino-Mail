@@ -22,5 +22,6 @@
     <ProjectReference Include="..\..\src\Wino.NotificationHost.Contracts\Wino.NotificationHost.Contracts.csproj" />
     <ProjectReference Include="..\Wino.NotificationHost.LifetimeProbe\Wino.NotificationHost.LifetimeProbe.csproj" />
     <Compile Include="..\..\src\Wino.Mail.WinUI\Services\NotificationHostProcessSupervisor.cs" Link="NotificationHostProcessSupervisor.cs" />
+    <Compile Include="..\..\src\Wino.Mail.BackgroundSyncHost\BackgroundSyncLoopPolicy.cs" Link="BackgroundSyncLoopPolicy.cs" />
   </ItemGroup>
 </Project>
