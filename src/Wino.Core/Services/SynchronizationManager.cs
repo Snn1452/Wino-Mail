@@ -1,7 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -20,10 +19,11 @@ using Wino.Core.Domain.Models.Connectivity;
 using Wino.Core.Domain.Models.Synchronization;
 using Wino.Core.Domain.Models.MailItem;
 using Wino.Core.Domain.Models.Requests;
-using Wino.Core.Domain.Models.Telemetry;
 using Wino.Core.Helpers;
 using Wino.Core.Requests.Folder;
 using Wino.Core.Requests.Mail;
+using Wino.Messaging.Client.Navigation;
+using Wino.Messaging.Client.Shell;
 using Wino.Messaging.Server;
 using Wino.Messaging.UI;
 
@@ -51,6 +51,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private readonly ConcurrentDictionary<Guid, AccountSynchronizationProgress> _contactSynchronizationProgress = new();
     private readonly ConcurrentDictionary<Guid, AccountSynchronizationProgress> _taskSynchronizationProgress = new();
     private readonly ConcurrentDictionary<Guid, PendingUndoActionPack> _pendingUndoActionPacks = new();
+
+    // Accounts whose queued user actions were held back (attention gate, synchronizer teardown).
+    // The first synchronization that is allowed to run again publishes their execution.
+    private readonly ConcurrentDictionary<Guid, byte> _accountsWithDeferredRequests = new();
+    private readonly ConcurrentDictionary<string, string> _reportedDavCertificateFailures = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _initializationSemaphore = new(1, 1);
     private readonly object _undoActionPackLock = new();
     private readonly ILogger _logger = Log.ForContext<SynchronizationManager>();
@@ -61,7 +66,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     private IAuthenticationProvider _authenticationProvider;
     private INotificationBuilder _notificationBuilder;
     private bool _notificationsEnabled = true;
-    private IWinoTelemetryService _telemetryService;
     private IPreferencesService _preferencesService;
     private IDraftSyncRetryService _draftSyncRetryService;
 
@@ -97,11 +101,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     public Task InitializeAsync(ISynchronizerFactory synchronizerFactory,
         IMailServerTestService mailServerTestService, IAccountService accountService,
         INotificationBuilder notificationBuilder, IAuthenticationProvider authenticationProvider,
-        IWinoTelemetryService telemetryService, IPreferencesService preferencesService,
+        IPreferencesService preferencesService,
         IDraftSyncRetryService draftSyncRetryService,
         IDraftUpdateCoordinator draftUpdateCoordinator = null, IMailService draftMailService = null)
         => InitializeAsync(synchronizerFactory, mailServerTestService, accountService, notificationBuilder,
-            authenticationProvider, telemetryService, preferencesService, draftSyncRetryService,
+            authenticationProvider, preferencesService, draftSyncRetryService,
             draftUpdateCoordinator, draftMailService, null);
 
     public async Task InitializeAsync(ISynchronizerFactory synchronizerFactory,
@@ -109,7 +113,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                                      IAccountService accountService,
                                      INotificationBuilder notificationBuilder,
                                      IAuthenticationProvider authenticationProvider,
-                                     IWinoTelemetryService telemetryService,
                                      IPreferencesService preferencesService,
                                      IDraftSyncRetryService draftSyncRetryService,
                         IDraftUpdateCoordinator draftUpdateCoordinator, IMailService draftMailService,
@@ -127,7 +130,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             _authenticationProvider = authenticationProvider ?? throw new ArgumentNullException(nameof(authenticationProvider));
             _notificationBuilder = notificationBuilder ?? throw new ArgumentNullException(nameof(notificationBuilder));
             _notificationsEnabled = platformCapabilities?.Notifications ?? true;
-            _telemetryService = telemetryService ?? throw new ArgumentNullException(nameof(telemetryService));
             _preferencesService = preferencesService ?? throw new ArgumentNullException(nameof(preferencesService));
             _draftUpdateCoordinator = draftUpdateCoordinator;
             _draftMailService = draftMailService;
@@ -179,21 +181,10 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                 certificateException.Failure.Port);
             return ImapConnectivityTestResults.CertificateUIRequired(certificateException.Failure);
         }
-        catch (ImapTestSSLCertificateException sslTestException)
-        {
-            _logger.Warning("IMAP connectivity test requires SSL certificate confirmation");
-            return CreateCertificateUIRequiredResult(sslTestException);
-        }
         catch (ImapClientPoolException clientPoolException)
         {
             if (TryGetCertificateException(clientPoolException, out var certificateException))
                 return ImapConnectivityTestResults.CertificateUIRequired(certificateException.Failure);
-
-            if (TryGetSslCertificateException(clientPoolException, out var sslTestException))
-            {
-                _logger.Warning("IMAP connectivity test requires SSL certificate confirmation");
-                return CreateCertificateUIRequiredResult(sslTestException);
-            }
 
             _logger.Error(clientPoolException, "IMAP connectivity test failed");
             return ImapConnectivityTestResults.Failure(clientPoolException.InnerException ?? clientPoolException);
@@ -202,12 +193,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         {
             if (TryGetCertificateException(exception, out var certificateException))
                 return ImapConnectivityTestResults.CertificateUIRequired(certificateException.Failure);
-
-            if (TryGetSslCertificateException(exception, out var sslTestException))
-            {
-                _logger.Warning("IMAP connectivity test requires SSL certificate confirmation");
-                return CreateCertificateUIRequiredResult(sslTestException);
-            }
 
             _logger.Error(exception, "IMAP connectivity test failed");
             return ImapConnectivityTestResults.Failure(exception);
@@ -223,21 +208,63 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         return certificateException != null;
     }
 
-    internal static bool TryGetSslCertificateException(Exception exception, out ImapTestSSLCertificateException sslException)
+    internal static bool IsDavProtocol(MailServerCertificateFailure failure)
+        => failure?.Protocol is MailServerProtocol.CalDav or MailServerProtocol.CardDav;
+
+    /// <summary>
+    /// A rejected calendar or contacts server certificate never sets account attention, because attention would stop
+    /// mail too. It is logged and shown once per certificate, with a way to the server settings where the user can
+    /// review it.
+    /// </summary>
+    private async Task<bool> ReportDavCertificateFailureAsync(Guid accountId, Exception exception)
     {
-        sslException = exception?
-            .GetInnerExceptions()
-            .OfType<ImapTestSSLCertificateException>()
-            .FirstOrDefault();
+        if (!TryGetCertificateException(exception, out var certificateException) || !IsDavProtocol(certificateException.Failure))
+            return false;
 
-        return sslException != null;
+        var failure = certificateException.Failure;
+        var endpoint = $"{accountId}|{failure.Protocol}|{failure.Host}|{failure.Port}";
+        var signature = $"{failure.CertificateSha256}|{failure.ChainStatusFlags}|{(int)failure.PolicyErrors}";
+
+        if (_reportedDavCertificateFailures.TryGetValue(endpoint, out var previous) && string.Equals(previous, signature, StringComparison.Ordinal))
+            return true;
+
+        _reportedDavCertificateFailures[endpoint] = signature;
+
+        _logger.Warning(
+            "{Protocol} synchronization of account {AccountId} is paused: the certificate of {Host}:{Port} was not accepted (tier {Tier}, problems {Problems})",
+            failure.Protocol,
+            accountId,
+            failure.Host,
+            failure.Port,
+            failure.Tier,
+            failure.Problems);
+
+        MailAccount account = null;
+        try
+        {
+            account = await _accountService.GetAccountAsync(accountId).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Could not read account {AccountId} for the certificate notice", accountId);
+        }
+
+        var accountName = account?.Name ?? account?.Address ?? string.Empty;
+        var message = string.Format(
+            failure.Protocol == MailServerProtocol.CalDav
+                ? Translator.Info_CalDavCertificateRejectedMessage
+                : Translator.Info_CardDavCertificateRejectedMessage,
+            accountName);
+
+        WeakReferenceMessenger.Default.Send(new InfoBarMessageRequested(
+            InfoBarMessageType.Warning,
+            Translator.Info_DavCertificateRejectedTitle,
+            message,
+            Translator.Info_DavCertificateRejectedAction,
+            () => WeakReferenceMessenger.Default.Send(new AccountServerSettingsNavigationRequested(accountId))));
+
+        return true;
     }
-
-    private static ImapConnectivityTestResults CreateCertificateUIRequiredResult(ImapTestSSLCertificateException sslTestException)
-        => ImapConnectivityTestResults.CertificateUIRequired(
-            sslTestException.Issuer,
-            sslTestException.ExpirationDateString,
-            sslTestException.ValidFromDateString);
 
     /// <summary>
     /// Starts a new mail synchronization for the given account.
@@ -250,7 +277,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     {
         EnsureInitialized();
         using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
-        var stopwatch = Stopwatch.StartNew();
 
         if (options.Type == MailSynchronizationType.ExecuteRequests && HasPendingUndoAction(options.AccountId))
         {
@@ -261,7 +287,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                 _logger.Debug("Deferring ExecuteRequests synchronization for account {AccountId} because an undoable action is still in its grace period.", options.AccountId);
 
                 var result = MailSynchronizationResult.Canceled;
-                TrackMailSynchronizationSummary(options, pendingSynchronizer, result, stopwatch.Elapsed);
                 return result;
             }
         }
@@ -270,7 +295,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         {
             _logger.Information("Skipping mail synchronization for account {AccountId} because it needs attention.", options.AccountId);
             var result = MailSynchronizationResult.Canceled;
-            TrackMailSynchronizationSummary(options, null, result, stopwatch.Elapsed);
             return result;
         }
 
@@ -283,9 +307,13 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             var result = MailSynchronizationResult
                 .Failed(exception)
                 .MergeIssues([SynchronizationIssue.FromException(exception, "MailSync")]);
-            TrackMailSynchronizationSummary(options, null, result, stopwatch.Elapsed);
             return result;
         }
+
+        ResumeDeferredRequests(
+            options.AccountId,
+            synchronizer,
+            request => options.Type == MailSynchronizationType.ExecuteRequests && IsMailExecutionRequest(request));
 
         if (options.Type is MailSynchronizationType.ExecuteRequests or MailSynchronizationType.FullFolders)
         {
@@ -325,23 +353,22 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             _logger.Information("Mail synchronization completed for account {AccountId} with state {State}",
                               options.AccountId, result.CompletedState);
 
+            await PersistSignInAttentionIfRequiredAsync(synchronizer.Account, result.Exception, result.AllIssues).ConfigureAwait(false);
+
             await PublishMailSynchronizationNotificationsAsync(result, _notificationBuilder, _notificationsEnabled).ConfigureAwait(false);
 
-            TrackMailSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (OperationCanceledException)
         {
             _logger.Information("Mail synchronization canceled for account {AccountId}", options.AccountId);
             var result = MailSynchronizationResult.Canceled;
-            TrackMailSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (AccountAttentionRequiredException)
         {
             _logger.Information("Mail synchronization stopped for account {AccountId} because it needs attention.", options.AccountId);
             var result = MailSynchronizationResult.Canceled;
-            TrackMailSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (AuthenticationAttentionException authEx)
@@ -356,12 +383,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             var result = MailSynchronizationResult
                 .Failed(authEx)
                 .MergeIssues([SynchronizationIssue.FromException(authEx, "MailSync", SynchronizerErrorSeverity.AuthRequired)]);
-            TrackMailSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (Exception ex)
         {
-            if (TryGetCertificateException(ex, out _))
+            if (TryGetCertificateException(ex, out var certificateException) && !IsDavProtocol(certificateException.Failure))
             {
                 await SetAttentionAsync(synchronizer.Account, AccountAttentionReason.CertificateValidationFailed).ConfigureAwait(false);
                 if (_notificationsEnabled)
@@ -372,7 +398,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             var result = MailSynchronizationResult
                 .Failed(ex)
                 .MergeIssues([SynchronizationIssue.FromException(ex, "MailSync")]);
-            TrackMailSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         finally
@@ -432,18 +457,23 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
     /// <param name="request">Request to queue</param>
     /// <param name="accountId">Account ID to queue the request for</param>
     /// <param name="triggerSynchronization">Whether to automatically trigger synchronization after queuing the request</param>
-    public async Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization)
-        => await QueueRequestsAsync([request], accountId, triggerSynchronization).ConfigureAwait(false);
+    /// <param name="allowUndo">Whether undoable requests may wait in the undo grace period before execution</param>
+    public async Task QueueRequestAsync(IRequestBase request, Guid accountId, bool triggerSynchronization, bool allowUndo = true)
+        => await QueueRequestsAsync([request], accountId, triggerSynchronization, allowUndo).ConfigureAwait(false);
 
-    public async Task QueueRequestsAsync(IEnumerable<IRequestBase> requests, Guid accountId, bool triggerSynchronization)
+    public async Task QueueRequestsAsync(IEnumerable<IRequestBase> requests, Guid accountId, bool triggerSynchronization, bool allowUndo = true)
         => await QueueRequestPackAsync(
             new Dictionary<Guid, List<IRequestBase>>
             {
                 [accountId] = requests?.Where(request => request != null).ToList() ?? []
             },
-            triggerSynchronization).ConfigureAwait(false);
+            triggerSynchronization,
+            allowUndo).ConfigureAwait(false);
 
-    public async Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization)
+    public Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization)
+        => QueueRequestPackAsync(requestsByAccount, triggerSynchronization, allowUndo: true);
+
+    private async Task QueueRequestPackAsync(IReadOnlyDictionary<Guid, List<IRequestBase>> requestsByAccount, bool triggerSynchronization, bool allowUndo)
     {
         EnsureInitialized();
 
@@ -463,7 +493,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         // resolution or queue failures below revert the exact same request snapshots.
         RequestUiChangeCoordinator.ApplyRequests(allRequests);
 
-        var undoActionSettings = CreateUndoActionSettings(allRequests);
+        var undoActionSettings = allowUndo ? CreateUndoActionSettings(allRequests) : null;
 
         if (undoActionSettings != null)
         {
@@ -530,9 +560,26 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             LogTracedRequests("synchronizer-queued", (IRequestBase[])[request], accountId);
         }
 
+        RaiseRequestsQueued(accountId);
+
         if (triggerSynchronization)
         {
             PublishSynchronizationRequests(accountId, requestList);
+        }
+    }
+
+    public event EventHandler<Guid> RequestsQueued;
+
+    private void RaiseRequestsQueued(Guid accountId)
+    {
+        try
+        {
+            RequestsQueued?.Invoke(this, accountId);
+        }
+        catch (Exception ex)
+        {
+            // A host's listener must never fail the user's action.
+            _logger.Warning(ex, "A queued request listener failed for account {AccountId}", accountId);
         }
     }
 
@@ -915,6 +962,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         if (synchronizer is null)
             return ContactSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
 
+        ResumeDeferredRequests(
+            options.AccountId,
+            synchronizer,
+            request => options.Type == ContactSynchronizationType.ExecuteRequests && request is IContactActionRequest);
+
         var accountCancellationSource = _accountSynchronizationCancellationSources.GetOrAdd(options.AccountId, _ => new CancellationTokenSource());
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, accountCancellationSource.Token);
 
@@ -942,6 +994,8 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
                     await _accountService.UpdateAccountAsync(account).ConfigureAwait(false);
                 }
             }
+
+            await ReportDavCertificateFailureAsync(options.AccountId, result.Exception).ConfigureAwait(false);
             return result;
         }
         catch (AuthenticationAttentionException ex)
@@ -962,7 +1016,9 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Contact synchronization failed for account {AccountId}.", options.AccountId);
+            if (!await ReportDavCertificateFailureAsync(options.AccountId, ex).ConfigureAwait(false))
+                _logger.Error(ex, "Contact synchronization failed for account {AccountId}.", options.AccountId);
+
             return ContactSynchronizationResult.Failed(ex);
         }
         finally
@@ -976,9 +1032,10 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
         if (options is null)
             return TaskSynchronizationResult.Failed(new ArgumentNullException(nameof(options)));
+
+        using var synchronizationLock = await AcquireAccountSynchronizationLockAsync(options.AccountId, cancellationToken).ConfigureAwait(false);
 
         if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
         {
@@ -989,6 +1046,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         var synchronizer = await GetOrCreateSynchronizerAsync(options.AccountId).ConfigureAwait(false);
         if (synchronizer is null)
             return TaskSynchronizationResult.Failed(new InvalidOperationException("Can't create/get synchronizer."));
+
+        ResumeDeferredRequests(
+            options.AccountId,
+            synchronizer,
+            request => options.Type == TaskSynchronizationType.ExecuteRequests && request is ITaskActionRequest);
 
         var accountCancellationSource = _accountSynchronizationCancellationSources.GetOrAdd(options.AccountId, _ => new CancellationTokenSource());
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, accountCancellationSource.Token);
@@ -1111,13 +1173,11 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         bool reportState)
     {
         EnsureInitialized();
-        var stopwatch = Stopwatch.StartNew();
 
         if (await IsSynchronizationBlockedByAttentionAsync(options.AccountId).ConfigureAwait(false))
         {
             _logger.Information("Skipping calendar synchronization for account {AccountId} because it needs attention.", options.AccountId);
             var result = CalendarSynchronizationResult.Canceled;
-            TrackCalendarSynchronizationSummary(options, null, result, stopwatch.Elapsed);
             return result;
         }
 
@@ -1129,9 +1189,13 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             var result = CalendarSynchronizationResult
                 .Failed(exception)
                 .MergeIssues([SynchronizationIssue.FromException(exception, "CalendarSync")]);
-            TrackCalendarSynchronizationSummary(options, null, result, stopwatch.Elapsed);
             return result;
         }
+
+        ResumeDeferredRequests(
+            options.AccountId,
+            synchronizer,
+            request => options.Type == CalendarSynchronizationType.ExecuteRequests && request is ICalendarActionRequest);
 
         _logger.Information("Starting calendar synchronization for account {AccountId} with type {SyncType}",
                           options.AccountId, options.Type);
@@ -1158,26 +1222,26 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             _logger.Information("Calendar synchronization completed for account {AccountId} with state {State}",
                               options.AccountId, result.CompletedState);
 
+            await PersistSignInAttentionIfRequiredAsync(synchronizer.Account, result.Exception, result.AllIssues).ConfigureAwait(false);
+            await ReportDavCertificateFailureAsync(options.AccountId, result.Exception).ConfigureAwait(false);
+
             if (_notificationsEnabled && downloadedEventCount > 0)
             {
                 await _notificationBuilder.AddCalendarTaskbarBadgeCountAsync(downloadedEventCount).ConfigureAwait(false);
             }
 
-            TrackCalendarSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (OperationCanceledException)
         {
             _logger.Information("Calendar synchronization canceled for account {AccountId}", options.AccountId);
             var result = CalendarSynchronizationResult.Canceled;
-            TrackCalendarSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (AccountAttentionRequiredException)
         {
             _logger.Information("Calendar synchronization stopped for account {AccountId} because it needs attention.", options.AccountId);
             var result = CalendarSynchronizationResult.Canceled;
-            TrackCalendarSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (AuthenticationAttentionException authEx)
@@ -1192,16 +1256,16 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
             var result = CalendarSynchronizationResult
                 .Failed(authEx)
                 .MergeIssues([SynchronizationIssue.FromException(authEx, "CalendarSync", SynchronizerErrorSeverity.AuthRequired)]);
-            TrackCalendarSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Calendar synchronization failed for account {AccountId}", options.AccountId);
+            if (!await ReportDavCertificateFailureAsync(options.AccountId, ex).ConfigureAwait(false))
+                _logger.Error(ex, "Calendar synchronization failed for account {AccountId}", options.AccountId);
+
             var result = CalendarSynchronizationResult
                 .Failed(ex)
                 .MergeIssues([SynchronizationIssue.FromException(ex, "CalendarSync")]);
-            TrackCalendarSynchronizationSummary(options, synchronizer, result, stopwatch.Elapsed);
             return result;
         }
         finally
@@ -1441,218 +1505,6 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         return await GetOrCreateSynchronizerAsync(accountId);
     }
 
-    private void TrackMailSynchronizationSummary(
-        MailSynchronizationOptions options,
-        IWinoSynchronizerBase synchronizer,
-        MailSynchronizationResult result,
-        TimeSpan duration)
-    {
-        if (_telemetryService == null || options == null || result == null)
-            return;
-
-        if (!ShouldTrackSynchronizationTelemetry(result.CompletedState))
-            return;
-
-        var tags = CreateSynchronizationTelemetryProperties(
-            synchronizer?.Account,
-            "mail",
-            options.Type.ToString(),
-            result.CompletedState,
-            duration);
-
-        var context = new Dictionary<string, string>
-        {
-            ["successful_folder_count"] = result.SuccessfulFolderCount.ToString(),
-            ["failed_folder_count"] = result.FailedFolderCount.ToString(),
-            ["total_folder_count"] = result.FolderResults.Count.ToString(),
-            ["downloaded_count_bucket"] = GetCountBucket(result.TotalDownloadedCount),
-            ["updated_count_bucket"] = GetCountBucket(result.TotalUpdatedCount),
-            ["deleted_count_bucket"] = GetCountBucket(result.TotalDeletedCount)
-        };
-        MoveDetailedServerPropertiesToContext(tags, context);
-
-        var issues = result.AllIssues?.ToList();
-        AddIssueTelemetry(tags, context, issues, result.Exception);
-        TrackSynchronizationFailure(
-            options.AccountId,
-            tags,
-            context,
-            issues,
-            result.Exception);
-    }
-
-    private void TrackCalendarSynchronizationSummary(
-        CalendarSynchronizationOptions options,
-        IWinoSynchronizerBase synchronizer,
-        CalendarSynchronizationResult result,
-        TimeSpan duration)
-    {
-        if (_telemetryService == null || options == null || result == null)
-            return;
-
-        if (!ShouldTrackSynchronizationTelemetry(result.CompletedState))
-            return;
-
-        var tags = CreateSynchronizationTelemetryProperties(
-            synchronizer?.Account,
-            "calendar",
-            options.Type.ToString(),
-            result.CompletedState,
-            duration);
-
-        var context = new Dictionary<string, string>
-        {
-            ["downloaded_count_bucket"] = GetCountBucket(result.DownloadedEvents?.Count() ?? 0)
-        };
-        MoveDetailedServerPropertiesToContext(tags, context);
-        var issues = result.AllIssues?.ToList();
-        AddIssueTelemetry(tags, context, issues, result.Exception);
-        TrackSynchronizationFailure(
-            options.AccountId,
-            tags,
-            context,
-            issues,
-            result.Exception);
-    }
-
-    private void TrackSynchronizationFailure(
-        Guid accountId,
-        IReadOnlyDictionary<string, string> tags,
-        IReadOnlyDictionary<string, string> context,
-        IReadOnlyCollection<SynchronizationIssue> issues,
-        Exception exception)
-    {
-        var firstIssue = issues?.FirstOrDefault();
-        var issueCategory = firstIssue?.Category ?? SynchronizerErrorCategory.Unknown;
-        var exceptionType = firstIssue?.ExceptionType
-                            ?? exception?.GetType().Name
-                            ?? "Unknown";
-        var shouldCaptureStack = issueCategory is SynchronizerErrorCategory.Unknown
-            or SynchronizerErrorCategory.Validation;
-        var fingerprint = new[]
-        {
-            "sync_failure",
-            tags.GetValueOrDefault("provider", "unknown"),
-            tags.GetValueOrDefault("sync_area", "unknown"),
-            tags.GetValueOrDefault("sync_type", "unknown"),
-            issueCategory.ToString(),
-            exceptionType
-        };
-
-        _telemetryService.TrackEvent(new WinoTelemetryEvent
-        {
-            Name = "sync_failure",
-            Level = shouldCaptureStack ? WinoTelemetryLevel.Error : WinoTelemetryLevel.Warning,
-            Exception = shouldCaptureStack ? exception : null,
-            Tags = tags,
-            Context = context,
-            Fingerprint = fingerprint,
-            DeduplicationKey = $"{accountId:N}:{string.Join(':', fingerprint)}",
-            DeduplicationWindow = TimeSpan.FromMinutes(30)
-        });
-    }
-
-    private static Dictionary<string, string> CreateSynchronizationTelemetryProperties(
-        MailAccount account,
-        string syncArea,
-        string syncType,
-        SynchronizationCompletedState completedState,
-        TimeSpan duration)
-    {
-        var properties = new Dictionary<string, string>
-        {
-            ["event_kind"] = "sync_failure",
-            ["feature"] = "sync",
-            ["sync_area"] = syncArea,
-            ["sync_type"] = syncType,
-            ["state"] = completedState.ToString(),
-            ["provider"] = account?.ProviderType.ToString() ?? "unknown",
-            ["special_provider"] = account?.SpecialImapProvider.ToString() ?? "unknown",
-            ["mail_enabled"] = (account?.IsMailAccessGranted == true).ToString(),
-            ["calendar_enabled"] = (account?.IsCalendarAccessGranted == true).ToString()
-        };
-
-        if (account?.ProviderType is (MailProviderType.IMAP4 or MailProviderType.POP3) && account.ServerInformation != null)
-        {
-            foreach (var property in ImapSetupTelemetrySanitizer.CreateServerProperties(account.ServerInformation))
-            {
-                properties[property.Key] = property.Value;
-            }
-
-            properties["feature"] = "sync";
-        }
-
-        properties["duration_bucket"] = GetDurationBucket(duration);
-        return properties;
-    }
-
-    private static void AddIssueTelemetry(
-        IDictionary<string, string> tags,
-        IDictionary<string, string> context,
-        IReadOnlyCollection<SynchronizationIssue> issues,
-        Exception exception)
-    {
-        var firstIssue = issues?.FirstOrDefault();
-
-        context["issue_count"] = (issues?.Count ?? 0).ToString();
-
-        if (firstIssue != null)
-        {
-            tags["issue_category"] = firstIssue.Category.ToString();
-            tags["issue_severity"] = firstIssue.Severity.ToString();
-            context["was_handled"] = firstIssue.WasHandled.ToString();
-            context["can_continue_sync"] = firstIssue.CanContinueSync.ToString();
-            context["is_entity_not_found"] = firstIssue.IsEntityNotFound.ToString();
-
-            if (!string.IsNullOrWhiteSpace(firstIssue.ExceptionType))
-                tags["exception_type"] = firstIssue.ExceptionType;
-        }
-
-        if (exception != null && !tags.ContainsKey("exception_type"))
-            tags["exception_type"] = exception.GetType().Name;
-    }
-
-    private static void MoveDetailedServerPropertiesToContext(
-        IDictionary<string, string> tags,
-        IDictionary<string, string> context)
-    {
-        var detailedKeys = tags.Keys
-            .Where(key => key.EndsWith("_host", StringComparison.Ordinal))
-            .ToArray();
-
-        foreach (var key in detailedKeys)
-        {
-            context[key] = tags[key];
-            tags.Remove(key);
-        }
-    }
-
-    public static bool ShouldTrackSynchronizationTelemetry(SynchronizationCompletedState completedState)
-        => completedState is SynchronizationCompletedState.Failed or SynchronizationCompletedState.PartiallyCompleted;
-
-    private static string GetDurationBucket(TimeSpan duration)
-        => duration.TotalSeconds switch
-        {
-            < 1 => "<1s",
-            < 5 => "1-5s",
-            < 30 => "5-30s",
-            < 120 => "30s-2m",
-            < 600 => "2-10m",
-            < 1800 => "10-30m",
-            _ => "30m+"
-        };
-
-    private static string GetCountBucket(int count)
-        => count switch
-        {
-            <= 0 => "0",
-            1 => "1",
-            <= 10 => "2-10",
-            <= 100 => "11-100",
-            <= 1000 => "101-1000",
-            _ => "1000+"
-        };
-
     private Task<IWinoSynchronizerBase> GetOrCreateSynchronizerAsync(Guid accountId)
         => _concreteSynchronizerFactory.GetAccountSynchronizerAsync(accountId);
 
@@ -1794,13 +1646,101 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         await _accountService.UpdateAccountAsync(persistedAccount).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The single synchronization gate. Every mail, calendar, contact, To Do, draft and MIME entry
+    /// point asks it before it reaches a synchronizer. It reads the persisted account on every call,
+    /// so fixing the account (which clears <see cref="MailAccount.AttentionReason"/>) re-opens it
+    /// without any cached state to reset. A blocked call leaves queued user actions in the
+    /// synchronizer's queue and remembers the account, so the first synchronization allowed after
+    /// the fix publishes their execution (see <see cref="ResumeDeferredRequests"/>).
+    /// </summary>
     private async Task<bool> IsSynchronizationBlockedByAttentionAsync(Guid accountId)
     {
         if (_accountService == null)
             return false;
 
         var account = await _accountService.GetAccountAsync(accountId).ConfigureAwait(false);
-        return account.IsNetworkAccessBlocked();
+        if (!account.IsNetworkAccessBlocked())
+            return false;
+
+        _accountsWithDeferredRequests[accountId] = 0;
+        return true;
+    }
+
+    /// <summary>
+    /// Publishes execution for user actions that stayed queued while the account was blocked or
+    /// whose synchronizer was replaced. Requests the current run drains itself are left out, so a
+    /// mail ExecuteRequests run does not schedule a second one for the same requests.
+    /// </summary>
+    private void ResumeDeferredRequests(Guid accountId, IWinoSynchronizerBase synchronizer, Func<IRequestBase, bool> isDrainedByCurrentRun)
+    {
+        var wasDeferred = _accountsWithDeferredRequests.TryRemove(accountId, out _);
+        var wasRequeued = _concreteSynchronizerFactory.TryConsumeRequeuedRequests(accountId);
+
+        if (!wasDeferred && !wasRequeued)
+            return;
+
+        if (HasPendingUndoAction(accountId))
+            return;
+
+        List<IRequestBase> pendingRequests = [.. synchronizer.GetQueuedRequestSnapshot().Where(request => !isDrainedByCurrentRun(request))];
+        if (pendingRequests.Count == 0)
+            return;
+
+        _logger.Information("Resuming {RequestCount} queued request(s) for account {AccountId} that waited for the account to be usable again.",
+            pendingRequests.Count, accountId);
+
+        PublishSynchronizationRequests(accountId, pendingRequests);
+    }
+
+    private static bool IsMailExecutionRequest(IRequestBase request)
+        => request is IMailActionRequest or IFolderActionRequest or ICategoryActionRequest;
+
+    /// <summary>
+    /// Synchronizers can report an expired sign-in in their result instead of throwing it (for
+    /// example a folder loop that turns every exception into a failed result). Without persisting
+    /// attention here the gate never closes and every timer tick fails again against the server.
+    /// </summary>
+    private async Task PersistSignInAttentionIfRequiredAsync(MailAccount account, Exception exception, IEnumerable<SynchronizationIssue> issues)
+    {
+        if (account == null || !RequiresSignIn(exception, issues))
+            return;
+
+        _logger.Warning("Account {AccountId} requires attention: synchronization reported an authentication failure.", account.Id);
+
+        var persistedAccount = _accountService == null
+            ? null
+            : await _accountService.GetAccountAsync(account.Id).ConfigureAwait(false);
+
+        if (persistedAccount?.AttentionReason == AccountAttentionReason.InvalidCredentials)
+            return;
+
+        await SetInvalidCredentialAttentionAsync(account).ConfigureAwait(false);
+
+        if (_notificationsEnabled)
+            _notificationBuilder.CreateAttentionRequiredNotification(account);
+    }
+
+    private static bool RequiresSignIn(Exception exception, IEnumerable<SynchronizationIssue> issues)
+    {
+        if (ContainsAuthenticationAttention(exception))
+            return true;
+
+        return issues?.Any(issue => issue?.ExceptionType == nameof(AuthenticationAttentionException)) == true;
+    }
+
+    private static bool ContainsAuthenticationAttention(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is AuthenticationAttentionException)
+                return true;
+
+            if (current is AggregateException aggregate && aggregate.InnerExceptions.Any(ContainsAuthenticationAttention))
+                return true;
+        }
+
+        return false;
     }
 
     public void Receive(AccountUpdatedMessage message)
@@ -1828,7 +1768,7 @@ public class SynchronizationManager : ISynchronizationManager, IRecipient<Accoun
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(SynchronizationLockRoot);
-        var lockPath = Path.Combine(SynchronizationLockRoot, $"{accountId:N}.lock");
+        var lockPath = Path.Combine(SynchronizationLockRoot, accountId.ToString("N") + ".lock");
 
         while (true)
         {
