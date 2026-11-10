@@ -30,7 +30,7 @@ namespace Wino.Mail.ViewModels.Voice;
 /// <see cref="IVoiceBubbleHost"/> and the steps that open app windows through <see cref="IVoicePlanHost"/>.
 /// Everything except the audio callbacks runs on the host's UI thread.
 /// </summary>
-public sealed class VoiceBubbleController : IDisposable
+public sealed partial class VoiceBubbleController : IDisposable
 {
     private const double SpeechLevel = 0.45;
     private const double QuietLevel = 0.3;
