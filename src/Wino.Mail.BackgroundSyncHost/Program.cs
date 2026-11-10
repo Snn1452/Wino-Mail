@@ -1,0 +1,487 @@
+using System;
+using System.Diagnostics;
+using System.Linq;
+using System.IO;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Wino.Authentication;
+using Windows.ApplicationModel;
+using Windows.Storage;
+using Wino.Core;
+using Wino.Core.Domain;
+using Wino.Core.Domain.Enums;
+using Wino.Core.Domain.Interfaces;
+using Wino.Core.Services;
+using Wino.NotificationHost.Contracts;
+using Wino.Mail.WinUI.Services;
+using Wino.Services;
+using Wino.Platform.Windows;
+using Wino.Platform.Windows.Services;
+
+namespace Wino.Mail.BackgroundSyncHost;
+
+// Keep the existing runtime smoke workflow attached to this source tree; build output and host diagnostics are validated before smoke.
+
+internal static class Program
+{
+    private static readonly string LockPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "background-sync-host.lock");
+
+    private static readonly string StartupDiagnosticPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Wino Mail",
+        "background-sync-host-startup.log");
+
+    private static readonly string TempStartupDiagnosticPath = Path.Combine(
+        Path.GetTempPath(),
+        "Wino Mail",
+        "background-sync-host-startup.log");
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        var stage = "WinRT initialization";
+
+        try
+        {
+            WriteStartupDiagnostic(
+                "START",
+                $"EntryPoint entered. Args=[{string.Join(", ", args.Select(argument => $"'{argument}'"))}]");
+
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+
+            stage = "package identity";
+            var package = Package.Current;
+            WriteStartupDiagnostic(
+                "PACKAGE",
+                $"Name={package.Id.Name}; Publisher={package.Id.Publisher}; Family={package.Id.FamilyName}; Location={package.InstalledLocation.Path}");
+
+            stage = "release identity";
+            WriteStartupDiagnostic("IDENTITY", "Starting release identity initialization.");
+            ReleaseIdentity.Initialize(
+                package.InstalledLocation.Path,
+                package.Id.Name,
+                package.Id.Publisher,
+                package.Id.FamilyName);
+            WriteStartupDiagnostic("IDENTITY", "Release identity initialization completed.");
+
+            var isIdentitySmokeTest = string.Equals(
+                Environment.GetEnvironmentVariable("WINO_BACKGROUND_SYNC_HOST_SMOKE_TEST"),
+                "1",
+                StringComparison.Ordinal)
+                || args.Any(argument =>
+                    string.Equals(argument, "--identity-smoke-test", StringComparison.OrdinalIgnoreCase));
+
+            var isInitializationSmokeTest = args.Any(argument =>
+                string.Equals(argument, "--initialization-smoke-test", StringComparison.OrdinalIgnoreCase));
+
+            var isNotificationSmokeTest = args.Any(argument =>
+                string.Equals(argument, "--notification-smoke-test", StringComparison.OrdinalIgnoreCase));
+
+            var isBackgroundLoopGateSmokeTest = args.Any(argument =>
+                string.Equals(argument, "--background-loop-gate-smoke-test", StringComparison.OrdinalIgnoreCase));
+
+            if (isIdentitySmokeTest)
+            {
+                WriteStartupDiagnostic("SMOKE", "Release identity initialized successfully.");
+                return 0;
+            }
+
+            stage = "instance lock";
+            FileStream? instanceLock = null;
+            if (!isNotificationSmokeTest && !isBackgroundLoopGateSmokeTest)
+            {
+                instanceLock = AcquireInstanceLock();
+                if (instanceLock is null)
+                {
+                    WriteStartupDiagnostic("LOCK", "Another background synchronization host instance is already running.");
+                    return 0;
+                }
+            }
+            else
+            {
+                WriteStartupDiagnostic(
+                    "LOCK",
+                    isNotificationSmokeTest
+                        ? "Notification smoke test is running without the normal singleton lock."
+                        : "Background-loop gate smoke test is running without the normal singleton lock.");
+            }
+
+            using (instanceLock)
+            {
+                WriteStartupDiagnostic("STARTING", "Dependency initialization starting.");
+                var exitCode = RunAsync(
+                    isInitializationSmokeTest,
+                    isNotificationSmokeTest,
+                    isBackgroundLoopGateSmokeTest).GetAwaiter().GetResult();
+                WriteStartupDiagnostic("EXIT", $"Background synchronization host exited with code {exitCode}.");
+                return exitCode;
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteStartupDiagnostic("FAIL", $"{stage}: {ex}");
+            try
+            {
+                Serilog.Log.Error(ex, "Background synchronization host failed during {Stage}.", stage);
+            }
+            catch
+            {
+                // Logging may not have been initialized yet; the startup diagnostic file is the fallback.
+            }
+
+            return 1;
+        }
+    }
+
+    private static void WriteStartupDiagnostic(string state, string message)
+    {
+        var line = $"{DateTimeOffset.UtcNow:O} [PID:{Environment.ProcessId}] [{state}] {message}{Environment.NewLine}";
+
+        foreach (var path in new[] { StartupDiagnosticPath, TempStartupDiagnosticPath })
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(path)!;
+                Directory.CreateDirectory(directory);
+                File.AppendAllText(path, line);
+            }
+            catch
+            {
+                // Startup diagnostics must never become the reason startup fails.
+            }
+        }
+    }
+
+    private static async Task<int> RunAsync(
+        bool isInitializationSmokeTest,
+        bool isNotificationSmokeTest,
+        bool isBackgroundLoopGateSmokeTest)
+    {
+        var services = new ServiceCollection();
+
+        services.AddLogging();
+        services.RegisterSharedServices();
+        services.RegisterCoreServices();
+
+        // Keep the host's service graph independent from WinUI presentation services while
+        // preserving the same Windows token stores and packaged resource roots.
+        services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
+        services.AddSingleton<ISmimeCertificateService, SmimeCertificateService>();
+        services.AddSingleton<IAccountCredentialPersistence, WindowsAccountCredentialPersistence>();
+        services.AddSingleton<IGoogleTokenStore, WindowsGoogleTokenStore>();
+        services.AddSingleton<IOutlookAuthenticationHost>(provider =>
+            new WindowsOutlookAuthenticationHost(
+                provider.GetRequiredService<IApplicationConfiguration>(),
+                provider.GetRequiredService<IAuthenticatorConfig>()));
+        services.AddSingleton<IExternalLauncher, BackgroundExternalLauncher>();
+        services.AddSingleton<IPlatformCapabilities>(_ =>
+            new Wino.Core.Domain.Models.Platform.PlatformCapabilities(
+                Smime: true,
+                Notifications: true,
+                NotificationActions: true,
+                MicrosoftStore: true));
+        services.AddSingleton<IApplicationResourceResolver>(provider =>
+            new FileSystemApplicationResourceResolver(
+                Package.Current.InstalledLocation.Path,
+                provider.GetRequiredService<IApplicationConfiguration>()));
+
+        services.AddSingleton<IMicrosoftStoreService, BackgroundMicrosoftStoreService>();
+        services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
+        services.AddSingleton<IExternalBrowserAuthenticationPresenter, HeadlessExternalBrowserAuthenticationPresenter>();
+        services.AddSingleton<IStoreManagementService, BackgroundStoreManagementService>();
+        services.AddSingleton<IKeyPressService, BackgroundKeyPressService>();
+        services.AddSingleton<IShortcutPlatformService, BackgroundShortcutPlatformService>();
+        services.AddSingleton<IConfigurationService>(_ => new ConfigurationService(useCache: false));
+        services.AddSingleton<IPreferencesService, PreferencesService>();
+        services.AddSingleton<IMailDialogService>(_ => DispatchProxy.Create<IMailDialogService, HeadlessMailDialogServiceProxy>());
+        services.AddSingleton<IUserPresenceStateProvider, ShellUserPresenceStateProvider>();
+        services.AddSingleton<IAppMetadataService, BackgroundAppMetadataService>();
+        services.AddSingleton<IStatePersistanceService, BackgroundStatePersistenceService>();
+        services.AddSingleton<BackgroundNotificationHostClient>();
+        services.AddSingleton<INotificationBuilder, HeadlessNotificationBuilder>();
+        services.AddSingleton<AutoSynchronizationService>();
+        WriteStartupDiagnostic("SERVICES", "Registering shared and core services.");
+        services.AddSingleton<CalendarReminderService>();
+
+        WriteStartupDiagnostic("SERVICES", "Building dependency injection provider.");
+        await using var provider = services.BuildServiceProvider();
+
+        WriteStartupDiagnostic("PATHS", "Configuring application paths.");
+        ConfigureApplicationPaths(provider);
+
+        WriteStartupDiagnostic("LOGGING", "Configuring structured logging.");
+        ConfigureLogging(provider);
+
+        if (isBackgroundLoopGateSmokeTest)
+        {
+            var uiIsRunning = TryIsWinUiProcessRunning();
+            if (uiIsRunning is null)
+            {
+                WriteStartupDiagnostic(
+                    "FAIL",
+                    "Background-loop gate smoke test could not inspect WinUI process state.");
+                return 3;
+            }
+
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(uiIsRunning.Value, terminateRequested: false))
+            {
+                WriteStartupDiagnostic(
+                    "SMOKE",
+                    "WinUI process detected; automatic synchronization loops correctly remain inactive.");
+                return 0;
+            }
+
+            WriteStartupDiagnostic(
+                "FAIL",
+                "Background-loop gate smoke test requires WinUI to be running, but no WinUI process was detected.");
+            return 2;
+        }
+
+        if (isNotificationSmokeTest)
+        {
+            var smokeTag = $"wino-smoke-test-{Guid.NewGuid():N}";
+            var smokePayload = HeadlessNotificationPayloadBuilder.Build(
+                [
+                    ReleaseIdentity.Current.DisplayNames["Mail"],
+                    "Background notification smoke test"
+                ],
+                HeadlessNotificationPayloadBuilder.Arguments(
+                    ("wino-smoke-test", smokeTag)),
+                [
+                    (
+                        Translator.Buttons_Dismiss,
+                        HeadlessNotificationPayloadBuilder.Arguments(
+                            (Constants.ToastDismissActionKey, bool.TrueString)))
+                ],
+                audioEvent: HeadlessNotificationPayloadBuilder.GetAudioEvent(NotificationSoundEvent.Default));
+
+            WriteStartupDiagnostic("NOTIFICATION", $"Dispatching notification smoke request. Tag={smokeTag}");
+            await provider
+                .GetRequiredService<BackgroundNotificationHostClient>()
+                .ShowAndWaitForSmokeAsync(
+                    NotificationHostApplication.Mail,
+                    smokePayload,
+                    smokeTag)
+                .ConfigureAwait(false);
+
+            WriteStartupDiagnostic("NOTIFICATION", $"Background notification host confirmed delivery. Tag={smokeTag}");
+            return 0;
+        }
+
+        WriteStartupDiagnostic("PREFERENCES", "Reading AppCloseBehavior.");
+        var closeBehavior = provider.GetRequiredService<IPreferencesService>().AppCloseBehavior;
+        WriteStartupDiagnostic("PREFERENCES", $"AppCloseBehavior={closeBehavior}");
+        if (closeBehavior == AppCloseBehavior.Terminate)
+        {
+            WriteStartupDiagnostic("EXIT", "Background synchronization is disabled by AppCloseBehavior.Terminate.");
+            return 0;
+        }
+
+        WriteStartupDiagnostic("MIGRATION", "Inspecting migration state.");
+        var migrationPlan = await provider.GetRequiredService<IMigrationCoordinator>()
+            .InspectAsync()
+            .ConfigureAwait(false);
+        WriteStartupDiagnostic("MIGRATION", $"Status={migrationPlan.Status}");
+
+        if (migrationPlan.Status != Wino.Core.Domain.Models.Migration.MigrationStatus.NotRequired)
+        {
+            Serilog.Log.Information(
+                "Background synchronization host is idle because migration status is {MigrationStatus}.",
+                migrationPlan.Status);
+            WriteStartupDiagnostic("EXIT", $"Migration status is {migrationPlan.Status}; host is idle.");
+            return 0;
+        }
+
+        WriteStartupDiagnostic("DATABASE", "Initializing database.");
+        await provider.GetRequiredService<IDatabaseService>()
+            .InitializeAsync()
+            .ConfigureAwait(false);
+
+        WriteStartupDiagnostic("TRANSLATIONS", "Initializing translations.");
+        await provider.GetRequiredService<ITranslationService>()
+            .InitializeAsync()
+            .ConfigureAwait(false);
+
+        WriteStartupDiagnostic("SYNC", "Initializing SynchronizationManager.");
+        await provider.GetRequiredService<SynchronizationManagerInitializer>()
+            .InitializeAsync()
+            .ConfigureAwait(false);
+
+        if (isInitializationSmokeTest)
+        {
+            WriteStartupDiagnostic("SMOKE", "Full background synchronization initialization completed successfully.");
+            return 0;
+        }
+
+        WriteStartupDiagnostic("LOOPS", "Starting automatic synchronization only while WinUI is closed.");
+        await RunBackgroundLoopsWhenUiIsClosedAsync(provider).ConfigureAwait(false);
+
+        WriteStartupDiagnostic("EXIT", "Background synchronization host loops completed.");
+        return 0;
+    }
+
+    private static async Task RunBackgroundLoopsWhenUiIsClosedAsync(IServiceProvider provider)
+    {
+        var preferences = provider.GetRequiredService<IPreferencesService>();
+        var synchronization = provider.GetRequiredService<AutoSynchronizationService>();
+        var calendarReminders = provider.GetRequiredService<CalendarReminderService>();
+        var waitingForUi = false;
+
+        while (true)
+        {
+            if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+            {
+                WriteStartupDiagnostic("EXIT", "AppCloseBehavior.Terminate was selected; background loops will stop.");
+                return;
+            }
+
+            if (!BackgroundSyncLoopPolicy.ShouldStartLoops(
+                    IsWinUiProcessRunning(),
+                    terminateRequested: false))
+            {
+                if (!waitingForUi)
+                {
+                    WriteStartupDiagnostic(
+                        "IDLE",
+                        "WinUI is running; foreground ApplicationRuntime owns automatic synchronization.");
+                    waitingForUi = true;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                continue;
+            }
+
+            waitingForUi = false;
+            WriteStartupDiagnostic("LOOPS", "WinUI is closed; starting background synchronization and reminder loops.");
+
+            using var loopLifetime = new CancellationTokenSource();
+            var loops = Task.WhenAll(
+                synchronization.RunAsync(loopLifetime.Token),
+                calendarReminders.RunAsync(loopLifetime.Token));
+            var yieldedToUi = false;
+
+            while (!loops.IsCompleted)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+
+                if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+                {
+                    WriteStartupDiagnostic("YIELD", "AppCloseBehavior.Terminate was selected; stopping background loops.");
+                    loopLifetime.Cancel();
+                    break;
+                }
+
+                if (BackgroundSyncLoopPolicy.ShouldYieldToUi(IsWinUiProcessRunning()))
+                {
+                    WriteStartupDiagnostic("YIELD", "WinUI was activated; stopping background loops to avoid duplicate scheduling.");
+                    yieldedToUi = true;
+                    loopLifetime.Cancel();
+                    break;
+                }
+            }
+
+            if (!loopLifetime.IsCancellationRequested)
+            {
+                await loops.ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                await loops.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (loopLifetime.IsCancellationRequested)
+            {
+                WriteStartupDiagnostic("YIELD", $"Background loops stopped after host handoff: {ex.Message}");
+            }
+
+            if (preferences.AppCloseBehavior == AppCloseBehavior.Terminate)
+                return;
+
+            if (yieldedToUi)
+                waitingForUi = false;
+        }
+    }
+
+    private static bool IsWinUiProcessRunning()
+        => TryIsWinUiProcessRunning() ?? true;
+
+    private static bool? TryIsWinUiProcessRunning()
+    {
+        Process[] processes;
+
+        try
+        {
+            processes = Process.GetProcessesByName("Wino.Mail.WinUI");
+        }
+        catch (Exception ex)
+        {
+            // Production must fail closed and keep the scheduler idle if process inspection fails.
+            WriteStartupDiagnostic("PROCESS", $"Could not inspect WinUI process state; keeping host loops idle. {ex.Message}");
+            return null;
+        }
+
+        try
+        {
+            return processes.Any(process =>
+            {
+                try { return !process.HasExited; }
+                catch { return true; }
+            });
+        }
+        finally
+        {
+            foreach (var process in processes)
+                process.Dispose();
+        }
+    }
+
+    private static void ConfigureApplicationPaths(IServiceProvider provider)
+    {
+        var configuration = (ApplicationConfiguration)provider.GetRequiredService<IApplicationConfiguration>();
+        var appData = ApplicationData.Current;
+        var releaseIdentity = ReleaseIdentity.Current;
+
+        configuration.ApplicationDataFolderPath = appData.LocalFolder.Path;
+        configuration.AllowLegacyDataMigration = releaseIdentity.AllowsLegacyMigration;
+        configuration.ApplicationDisplayName = releaseIdentity.DisplayNames["Mail"];
+        configuration.PublisherSharedFolderPath = releaseIdentity.AllowsLegacyMigration
+            ? appData.GetPublisherCacheFolder(Wino.Services.ApplicationConfiguration.SharedFolderName).Path
+            : string.Empty;
+        configuration.ApplicationTempFolderPath = appData.TemporaryFolder.Path;
+    }
+
+    private static void ConfigureLogging(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IApplicationConfiguration>();
+        var logPath = Path.Combine(
+            configuration.ApplicationDataFolderPath,
+            Constants.ClientLogFile);
+
+        provider.GetRequiredService<IWinoLogger>().SetupLogger(logPath);
+    }
+
+    private static FileStream? AcquireInstanceLock()
+    {
+        var directory = Path.GetDirectoryName(LockPath)!;
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            return new FileStream(
+                LockPath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+}

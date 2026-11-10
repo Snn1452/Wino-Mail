@@ -11,12 +11,15 @@ Reads the source manifest version. Outputs verified packages under
 Run scripts/localization/translate_resources.py --apply before building, without asking.
 .PARAMETER SkipTranslation
 Build without translating and without asking. -NonInteractive alone also skips translation.
+.PARAMETER TreatWarningsAsErrors
+Treat compiler, analyzer, and Native AOT warnings as errors for this release build.
 #>
 [CmdletBinding()]
 param(
     [switch]$NonInteractive,
     [switch]$Translate,
     [switch]$SkipTranslation,
+    [switch]$TreatWarningsAsErrors,
     [switch]$Store,
     [switch]$Beta,
     [switch]$Sideload,
@@ -29,6 +32,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:ReleaseRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+$script:ReleaseTreatWarningsAsErrors = [bool]$TreatWarningsAsErrors
 $script:SideloadIdentityName = 'WinoMail.Sideload'
 $script:BetaAssetsPath = $BetaAssetsPath
 $script:ReleaseOutputRoot = [IO.Path]::GetFullPath($OutputRoot)
@@ -350,11 +354,15 @@ function Get-ReleaseBuildArguments {
     $arguments = @(
         'msbuild', $Plan.Project, '-nologo', '-m', '-nr:false', '-verbosity:normal',
         '-p:Configuration=Release', "-p:Platform=$platform", "-p:ArtifactsPath=$buildArtifacts",
+        '-p:UseNativeAot=true',
         "-p:NotificationHostPublishRoot=$notificationHosts\"
     )
     if ($Plan.Selection.Architectures.Count -eq 1) { $arguments += "-p:RuntimeIdentifiers=win-$($platform.ToLowerInvariant())" }
     if ($Restore) {
         return $arguments + @('-t:Restore', "-p:RestoreConfigFile=$(Join-Path $Plan.RepositoryRoot 'nuget.config')")
+    }
+    if ($script:ReleaseTreatWarningsAsErrors) {
+        $arguments += @('-p:TreatWarningsAsErrors=true', '-p:TrimmerSingleWarn=false')
     }
     $mode = if ($Plan.Selection.Store) { 'StoreUpload' } else { 'SideloadOnly' }
     return $arguments + @(
@@ -454,8 +462,20 @@ function Set-ReleaseLayoutProfile {
     $Manifest.Package.Properties.DisplayName = $Profile.DisplayNames.Mail
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
-        if (-not $mode) { throw "Unknown packaged application: $($app.Id)" }
+        $applicationId = [string]$app.Id
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            if ($null -eq $visual -or $visual.GetAttribute('DisplayName') -cne 'Wino Mail Background Service') {
+                throw 'The background synchronization application has an unexpected display name.'
+            }
+            if (@($app.SelectNodes(".//*[local-name()='ToastNotificationActivation'] | .//*[local-name()='Class']")).Count -ne 0) {
+                throw 'The background synchronization application must not register notification activation.'
+            }
+            continue
+        }
+
+        $mode = $entries[$applicationId]
+        if (-not $mode) { throw "Unknown packaged application: $applicationId" }
         $name = $Profile.DisplayNames.$mode
         $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
         $visual.SetAttribute('DisplayName', $name)
@@ -624,8 +644,20 @@ function Assert-PackagedReleaseProfile {
     }
     $entries = @{ App = 'Mail'; CalendarApp = 'Calendar'; ContactsApp = 'People'; ToDoApp = 'Tasks' }
     foreach ($app in $Manifest.Package.Applications.Application) {
-        $mode = $entries[[string]$app.Id]
-        if (-not $mode) { throw 'Unknown application in release manifest.' }
+        $applicationId = [string]$app.Id
+        if ($applicationId -ceq 'BackgroundSyncHost') {
+            $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")
+            if ($null -eq $visual -or $visual.GetAttribute('DisplayName') -cne 'Wino Mail Background Service') {
+                throw 'The background synchronization application has an unexpected display name.'
+            }
+            if (@($app.SelectNodes(".//*[local-name()='ToastNotificationActivation'] | .//*[local-name()='Class']")).Count -ne 0) {
+                throw 'The background synchronization application must not register notification activation.'
+            }
+            continue
+        }
+
+        $mode = $entries[$applicationId]
+        if (-not $mode) { throw "Unknown application in release manifest: $applicationId" }
         if ($profile.DisplayNames.$mode -cne $expected.DisplayNames.$mode -or
             $profile.NotificationActivatorIds.$mode -cne $expected.NotificationActivatorIds.$mode) { throw 'Unexpected release branding or notification identity.' }
         $visual = $app.SelectSingleNode("*[local-name()='VisualElements']")

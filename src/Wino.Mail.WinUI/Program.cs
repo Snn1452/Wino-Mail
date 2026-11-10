@@ -41,6 +41,31 @@ public class Program
         var package = Windows.ApplicationModel.Package.Current;
         Wino.NotificationHost.Contracts.ReleaseIdentity.Initialize(
             package.InstalledLocation.Path, package.Id.Name, package.Id.Publisher, package.Id.FamilyName);
+        // CI-only hook: seed the no-tray close behavior through the same packaged LocalSettings
+        // store the PreferencesService reads. The marker is created by the Windows runner before launch.
+        var closeBehaviorSmokeMarker = System.IO.Path.Combine(
+            Windows.Storage.ApplicationData.Current.LocalFolder.Path,
+            ".wino-close-behavior-smoke");
+        try
+        {
+            if (System.IO.File.Exists(closeBehaviorSmokeMarker))
+            {
+                var closeBehaviorSmoke = System.IO.File.ReadAllText(closeBehaviorSmokeMarker).Trim();
+                if (string.Equals(closeBehaviorSmoke, "RunInBackgroundWithoutTrayIcon", StringComparison.Ordinal))
+                {
+                    var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+                    localSettings["AppCloseBehavior"] = closeBehaviorSmoke;
+                    localSettings["IsSystemTrayIconEnabled"] = "False";
+                }
+
+                System.IO.File.Delete(closeBehaviorSmokeMarker);
+            }
+        }
+        catch
+        {
+            // The test hook must never prevent normal application startup.
+        }
+
 
         // Set before any editor/renderer creates an environment, including inherited overrides.
         Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER",
