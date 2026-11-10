@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -14,7 +15,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
-using Microsoft.Windows.AppNotifications.Builder;
 using Serilog;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer;
@@ -28,7 +28,6 @@ using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models;
 using Wino.Core.Domain.Models.Calendar;
 using Wino.Core.Domain.Models.Common;
-using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Contacts;
 using Wino.Core.Domain.Models.Launch;
 using Wino.Core.Domain.Models.MailItem;
@@ -54,14 +53,12 @@ using Wino.Mail.WinUI.Services.Companion;
 using Wino.Mail.ViewModels.Companion;
 using Wino.Messaging.Server;
 using Wino.Messaging.UI;
-using Wino.NotificationHost.Contracts;
 using Wino.Services;
 using Wino.Shell.ViewModels;
 using Wino.Views;
 using WinUIEx;
 using PendingBootstrapActivation = Wino.Core.Activation.PendingBootstrapActivation;
 using PendingBootstrapActivationKind = Wino.Core.Activation.PendingBootstrapActivationKind;
-using WinRT;
 namespace Wino.Mail.WinUI;
 
 public partial class App : WinoApplication,
@@ -70,8 +67,7 @@ public partial class App : WinoApplication,
     IRecipient<AccountRemovedMessage>,
     IRecipient<AccountUpdatedMessage>,
     IRecipient<GetStartedFromWelcomeRequested>,
-    IRecipient<WelcomeImportCompletedMessage>,
-    IRecipient<TrayUnreadIndicatorChanged>
+    IRecipient<WelcomeImportCompletedMessage>
 {
     private IApplicationRuntime? _applicationRuntime;
     private const string ToggleDefaultModeLaunchArgument = "--mode=toggle-default";
@@ -89,6 +85,7 @@ public partial class App : WinoApplication,
     private readonly SemaphoreSlim _appHostInfrastructureSemaphore = new(1, 1);
     private readonly AppNotificationHandler _notificationHandler;
     private readonly AppActivationHandler _activationHandler;
+    private readonly SemaphoreSlim _backgroundSyncHostLaunchSemaphore = new(1, 1);
     private readonly DispatcherQueue? _applicationDispatcherQueue;
     private readonly DateTimeOffset _sessionStartedAtUtc = DateTimeOffset.UtcNow;
 
@@ -99,12 +96,8 @@ public partial class App : WinoApplication,
     private readonly TaskCompletionSource _launchCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private MainTrayController? _companionIntegration;
     private Window? _backgroundLifetimeWindow;
-
-    // A logon start (startup task or session-start trigger) stays resident without any window,
-    // so neither a shell nor the background lifetime window shows that it must keep running.
-    private bool _isResidentBackgroundStart;
     private Microsoft.UI.Xaml.LaunchActivatedEventArgs? _pendingMigrationLaunchArgs;
-    private PendingMigrationActivation? _pendingMigrationActivation;
+    private AppActivationArguments? _pendingMigrationActivation;
     private readonly record struct ShellWindowActivationResult(IWinoShellWindow? ShellWindow, bool WasCreated);
 
     internal bool IsExiting => _isExiting;
@@ -170,6 +163,14 @@ public partial class App : WinoApplication,
         if (_isExiting || !isBackgroundBehavior)
             return false;
 
+        if (closeBehavior == AppCloseBehavior.RunInBackgroundWithoutTrayIcon)
+        {
+            DisposeTrayIcon();
+            ReleaseBackgroundLifetimeWindow();
+            LogActivation("Background shell close prepared without a system tray icon; WinUI process may terminate.");
+            return true;
+        }
+
         var createdLifetimeWindow = false;
 
         if (_backgroundLifetimeWindow == null)
@@ -227,7 +228,6 @@ public partial class App : WinoApplication,
         lifetimeWindow.Close();
     }
 
-    [DynamicWindowsRuntimeCast(typeof(Window))]
     private void BackgroundLifetimeWindowClosed(object sender, WindowEventArgs args)
     {
         if (sender is Window lifetimeWindow)
@@ -347,30 +347,17 @@ public partial class App : WinoApplication,
                 cancellationToken),
             cancellationToken => ExecuteCompanionNavigationAsync(OpenCompanionSettingsAsync, cancellationToken));
 
-        try
-        {
-            _companionIntegration = new MainTrayController(
-                dispatcher,
-                Services,
-                Services.GetRequiredService<INativeAppService>(),
-                _sessionStartedAtUtc,
-                navigation,
-                ActivatePreferredWindowAsync,
-                () => ActivateShellFromTrayAsync(WinoApplicationMode.Calendar),
-                ExitApplicationAsync);
-        }
-        catch (Exception ex)
-        {
-            // The tray is optional. A shell failure (for example the native message window or
-            // icon could not be created) must not end OnLaunched; callers already handle a
-            // missing tray by keeping the shell window open on close.
-            Log.Error(ex, "Failed to create the tray companion. Continuing without a tray icon.");
-            _companionIntegration = null;
-            return;
-        }
+        _companionIntegration = new MainTrayController(
+            dispatcher,
+            Services,
+            Services.GetRequiredService<INativeAppService>(),
+            _sessionStartedAtUtc,
+            navigation,
+            ActivatePreferredWindowAsync,
+            () => ActivateShellFromTrayAsync(WinoApplicationMode.Calendar),
+            ExitApplicationAsync);
 
         var companion = _companionIntegration;
-        companion.SetUnreadIndicator(NotificationBuilder.LastSnapshot?.IsTrayIconIndicatorVisible == true);
         companion.TryConfigureHotKey(
             _preferencesService?.IsCompanionHotKeyEnabled ?? false,
             GetConfiguredCompanionHotKey());
@@ -549,16 +536,6 @@ public partial class App : WinoApplication,
             RequireCalendarPickerWhenUnresolved = calendarId == null
         };
 
-        // Switching into Calendar runs the shell's own first navigation; composing before it finishes leaves the
-        // user on the calendar page instead of the new event.
-        var dispatcherQueue = GetActivationDispatcherQueue();
-        if (dispatcherQueue != null)
-        {
-            var shellSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (dispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => shellSettled.SetResult()))
-                await shellSettled.Task;
-        }
-
         await ExecuteOnActivationUiThreadAsync(() =>
         {
             Services.GetRequiredService<INavigationService>()
@@ -716,7 +693,6 @@ public partial class App : WinoApplication,
 
     internal async void ExitApplication() => await ExitApplicationAsync();
 
-    [DynamicWindowsRuntimeCast(typeof(AppNotificationActivatedEventArgs))]
     public bool IsNotificationActivation(out AppNotificationActivatedEventArgs args)
     {
         var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
@@ -746,14 +722,86 @@ public partial class App : WinoApplication,
         services.AddSingleton<IMailDialogService, DialogService>();
         services.AddSingleton<ISearchHistoryService, SearchHistoryService>();
         services.AddSingleton<IAuthenticatorConfig, MailAuthenticatorConfiguration>();
+        services.AddSingleton<IAccountCalendarStateService, Wino.Calendar.ViewModels.Services.AccountCalendarStateService>();
+        services.AddSingleton<IDateContextProvider, SystemDateContextProvider>();
+        services.AddSingleton<ICalendarRangeTextFormatter, CalendarRangeTextFormatter>();
     }
 
     private void RegisterViewModels(IServiceCollection services)
     {
-        services.RegisterWinoViewModels();
-        // Windows-only pages.
+        services.AddSingleton(typeof(MailAppShellViewModel));
+        services.AddSingleton(typeof(CalendarAppShellViewModel));
+        services.AddSingleton(typeof(SettingsMenuProvider));
+        // The app shell owns window-specific binding state and must die with its window.
+        // Mode providers remain application services so background synchronization can keep
+        // running, but a newly created ShellWindow always receives a fresh shell host VM.
+        services.AddSingleton<IShellMenuProviderResolver>(provider => new ShellMenuProviderResolver(
+            () => provider.GetRequiredService<IMailShellClient>(),
+            () => provider.GetRequiredService<ICalendarShellClient>(),
+            () => provider.GetRequiredService<ContactsPageViewModel>(),
+            () => provider.GetRequiredService<ToDoPageViewModel>(),
+            () => provider.GetRequiredService<SettingsMenuProvider>()));
+        services.AddTransient(typeof(WinoAppShellViewModel));
+
+        services.AddSingleton<IMailShellClient>(serviceProvider => serviceProvider.GetRequiredService<MailAppShellViewModel>());
+        services.AddSingleton<ICalendarShellClient>(serviceProvider => serviceProvider.GetRequiredService<CalendarAppShellViewModel>());
+
+        // Breaks the calendar shell / calendar page constructor cycle and keeps the whole
+        // calendar object graph out of a session that never opens the calendar.
+        services.AddSingleton(serviceProvider =>
+            new Lazy<CalendarPageViewModel>(serviceProvider.GetRequiredService<CalendarPageViewModel>));
+
+        services.AddTransient(typeof(MailListPageViewModel));
+        services.AddTransient(typeof(MailRenderingPageViewModel));
+        services.AddTransient(typeof(AccountManagementViewModel));
+        services.AddTransient(typeof(WelcomePageV2ViewModel));
         services.AddTransient(typeof(MigrationPageViewModel));
-        services.AddTransient<WidgetsLiveTilesSettingsPageViewModel>();
+        services.AddTransient(typeof(ProviderSelectionPageViewModel));
+        services.AddTransient(typeof(AccountSetupProgressPageViewModel));
+        services.AddTransient(typeof(SpecialImapCredentialsPageViewModel));
+        services.AddSingleton(typeof(WelcomeWizardContext));
+
+        services.AddTransient(typeof(ComposePageViewModel));
+        services.AddTransient(typeof(IdlePageViewModel));
+
+        services.AddTransient(typeof(ImapCalDavSettingsPageViewModel));
+        services.AddTransient(typeof(AccountDetailsPageViewModel));
+        services.AddTransient(typeof(WinoIntelligenceManagementPageViewModel));
+        services.AddTransient(typeof(IntelligenceCoveragePageViewModel));
+        services.AddTransient(typeof(DailyBriefingPanelViewModel));
+        services.AddTransient(typeof(FolderCustomizationPageViewModel));
+        services.AddTransient(typeof(SignatureManagementPageViewModel));
+        services.AddTransient(typeof(MessageListPageViewModel));
+        services.AddTransient(typeof(UnreadBadgeSettingsPageViewModel));
+        services.AddTransient(typeof(CompanionSettingsPageViewModel));
+        services.AddTransient(typeof(NotificationSettingsPageViewModel));
+        services.AddTransient(typeof(AccountUnreadBadgePageViewModel));
+        services.AddTransient(typeof(ReadComposePanePageViewModel));
+        services.AddTransient(typeof(MergedAccountDetailsPageViewModel));
+        services.AddTransient(typeof(TestPageViewModel));
+        services.AddTransient(typeof(AppPreferencesPageViewModel));
+        services.AddTransient(typeof(MailPreferencesPageViewModel));
+        services.AddTransient(typeof(BackupRestorePageViewModel));
+        services.AddTransient(typeof(StoragePageViewModel));
+        services.AddTransient(typeof(WinoAccountManagementPageViewModel));
+        services.AddTransient(typeof(AliasManagementPageViewModel));
+        services.AddTransient(typeof(MailCategoryManagementPageViewModel));
+        services.AddTransient(typeof(MailFiltersPageViewModel));
+        services.AddTransient(typeof(MailFilterEditorPageViewModel));
+        services.AddSingleton(typeof(ContactsPageViewModel));
+        services.AddSingleton(typeof(ToDoPageViewModel));
+        services.AddTransient(typeof(ContactEditPageViewModel));
+        services.AddTransient(typeof(SignatureAndEncryptionPageViewModel));
+        services.AddTransient(typeof(EmailTemplatesPageViewModel));
+        services.AddTransient(typeof(CreateEmailTemplatePageViewModel));
+        services.AddSingleton(typeof(CalendarPageViewModel));
+        services.AddTransient(typeof(CalendarRenderingSettingsPageViewModel));
+        services.AddTransient(typeof(CalendarPreferenceSettingsPageViewModel));
+        services.AddTransient(typeof(ContactsPreferenceSettingsPageViewModel));
+        services.AddTransient(typeof(ToDoPreferenceSettingsPageViewModel));
+        services.AddTransient(typeof(CalendarAccountSettingsPageViewModel));
+        services.AddTransient(typeof(EventDetailsPageViewModel));
+        services.AddTransient(typeof(CalendarEventComposePageViewModel));
     }
 
     #endregion
@@ -771,6 +819,7 @@ public partial class App : WinoApplication,
         services.RegisterCoreServices();
         services.RegisterSharedServices();
         services.RegisterCoreUWPServices();
+        services.RegisterCoreViewModels();
 
         RegisterUWPServices(services);
         RegisterViewModels(services);
@@ -778,9 +827,7 @@ public partial class App : WinoApplication,
         return services.BuildServiceProvider();
     }
 
-    private bool IsStartupTaskLaunch()
-        => ActivationArgumentsReader.TryGetKind(ActivationArgumentsReader.TryGetCurrent(), out var kind) &&
-           kind == ExtendedActivationKind.StartupTask;
+    private bool IsStartupTaskLaunch() => AppInstance.GetCurrent().GetActivatedEventArgs()?.Kind == ExtendedActivationKind.StartupTask;
     public bool IsAppRunning()
     {
         var windowManager = Services.GetService<IWinoWindowManager>();
@@ -820,6 +867,9 @@ public partial class App : WinoApplication,
             _accountService = Services.GetRequiredService<IAccountService>();
 
             _hasConfiguredAccounts = (await _accountService.GetAccountsAsync()).Any();
+
+            if (_hasConfiguredAccounts)
+                _ = StartBackgroundSyncHostIfNeededAsync();
 
             if (_companionIntegration != null)
             {
@@ -880,12 +930,6 @@ public partial class App : WinoApplication,
         // runs only after the first window exists. Application.Resources is not usable in the constructor.
         NewThemeService.ApplyIconStyle();
 
-        // Toast, tray and notification activations can create a shell window before any path
-        // awaits NewThemeService.InitializeAsync. Make sure the theme brushes pages read with
-        // {ThemeResource} resolve from the first frame, including in High Contrast.
-        if (NewThemeService is Wino.Services.NewThemeService themeService)
-            themeService.EnsureThemeResources();
-
         _preferencesService ??= Services.GetRequiredService<IPreferencesService>();
         var activationArgs = ResolveStartupActivation();
 
@@ -893,14 +937,7 @@ public partial class App : WinoApplication,
         {
             // A normal launch shows a window first; ActivateWindowAsync adds the tray after that
             // window's first frame. Other activations may never show one, so they get the tray now.
-            var isPlainLaunch = !SessionStartActivation.IsCurrentProcess &&
-                                (!ActivationArgumentsReader.TryGetKind(activationArgs, out var activationKind) ||
-                                 activationKind == ExtendedActivationKind.Launch);
-
-            if (SessionStartComServer.StartupFailure is { } comServerFailure)
-                Log.Warning(comServerFailure, "The session-start COM class object could not be registered.");
-
-            if (!isPlainLaunch && ShouldCreateTrayIcon())
+            if (activationArgs.Kind != ExtendedActivationKind.Launch && ShouldCreateTrayIcon())
             {
                 EnsureTrayIconCreated();
                 if (_companionIntegration != null)
@@ -929,43 +966,22 @@ public partial class App : WinoApplication,
     {
         UpdateTrayIconState(allowCreation: !_isExiting);
         _launchCompleted.TrySetResult();
-
-        // Keeps the session-start trigger in step with the startup task, including for installations
-        // that predate it. Nothing waits on this; it logs its own failures.
-        if (!_isExiting)
-        {
-            _ = SessionStartActivation.SyncRegistrationAsync();
-            StartBackgroundActivities();
-        }
     }
 
     private async Task<bool> TryShowMigrationAsync(
         Microsoft.UI.Xaml.LaunchActivatedEventArgs? launchArgs,
-        AppActivationArguments? activationArgs)
+        AppActivationArguments activationArgs)
     {
-        // Once this process has started its runtime, the migration decision is made and the runtime owns
-        // Wino210.db. A redirected activation during a first launch would otherwise inspect a database that
-        // is still being created and send the user to the migration window.
-        if (_applicationRuntime != null)
-            return false;
-
         var plan = await Services.GetRequiredService<IMigrationCoordinator>().InspectAsync();
         if (plan.Status == Wino.Core.Domain.Models.Migration.MigrationStatus.NotRequired)
             return false;
 
-        // The migration window can stay open for minutes. Copy what the post-migration launch needs
-        // now; the COM-backed activation arguments may be unreadable by the time Launch is clicked.
-        var pendingActivation = PendingMigrationActivation.Capture(activationArgs);
-
         _pendingMigrationLaunchArgs ??= launchArgs;
-        _pendingMigrationActivation = pendingActivation;
+        _pendingMigrationActivation = activationArgs;
 
-        if (pendingActivation.Kind == ExtendedActivationKind.StartupTask || SessionStartActivation.IsCurrentProcess)
+        if (activationArgs.Kind == ExtendedActivationKind.StartupTask)
         {
-            // A background start cannot show the migration window. Without a prompt the user would get no
-            // mail and no notifications until they happen to open Wino.
-            LogActivation("Migration is pending. Startup activation is showing the update prompt and exiting without application-data initialization.");
-            await TryShowMigrationPendingNotificationAsync();
+            LogActivation("Migration is pending. Startup-task activation is exiting without application-data initialization.");
             ExitApplication();
             return true;
         }
@@ -978,28 +994,6 @@ public partial class App : WinoApplication,
 
         await ShowMigrationWindowAsync();
         return true;
-    }
-
-    /// <summary>
-    /// Clicking the toast launches Wino normally, and that launch shows the migration window first.
-    /// </summary>
-    private async Task TryShowMigrationPendingNotificationAsync()
-    {
-        try
-        {
-            var notification = new AppNotificationBuilder()
-                .AddText(Translator.WhatIsNew_MigrationNotification_Title)
-                .AddText(Translator.WhatIsNew_MigrationNotification_Message)
-                .AddArgument(Constants.ToastModeKey, Constants.ToastModeMail)
-                .BuildNotification();
-            notification.Tag = "wino-migration-pending";
-
-            await Services.GetRequiredService<INotificationHostClient>().ShowAsync(NotificationHostApplication.Mail, notification);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "The pending-migration notification could not be shown.");
-        }
     }
 
     private async Task ShowMigrationWindowAsync()
@@ -1025,20 +1019,6 @@ public partial class App : WinoApplication,
 
     public async Task CompleteMigrationLaunchAsync()
     {
-        try
-        {
-            await CompleteMigrationLaunchCoreAsync();
-        }
-        catch (OperationCanceledException ex) when (_isExiting)
-        {
-            // The user closed the application while the post-migration launch was still
-            // initializing the runtime; its lifetime token cancelled the remaining steps.
-            Log.Information(ex, "Post-migration launch stopped because the application is exiting.");
-        }
-    }
-
-    private async Task CompleteMigrationLaunchCoreAsync()
-    {
         var validation = await Services.GetRequiredService<IDatabaseSchemaService>()
             .ValidateAsync(Path.Combine(
                 AppConfiguration.ApplicationDataFolderPath,
@@ -1054,22 +1034,17 @@ public partial class App : WinoApplication,
         _pendingMigrationLaunchArgs = null;
         _pendingMigrationActivation = null;
 
-        if (!await TryHandlePendingMigrationActivationAsync(pendingActivation))
+        if (pendingLaunchArgs != null && pendingActivation != null)
         {
-            if (pendingLaunchArgs != null)
-            {
-                // The snapshot replaces the stale COM activation arguments, so routing uses the
-                // launch arguments only (standard launch, or the toast payload they carry).
-                await _activationHandler.HandleLaunchAsync(pendingLaunchArgs, null);
-            }
+            await _activationHandler.HandleLaunchAsync(pendingLaunchArgs, pendingActivation);
+        }
+        else
+        {
+            await EnsureAppHostInfrastructureAsync();
+            if (_hasConfiguredAccounts)
+                await CreateAndActivateWindow(null);
             else
-            {
-                await EnsureAppHostInfrastructureAsync();
-                if (_hasConfiguredAccounts)
-                    await CreateAndActivateWindow(null);
-                else
-                    await LaunchWelcomeWindowAsync();
-            }
+                await LaunchWelcomeWindowAsync();
         }
 
         // Keep the migration window alive until its replacement is active. Closing the only active
@@ -1091,66 +1066,8 @@ public partial class App : WinoApplication,
         LogActivation("Replacement window activated before closing the migration window.");
     }
 
-    /// <summary>
-    /// Replays the activations that a migration snapshot can carry: a toast, a mailto link or files.
-    /// Returns false for everything else, which then takes the standard launch path. Every replay
-    /// must leave a shell or welcome window, which the migration window hands over to.
-    /// </summary>
-    private async Task<bool> TryHandlePendingMigrationActivationAsync(PendingMigrationActivation? pendingActivation)
-    {
-        if (pendingActivation == null || !_hasConfiguredAccounts)
-            return false;
-
-        switch (pendingActivation.Kind)
-        {
-            case ExtendedActivationKind.AppNotification when !string.IsNullOrEmpty(pendingActivation.NotificationArgument):
-                if (!TryMarkInitialNotificationActivationHandled())
-                    return false;
-
-                LogActivation("Replaying the app-notification activation that arrived before migration.");
-                await EnsureAppHostInfrastructureAsync();
-                await HandleToastActivationAsync(
-                    pendingActivation.NotificationArgument,
-                    pendingActivation.NotificationUserInput == null
-                        ? null
-                        : new Dictionary<string, string>(pendingActivation.NotificationUserInput));
-                break;
-            case ExtendedActivationKind.Protocol when pendingActivation.ProtocolUri != null &&
-                                                      pendingActivation.ProtocolUri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase):
-                MailToUri mailToUri;
-                try
-                {
-                    mailToUri = new MailToUri(pendingActivation.ProtocolUri);
-                }
-                catch (Exception ex)
-                {
-                    // Same tolerance as live mailto activation: a malformed link becomes a standard launch.
-                    Log.Warning(ex, "Ignoring a malformed mailto activation captured before migration.");
-                    return false;
-                }
-
-                LogActivation("Replaying the mailto activation that arrived before migration.");
-                await EnsureAppHostInfrastructureAsync();
-                if (!await HandleMailToProtocolActivationAsync(mailToUri, activateWindow: true))
-                    return false;
-                break;
-            case ExtendedActivationKind.File when pendingActivation.FilePaths is { Count: > 0 } filePaths:
-                LogActivation("Replaying the file activation that arrived before migration.");
-                await EnsureAppHostInfrastructureAsync();
-                await HandleFileActivationAsync(pendingActivation.FileMode, filePaths, activateWindow: true);
-                break;
-            default:
-                return false;
-        }
-
-        // A background notification action can complete without a window. Fall back to the
-        // standard launch so the migration window has a replacement to hand over to.
-        return HasShellWindow() ||
-               Services.GetRequiredService<IWinoWindowManager>().GetWindow(WinoWindowKind.Welcome) != null;
-    }
-
-    private static AppActivationArguments? ResolveStartupActivation()
-        => ActivationArgumentsReader.TryGetCurrent();
+    private AppActivationArguments ResolveStartupActivation()
+        => AppInstance.GetCurrent().GetActivatedEventArgs();
 
     /// <summary>
     /// Handles toast notification activation scenarios.
@@ -1161,7 +1078,6 @@ public partial class App : WinoApplication,
     private Task HandleToastActivationAsync(string toastArgument, IDictionary<string, string>? userInput = null)
         => _notificationHandler.HandleActivationAsync(toastArgument, userInput);
 
-    [DynamicWindowsRuntimeCast(typeof(ShareTargetActivatedEventArgs))]
     private async Task<bool> HandleShareTargetActivationAsync(AppActivationArguments activationArgs, bool activateWindow)
     {
         if (activationArgs.Kind != ExtendedActivationKind.ShareTarget ||
@@ -1460,8 +1376,6 @@ public partial class App : WinoApplication,
             return;
         }
 
-        _isResidentBackgroundStart = true;
-
         _ = ExecuteOnActivationUiThreadAsync(() =>
         {
             UpdateTrayIconState(allowCreation: true);
@@ -1608,7 +1522,8 @@ public partial class App : WinoApplication,
 
         if (mailItem == null)
         {
-            LogActivation("Mail item not found.");
+            LogActivation("Mail item not found. Exiting.");
+            ExitApplication();
             return;
         }
 
@@ -1634,7 +1549,8 @@ public partial class App : WinoApplication,
 
             if (_synchronizationManager == null)
             {
-                LogActivation("Synchronization manager is not initialized.");
+                LogActivation("Synchronization manager is not initialized. Exiting.");
+                ExitApplication();
                 return;
             }
 
@@ -1656,8 +1572,7 @@ public partial class App : WinoApplication,
                     // Queue all requests for this account.
                     foreach (var request in accountGroup)
                     {
-                        // No window can show the undo bar, and a deferred request would be lost on exit.
-                        await _synchronizationManager.QueueRequestAsync(request, accountId, triggerSynchronization: false, allowUndo: false);
+                        await _synchronizationManager.QueueRequestAsync(request, accountId, triggerSynchronization: false);
                     }
 
                     // Create synchronization options to execute the queued requests.
@@ -1678,8 +1593,10 @@ public partial class App : WinoApplication,
                 await notificationBuilder.UpdateTaskbarIconBadgeAsync();
             }
 
-            // The notification handler exits a transient process once this completes.
-            LogActivation("Toast action handling complete.");
+            LogActivation("Toast action handling complete. Exiting app.");
+
+            // Exit the app after synchronization is complete.
+            ExitApplication();
         }
     }
 
@@ -1819,10 +1736,7 @@ public partial class App : WinoApplication,
 
         var navigationService = Services.GetRequiredService<INavigationService>();
         var defaultMode = WinoApplicationMode.Mail;
-
-        // Null when the activation's COM server is gone (for example after a migration). The
-        // launch then resolves from the plain launch arguments.
-        var activationArgs = ActivationArgumentsReader.TryGetCurrent();
+        var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
 
         if (activationContextOverride != null)
         {
@@ -1843,14 +1757,17 @@ public partial class App : WinoApplication,
             return;
         }
 
-        if (ActivationArgumentsReader.TryReadLaunch(activationArgs, out var launchArguments, out var launchTileId))
+        if (activationArgs.Kind == ExtendedActivationKind.Launch &&
+            activationArgs.Data is ILaunchActivatedEventArgs launchArgs)
         {
+            var launchArguments = launchArgs.Arguments;
+
             if (Program.TryConsumeCurrentProcessAlternateModeOverride())
             {
                 launchArguments = AppendLaunchArgument(launchArguments, ToggleDefaultModeLaunchArgument);
             }
 
-            shellWindow.HandleAppActivation(launchArguments, launchTileId, Environment.CommandLine);
+            shellWindow.HandleAppActivation(launchArguments, launchArgs.TileId, Environment.CommandLine);
             return;
         }
 
@@ -1946,13 +1863,6 @@ public partial class App : WinoApplication,
         WeakReferenceMessenger.Default.Register<GetStartedFromWelcomeRequested>(this);
         WeakReferenceMessenger.Default.Register<WelcomeImportCompletedMessage>(this);
         WeakReferenceMessenger.Default.Register<LanguageChanged>(this);
-        WeakReferenceMessenger.Default.Register<TrayUnreadIndicatorChanged>(this);
-    }
-
-    public void Receive(TrayUnreadIndicatorChanged message)
-    {
-        // Shell_NotifyIcon belongs to the tray window's thread; a tray created later reads LastSnapshot.
-        _applicationDispatcherQueue?.TryEnqueue(() => _companionIntegration?.SetUnreadIndicator(message.IsVisible));
     }
 
     public void Receive(AccountSynchronizationCompleted message)
@@ -1965,7 +1875,6 @@ public partial class App : WinoApplication,
     public void Receive(AccountCreatedMessage message)
     {
         _hasConfiguredAccounts = true;
-        OnBackgroundContentChanged();
         _ = _companionIntegration?.SetReadinessAsync(CompanionReadinessState.Ready);
         EnsurePreferenceChangedSubscription();
         QueueJumpListOptionsUpdateOnUiThread();
@@ -2093,7 +2002,6 @@ public partial class App : WinoApplication,
 
     public void Receive(AccountRemovedMessage message)
     {
-        OnBackgroundContentChanged();
         QueueJumpListOptionsUpdateOnUiThread();
 
         var windowManager = Services.GetRequiredService<IWinoWindowManager>();
@@ -2128,10 +2036,7 @@ public partial class App : WinoApplication,
     }
 
     public void Receive(AccountUpdatedMessage message)
-    {
-        OnBackgroundContentChanged();
-        QueueJumpListOptionsUpdateOnUiThread();
-    }
+        => QueueJumpListOptionsUpdateOnUiThread();
 
     private void QueueJumpListOptionsUpdateOnUiThread()
         => TryEnqueueActivationOnUiThread(() => _ = UpdateJumpListOptionsSafeAsync());
@@ -2330,17 +2235,7 @@ public partial class App : WinoApplication,
 
         if (route.ShouldActivateWindow && activationWindow != null)
         {
-            var wasHidden = !activationWindow.AppWindow.IsVisible;
-
-            await ActivateWindowAsync(activationWindow, applyThemeToWindow: wasHidden);
-
-            if (wasHidden &&
-                route.Path == AppActivationPath.StandardLaunch &&
-                route.ActivationMode == WinoApplicationMode.Mail &&
-                ReferenceEquals(activationWindow, shellWindow))
-            {
-                WeakReferenceMessenger.Default.Send(new UnreadBadgeLaunchNavigationRequested());
-            }
+            await ActivateWindowAsync(activationWindow, applyThemeToWindow: !activationWindow.AppWindow.IsVisible);
         }
     }
 
@@ -2428,26 +2323,7 @@ public partial class App : WinoApplication,
             : $"{launchArguments} {launchArgument}";
     }
 
-    private static bool TryResolveActivationMode(AppActivationArguments? activationArgs, WinoApplicationMode defaultMode, out WinoApplicationMode mode)
-    {
-        mode = defaultMode;
-
-        if (activationArgs == null)
-            return false;
-
-        try
-        {
-            return TryResolveActivationModeCore(activationArgs, defaultMode, out mode);
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            Log.Warning(ex, "Activation mode could not be read from the activation arguments.");
-            mode = defaultMode;
-            return false;
-        }
-    }
-
-    private static bool TryResolveActivationModeCore(AppActivationArguments activationArgs, WinoApplicationMode defaultMode, out WinoApplicationMode mode)
+    private static bool TryResolveActivationMode(AppActivationArguments activationArgs, WinoApplicationMode defaultMode, out WinoApplicationMode mode)
     {
         mode = defaultMode;
 
@@ -2464,8 +2340,7 @@ public partial class App : WinoApplication,
             }
 
             if (string.Equals(scheme, "mailto", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(scheme, "google.pw.oauth2", StringComparison.OrdinalIgnoreCase) ||
-                WinoAccountExternalAuth.IsCallback(protocolArgs.Uri))
+                string.Equals(scheme, "google.pw.oauth2", StringComparison.OrdinalIgnoreCase))
             {
                 mode = WinoApplicationMode.Mail;
                 return true;
@@ -2515,9 +2390,17 @@ public partial class App : WinoApplication,
     }
 
     private static string? GetCurrentLaunchTileId()
-        => ActivationArgumentsReader.TryReadLaunch(ActivationArgumentsReader.TryGetCurrent(), out _, out var tileId)
-            ? tileId
-            : null;
+    {
+        var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+
+        if (activationArgs.Kind == ExtendedActivationKind.Launch &&
+            activationArgs.Data is ILaunchActivatedEventArgs launchArgs)
+        {
+            return launchArgs.TileId;
+        }
+
+        return null;
+    }
 
     private bool HasActivationUiThreadAccess()
         => GetActivationDispatcherQueue()?.HasThreadAccess == true;
@@ -2589,6 +2472,32 @@ public partial class App : WinoApplication,
         }
 
         return dispatcherQueue.TryEnqueue(() => action());
+    }
+
+
+    internal async Task<bool> StartBackgroundSyncHostIfNeededAsync()
+    {
+        var preferences = _preferencesService ?? Services.GetService<IPreferencesService>();
+        if (preferences?.AppCloseBehavior == AppCloseBehavior.Terminate) return true;
+        if (IsBackgroundSyncHostRunning()) return true;
+        await _backgroundSyncHostLaunchSemaphore.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            if (IsBackgroundSyncHostRunning()) return true;
+            var appUserModelId = $"{Windows.ApplicationModel.Package.Current.Id.FamilyName}!BackgroundSyncHost";
+            var processId = await Task.Run(() => PackagedApplicationActivator.Activate(appUserModelId, string.Empty))
+                .WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(true);
+            if (processId == 0) throw new InvalidOperationException("BackgroundSyncHost activation returned process id 0.");
+            return true;
+        }
+        catch (Exception exception) { Log.Error(exception, "Failed to start the BackgroundSyncHost."); return false; }
+        finally { _backgroundSyncHostLaunchSemaphore.Release(); }
+    }
+
+    private static bool IsBackgroundSyncHostRunning()
+    {
+        try { return Process.GetProcessesByName("Wino.Mail.BackgroundSyncHost").Length > 0; }
+        catch { return false; }
     }
 
 }

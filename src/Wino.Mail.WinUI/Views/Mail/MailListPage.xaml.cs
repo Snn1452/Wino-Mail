@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Messaging;
@@ -36,7 +35,6 @@ using Wino.Mail.ViewModels.Data;
 using Wino.Mail.ViewModels.Messages;
 using Wino.Mail.ViewModels.Search;
 using Wino.Mail.WinUI;
-using Wino.Mail.WinUI.Controls;
 using Wino.Mail.WinUI.Controls.ListView;
 using Wino.Mail.WinUI.Helpers;
 using Wino.Mail.WinUI.Interfaces;
@@ -47,7 +45,6 @@ using Wino.MenuFlyouts;
 using Wino.Messaging.Client.Mails;
 using Wino.Messaging.UI;
 using Wino.Views.Abstract;
-using WinRT;
 
 namespace Wino.Views.Mail;
 
@@ -103,11 +100,8 @@ public sealed partial class MailListPage : MailListPageAbstract,
     private IPopoutClient? _activePopoutClient;
     private readonly Dictionary<FrameworkElement, HostedContentPopoutWindow> _hostedPopoutWindows = [];
     private PendingHostedPopoutNavigation? _pendingHostedPopoutNavigation;
-    private CollectionViewSource MailCollectionViewSource
-    {
-        [DynamicWindowsRuntimeCast(typeof(CollectionViewSource))]
-        get => (CollectionViewSource)Resources["MailCollectionViewSource"];
-    }
+    private CollectionViewSource MailCollectionViewSource =>
+        (CollectionViewSource)Resources["MailCollectionViewSource"];
 
     private IContactService ContactService { get; } = WinoApplication.Current.Services.GetRequiredService<IContactService>();
     private IFolderService FolderService { get; } = WinoApplication.Current.Services.GetRequiredService<IFolderService>();
@@ -124,8 +118,9 @@ public sealed partial class MailListPage : MailListPageAbstract,
         set => ViewModel.SearchQuery = value;
     }
 
-    public string ContextFlyoutLanguage => MenuFlyoutLanguageHelper.GetLanguageTag(WinoApplication.Current.Services.GetRequiredService<IPreferencesService>().CurrentLanguage)
-        ?? string.Empty;
+    public string ContextFlyoutLanguage => WinoApplication.Current.Services.GetRequiredService<IPreferencesService>().CurrentLanguage == AppLanguage.Chinese
+        ? "zh-CN"
+        : string.Empty;
 
     public MailListPage()
     {
@@ -268,7 +263,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         await MailListView.WaitForSelectionSyncAsync();
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     private async void MailItemContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
         // Context is requested from a single mail point, but we might have multiple selected items.
@@ -485,7 +479,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     async void IRecipient<ClearMailSelectionsRequested>.Receive(ClearMailSelectionsRequested message)
     {
-        MailListView.ClearSelection();
+        await DispatcherQueue.EnqueueAsync(() => MailListView.ClearSelection());
         await MailListView.WaitForSelectionSyncAsync();
     }
 
@@ -536,7 +530,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
                 {
                     // Composer is already active. Skip connected animation since the page
                     // will be reused in-place (no navigation occurs).
-                    // NavigationService refreshes the existing composer with the selected item.
+                    // NavigationService will send ReaderItemRefreshRequestedEvent instead.
                 }
                 else
                     composerPageTransition = NavigationTransitionType.DrillIn;
@@ -606,7 +600,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         await HostedContentPopoutCoordinator.PopOutCurrentContentAsync(this);
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     private void ActivePopoutClient_HostActionRequested(object? sender, PopoutHostActionRequestedEventArgs e)
     {
         if (sender is FrameworkElement content)
@@ -645,17 +638,7 @@ public sealed partial class MailListPage : MailListPageAbstract,
         {
             if (RenderingFrame.Content is MailRenderingPage renderingPage)
             {
-                try
-                {
-                    await renderingPage.PrepareForIdleAsync();
-                }
-                catch (Exception ex) when (ex is ObjectDisposedException or COMException)
-                {
-                    // This task is fire-and-forget. A competing navigation can dispose the
-                    // reader's WebView2 during the settle delay; the idle navigation below
-                    // still has to run.
-                    Log.Debug(ex, "Mail renderer was already disposed while preparing for idle.");
-                }
+                await renderingPage.PrepareForIdleAsync();
             }
         }
 
@@ -695,34 +678,18 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     #region Connected Animation Helpers
 
-    // The connected animation is cosmetic. A page whose WebView2 is already disposed simply
-    // skips it instead of failing the selection change that triggered it.
     private WebView2? GetRenderingPageWebView()
     {
-        try
-        {
-            if (RenderingFrame.Content is MailRenderingPage renderingPage)
-                return renderingPage.GetWebView();
-        }
-        catch (ObjectDisposedException ex)
-        {
-            Log.Debug(ex, "Rendering page WebView2 was disposed before the connected animation.");
-        }
+        if (RenderingFrame.Content is MailRenderingPage renderingPage)
+            return renderingPage.GetWebView();
 
         return null;
     }
 
     private WebView2? GetComposerPageWebView()
     {
-        try
-        {
-            if (RenderingFrame.Content is ComposePage composePage)
-                return composePage.GetWebView();
-        }
-        catch (ObjectDisposedException ex)
-        {
-            Log.Debug(ex, "Compose page WebView2 was disposed before the connected animation.");
-        }
+        if (RenderingFrame.Content is ComposePage composePage)
+            return composePage.GetWebView();
 
         return null;
     }
@@ -1034,7 +1001,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         return null;
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     internal void ThreadExpanderPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         // Mail & Calendar treats every row surface as a selection target while touch
@@ -1129,7 +1095,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
             ? SearchBarReach.IncludeServer
             : SearchBarReach.DownloadedOnly;
 
-    [DynamicWindowsRuntimeCast(typeof(FlyoutBase))]
     private void SearchFilterFlyoutOpening(object sender, object e)
     {
         // The search bar that opened the flyout holds the query text and the Local/Online choice.
@@ -1149,7 +1114,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
 
     private async void SearchFilterSearchClicked(object sender, RoutedEventArgs e) => await ApplySearchFilterEditorAsync();
 
-    [DynamicWindowsRuntimeCast(typeof(TextBox))]
     private async void SearchFilterPanelKeyDown(object sender, KeyRoutedEventArgs e)
     {
         // Enter in a text field searches, as it does in the search box. Esc closes the flyout itself.
@@ -1207,7 +1171,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         await ViewModel.PerformSearchAsync();
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     public bool CanPopOutCurrentContent()
     {
         return RenderingFrame.Content is FrameworkElement
@@ -1215,7 +1178,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
                && client.SupportsPopOut;
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     public FrameworkElement? GetCurrentHostedContent()
     {
         return RenderingFrame.Content as FrameworkElement;
@@ -1226,7 +1188,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         return client.GetPopoutDescriptor();
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     public FrameworkElement DetachHostedContent()
     {
         if (RenderingFrame.Content is not FrameworkElement content)
@@ -1295,7 +1256,6 @@ public sealed partial class MailListPage : MailListPageAbstract,
         }
     }
 
-    [DynamicWindowsRuntimeCast(typeof(FrameworkElement))]
     private static bool TryGetPendingHostedPopoutTarget(object? currentContent, PendingHostedPopoutNavigation pendingHostedNavigation, out FrameworkElement hostedContent)
     {
         hostedContent = null!;
