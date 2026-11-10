@@ -11,12 +11,15 @@ Reads the source manifest version. Outputs verified packages under
 Run scripts/localization/translate_resources.py --apply before building, without asking.
 .PARAMETER SkipTranslation
 Build without translating and without asking. -NonInteractive alone also skips translation.
+.PARAMETER TreatWarningsAsErrors
+Treat compiler, analyzer, and Native AOT warnings as errors for this release build.
 #>
 [CmdletBinding()]
 param(
     [switch]$NonInteractive,
     [switch]$Translate,
     [switch]$SkipTranslation,
+    [switch]$TreatWarningsAsErrors,
     [switch]$Store,
     [switch]$Beta,
     [switch]$Sideload,
@@ -29,6 +32,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:ReleaseRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+$script:ReleaseTreatWarningsAsErrors = [bool]$TreatWarningsAsErrors
 $script:SideloadIdentityName = 'WinoMail.Sideload'
 $script:BetaAssetsPath = $BetaAssetsPath
 $script:ReleaseOutputRoot = [IO.Path]::GetFullPath($OutputRoot)
@@ -356,6 +360,9 @@ function Get-ReleaseBuildArguments {
     if ($Plan.Selection.Architectures.Count -eq 1) { $arguments += "-p:RuntimeIdentifiers=win-$($platform.ToLowerInvariant())" }
     if ($Restore) {
         return $arguments + @('-t:Restore', "-p:RestoreConfigFile=$(Join-Path $Plan.RepositoryRoot 'nuget.config')")
+    }
+    if ($script:ReleaseTreatWarningsAsErrors) {
+        $arguments += @('-p:TreatWarningsAsErrors=true', '-p:TrimmerSingleWarn=false')
     }
     $mode = if ($Plan.Selection.Store) { 'StoreUpload' } else { 'SideloadOnly' }
     return $arguments + @(
