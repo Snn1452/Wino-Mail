@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml;
@@ -15,6 +14,7 @@ using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models;
 using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Calendar;
+using Wino.Core.Domain.Models.Connectivity;
 using Wino.Core.Domain.Models.Contacts;
 using Wino.Core.Domain.Models.Folders;
 using Wino.Core.Domain.Models.MailItem;
@@ -182,37 +182,14 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         };
     }
 
-    public async Task<bool> ShowServerCertificateTrustDialogAsync(string summary, byte[] certificateRawData)
+    public async Task<bool> ShowServerCertificateTrustDialogAsync(ServerCertificateTrustPrompt prompt)
     {
-        while (true)
+        var dialog = new ServerCertificateTrustDialog(prompt)
         {
-            var informationContainer = new CustomMessageDialogInformationContainer(
-                Translator.GeneralTitle_Warning,
-                summary,
-                WinoCustomMessageDialogIcon.Warning,
-                false);
-            var dialog = new WinoMessageDialog(informationContainer,
-                                               Translator.Buttons_Allow,
-                                               Translator.IMAPSetupDialog_CertificateView,
-                                               Translator.Buttons_Cancel,
-                                               ContentDialogButton.Close)
-            {
-                RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
-            };
+            RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
+        };
 
-            var result = await HandleDialogPresentationAsync(dialog);
-            if (result == ContentDialogResult.Primary)
-                return true;
-
-            if (result != ContentDialogResult.Secondary)
-                return false;
-
-            using var certificate = X509CertificateLoader.LoadCertificate(certificateRawData);
-            await ShowMessageAsync(
-                certificate.ToString(verbose: true),
-                Translator.IMAPSetupDialog_CertificateView,
-                WinoCustomMessageDialogIcon.Information);
-        }
+        return await HandleDialogPresentationAsync(dialog) == ContentDialogResult.Primary;
     }
 
     public async Task<MailAccount?> ShowAccountPickerDialogAsync(List<MailAccount> availableAccounts)
@@ -240,6 +217,16 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
     public async Task<ContactListCreationResult?> ShowNewContactListDialogAsync(IReadOnlyList<MailAccount> accounts, MailAccount? selectedAccount)
     {
         var dialog = new NewContactListDialog(accounts, selectedAccount)
+        {
+            RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
+        };
+        await HandleDialogPresentationAsync(dialog);
+        return dialog.Result;
+    }
+
+    public async Task<FolderRenameDialogResult?> ShowRenameFolderDialogAsync(string folderName, string? displayName, bool canRenameOnServer)
+    {
+        var dialog = new RenameFolderDialog(folderName, displayName, canRenameOnServer)
         {
             RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
         };
@@ -452,6 +439,16 @@ public class DialogService : DialogServiceBase, IMailDialogService, IWinoDialogS
         await HandleDialogPresentationAsync(dialog);
 
         return dialog.Result;
+    }
+
+    public async Task<bool> ShowOpenLinkConfirmationAsync(string? linkText, Uri originalUri, Uri cleanedUri, int removedParameterCount, string? browserName)
+    {
+        var dialog = new OpenLinkConfirmationDialog(linkText, originalUri, cleanedUri, removedParameterCount, browserName)
+        {
+            RequestedTheme = ThemeService.RootTheme.ToWindowsElementTheme()
+        };
+
+        return await HandleDialogPresentationAsync(dialog) == ContentDialogResult.Primary;
     }
 
     public async Task<bool> ShowCautiousConfirmationDialogAsync(string title, string message, string confirmButtonText)

@@ -101,6 +101,10 @@ public partial class App : WinoApplication,
     private readonly TaskCompletionSource _launchCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private MainTrayController? _companionIntegration;
     private Window? _backgroundLifetimeWindow;
+
+    // A logon start (startup task or session-start trigger) stays resident without any window,
+    // so neither a shell nor the background lifetime window shows that it must keep running.
+    private bool _isResidentBackgroundStart;
     private Microsoft.UI.Xaml.LaunchActivatedEventArgs? _pendingMigrationLaunchArgs;
     private PendingMigrationActivation? _pendingMigrationActivation;
     private readonly record struct ShellWindowActivationResult(IWinoShellWindow? ShellWindow, bool WasCreated);
@@ -386,6 +390,10 @@ public partial class App : WinoApplication,
     internal bool TryConfigureCompanionHotKey(bool enabled, HotKeyGesture gesture)
         => _companionIntegration?.TryConfigureHotKey(enabled, gesture) ?? gesture.IsValid;
 
+    internal bool TryConfigureVoiceHotKey(bool enabled, HotKeyGesture gesture, Wino.Mail.Controls.Core.VoiceBubble.VoiceBubbleInputMode mode = Wino.Mail.Controls.Core.VoiceBubble.VoiceBubbleInputMode.Voice)
+        => _companionIntegration?.TryConfigureVoiceHotKey(enabled, gesture, mode)
+           ?? Wino.Mail.WinUI.Services.Voice.VoiceBubbleHost.IsRegistrable(gesture.Normalize(), out _);
+
     private HotKeyGesture GetConfiguredCompanionHotKey() => new(
         _preferencesService?.CompanionHotKeyKey ?? HotKeyGesture.Default.Key,
         _preferencesService?.CompanionHotKeyModifiers ?? HotKeyGesture.Default.Modifiers);
@@ -554,6 +562,16 @@ public partial class App : WinoApplication,
             EndDate = start.AddHours(1),
             RequireCalendarPickerWhenUnresolved = calendarId == null
         };
+
+        // Switching into Calendar runs the shell's own first navigation; composing before it finishes leaves the
+        // user on the calendar page instead of the new event.
+        var dispatcherQueue = GetActivationDispatcherQueue();
+        if (dispatcherQueue != null)
+        {
+            var shellSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (dispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => shellSettled.SetResult()))
+                await shellSettled.Task;
+        }
 
         await ExecuteOnActivationUiThreadAsync(() =>
         {
@@ -749,6 +767,7 @@ public partial class App : WinoApplication,
         services.RegisterWinoViewModels();
         // Windows-only pages.
         services.AddTransient(typeof(MigrationPageViewModel));
+        services.AddTransient<WidgetsLiveTilesSettingsPageViewModel>();
     }
 
     #endregion
@@ -931,7 +950,10 @@ public partial class App : WinoApplication,
         // Keeps the session-start trigger in step with the startup task, including for installations
         // that predate it. Nothing waits on this; it logs its own failures.
         if (!_isExiting)
+        {
             _ = SessionStartActivation.SyncRegistrationAsync();
+            StartBackgroundActivities();
+        }
     }
 
     private async Task<bool> TryShowMigrationAsync(
@@ -1455,6 +1477,8 @@ public partial class App : WinoApplication,
             return;
         }
 
+        _isResidentBackgroundStart = true;
+
         _ = ExecuteOnActivationUiThreadAsync(() =>
         {
             UpdateTrayIconState(allowCreation: true);
@@ -1958,6 +1982,7 @@ public partial class App : WinoApplication,
     public void Receive(AccountCreatedMessage message)
     {
         _hasConfiguredAccounts = true;
+        OnBackgroundContentChanged();
         _ = _companionIntegration?.SetReadinessAsync(CompanionReadinessState.Ready);
         EnsurePreferenceChangedSubscription();
         QueueJumpListOptionsUpdateOnUiThread();
@@ -2085,6 +2110,7 @@ public partial class App : WinoApplication,
 
     public void Receive(AccountRemovedMessage message)
     {
+        OnBackgroundContentChanged();
         QueueJumpListOptionsUpdateOnUiThread();
 
         var windowManager = Services.GetRequiredService<IWinoWindowManager>();
@@ -2119,7 +2145,10 @@ public partial class App : WinoApplication,
     }
 
     public void Receive(AccountUpdatedMessage message)
-        => QueueJumpListOptionsUpdateOnUiThread();
+    {
+        OnBackgroundContentChanged();
+        QueueJumpListOptionsUpdateOnUiThread();
+    }
 
     private void QueueJumpListOptionsUpdateOnUiThread()
         => TryEnqueueActivationOnUiThread(() => _ = UpdateJumpListOptionsSafeAsync());

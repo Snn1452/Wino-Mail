@@ -89,6 +89,11 @@ public sealed partial class AppKitDialogService(IDispatcher dispatcher, Func<NSW
             _ => ThreeButtonDialogResult.Cancel
         };
 
+    public async Task<bool> ShowOpenLinkConfirmationAsync(string? linkText, System.Uri originalUri, System.Uri cleanedUri, int removedParameterCount, string? browserName)
+        => await AlertAsync(Translator.OpenLinkDialog_Title,
+            Wino.Core.Domain.Models.Reader.OpenLinkConfirmationText.GetMessage(linkText, cleanedUri, removedParameterCount, browserName),
+            [Translator.OpenLinkDialog_OpenLink, Translator.Buttons_Cancel]) == 0;
+
     public async Task<bool> ShowWinoCustomMessageDialogAsync(string title, string description, string approveButtonText, WinoCustomMessageDialogIcon? icon, string cancelButtonText = "", string dontAskAgainConfigurationKey = "")
     {
         var configuration = services?.GetService<IConfigurationService>();
@@ -244,12 +249,12 @@ public sealed partial class AppKitDialogService(IDispatcher dispatcher, Func<NSW
     {
         var picked = await PickAsync(Translator.MoveMailDialog_Title, null, availableFolders,
             folder => folder.ChildFolders ?? (IEnumerable<IMailItemFolder>)Array.Empty<IMailItemFolder>(),
-            folder => folder.FolderName ?? string.Empty,
+            folder => folder.ResolvedDisplayName ?? string.Empty,
             folder => WinoIcons.Image(SpecialFolderGlyphs.GetGlyph(folder.SpecialFolderType), 14),
             folder => WinoStyle.FromHexString(folder.TextColorHex),
             folder => folder.IsMoveTarget,
             Translator.MailOperation_Move,
-            folder => folder.IsMoveTarget ? null : string.Format(Translator.MoveMailDialog_InvalidFolderMessage, folder.FolderName));
+            folder => folder.IsMoveTarget ? null : string.Format(Translator.MoveMailDialog_InvalidFolderMessage, folder.ResolvedDisplayName));
         return picked;
     }
 

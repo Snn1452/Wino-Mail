@@ -129,8 +129,8 @@ dotnet build src/Wino.Mail.WinUI/Wino.Mail.WinUI.csproj -c Release -p:Platform=x
 ```
 
 Format changed XAML before building with `scripts/maintenance/windows/format-xaml.ps1 -Changed`, and run it with `-Check` before handoff.
-The repository has no automated test projects; do not add or run unit tests until the owner defines a new test project. Agent-driven UI automation is retired. The [local Docker lab](tools/local-lab/README.md) is the Windows application testing environment; use manual interaction for UI checks.
-A passing build does not prove UI behavior. Report manual verification as pending unless someone performed it.
+The repository has no automated test projects; do not add or run unit tests until the owner defines a new test project. The [local Docker lab](tools/local-lab/README.md) is the Windows application testing environment. On Windows, agents verify UI behavior themselves in the running Debug app with `winapp ui` (inspect, invoke, send-keys, screenshot, record) against the lab accounts; see the Windows guide. Do not add UI test projects or scripts to the repository; each check is run ad hoc and reported with its screenshots.
+A passing build does not prove UI behavior. Report a UI check as done only when it was performed, by an agent through `winapp ui` or by a person, and say which.
 
 ## Accounts, OAuth clients and signing (hard rules)
 
@@ -139,6 +139,11 @@ Binding for every agent. Backend counterpart: `AGENTS.md` and `docs/social-sign-
 - **Never touch the Google UWP OAuth client `973025879644-s7b4ur9p3rlgop6a22u7iuptdc0brnrn`.** It is the Windows
   app's Gmail mailbox client. Do not change, rotate, replace or repurpose it, and never use it for Wino Accounts
   sign-in. Ask the user if a task seems to need it.
+- Outlook mailboxes sign in with the verified Microsoft Entra app `497b333d-c689-4b27-8f59-7dace624111a`
+  (`OutlookClientIds.Current` in `Wino.Core.Domain`), which new accounts record before their first sign-in. Only
+  Windows keeps the legacy app `b19c2035-d740-49ff-b297-de6ec561b208` (`WindowsOutlookAuthenticationHost.LegacyClientId`)
+  for accounts whose `MailAccount.OutlookClientId` is NULL; never migrate those accounts. Never delete or disable the
+  legacy app: Windows users depend on it and the API uses its secret for Store collections.
 - Gmail mailboxes on macOS and iOS use the Wino Mail iOS client (`WinoAccountExternalAuth.GoogleAppleClientId`) in an
   `ASWebAuthenticationSession` (`WebSessionGoogleAuthorizationCodeReceiver`). Each stored Google token records the client
   that issued it and refreshes with that client; tokens without one came from the UWP client. Android uses Play

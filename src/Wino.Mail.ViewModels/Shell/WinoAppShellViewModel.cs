@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using Wino.Core.Domain;
 using Wino.Core.Domain.Enums;
 using Wino.Core.Domain.Interfaces;
@@ -17,6 +18,7 @@ using Wino.Calendar.ViewModels;
 using Wino.Core.ViewModels;
 using Wino.Core.ViewModels.Data;
 using Wino.Mail.ViewModels;
+using Wino.Messaging.Client.Navigation;
 
 namespace Wino.Shell.ViewModels;
 
@@ -25,7 +27,7 @@ namespace Wino.Shell.ViewModels;
 /// knows nothing about the pages themselves; every menu item, command and template comes
 /// from the mode that owns it.
 /// </summary>
-public sealed partial class WinoAppShellViewModel : CoreBaseViewModel, IShellViewModel
+public sealed partial class WinoAppShellViewModel : CoreBaseViewModel, IShellViewModel, IRecipient<AccountServerSettingsNavigationRequested>
 {
     private readonly Dictionary<WinoApplicationMode, IShellMenuProvider> _providers = [];
     private bool _isApplyingSelection;
@@ -249,6 +251,28 @@ public sealed partial class WinoAppShellViewModel : CoreBaseViewModel, IShellVie
         _ = ShowStoreUpdateCardIfNeededAsync();
     }
 
+    protected override void RegisterRecipients()
+    {
+        base.RegisterRecipients();
+        Messenger.Register<AccountServerSettingsNavigationRequested>(this);
+    }
+
+    protected override void UnregisterRecipients()
+    {
+        base.UnregisterRecipients();
+        Messenger.Unregister<AccountServerSettingsNavigationRequested>(this);
+    }
+
+    public async void Receive(AccountServerSettingsNavigationRequested message)
+    {
+        // Settings > Accounts > account (General tab) > server settings, the same route as fixing account attention.
+        await ExecuteUIThread(() => NavigationService.Navigate(
+            WinoPage.SettingsPage,
+            new SettingsPageActivationContext(
+                WinoPage.ManageAccountsPage,
+                new AccountDetailsNavigationContext(message.AccountId, AccountDetailsTab.General, OpenServerSettings: true))));
+    }
+
     public IShellMenuProvider GetProvider(WinoApplicationMode mode)
     {
         if (_providers.TryGetValue(mode, out var provider))
@@ -406,18 +430,14 @@ public sealed partial class WinoAppShellViewModel : CoreBaseViewModel, IShellVie
             if (_isShutdown || !hasAvailableUpdate || !PreferencesService.IsStoreUpdateNotificationsEnabled)
                 return;
 
-            var version = _storeService.AvailableUpdateVersion;
-
             await ExecuteUIThreadAsync(() =>
             {
                 if (_isShutdown || !PreferencesService.IsStoreUpdateNotificationsEnabled)
                     return Task.CompletedTask;
 
                 _hasShownStoreUpdatePrompt = true;
-                // Only Store updates report a version; App Installer feeds do not.
-                StoreUpdateCardMessage = string.IsNullOrEmpty(version)
-                    ? Translator.Notifications_AppUpdateAvailableMessage
-                    : string.Format(Translator.Notifications_StoreUpdateAvailableVersionMessage, version);
+                // The Store reports only the installed package of an update, never the offered version.
+                StoreUpdateCardMessage = Translator.Notifications_AppUpdateAvailableMessage;
                 IsStoreUpdateDontAskAgainChecked = false;
                 IsStoreUpdateCardVisible = true;
 

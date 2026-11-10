@@ -101,6 +101,12 @@ internal static class MailContextFlyoutBuilder
             Command = CreateCommand(() => selected(new MailContextFlyoutSelection(CreateTestNotification: true))),
             AutomationId = "MailContextTestNotification"
         });
+        items.Add(new ContextFlyoutCommandEntry
+        {
+            Text = Translator.VoiceBubble_DebugOpenForSelection,
+            Command = CreateCommand(() => selected(new MailContextFlyoutSelection(OpenAssistant: true))),
+            AutomationId = "MailContextOpenAssistant"
+        });
 #endif
 
         return new MailContextFlyoutMenu(items, CreateHeaderItems(actions, shortcutResolver, selected));
@@ -182,6 +188,7 @@ internal static class MailContextFlyoutBuilder
             Text = XamlHelpers.GetOperationString(MailOperation.Move),
             Icon = CreateIcon(XamlHelpers.GetWinoIconGlyph(MailOperation.Move)),
             IsEnabled = children.Any(CanActivate),
+            IsSearchable = true,
             Items = children,
             AutomationId = "MailContextMove"
         };
@@ -201,7 +208,7 @@ internal static class MailContextFlyoutBuilder
                 continue;
             }
 
-            var folderName = folder.FolderName ?? string.Empty;
+            var folderName = folder.ResolvedDisplayName ?? string.Empty;
             var childItems = new List<ContextFlyoutMenuEntry>();
             if (folder.ChildFolders?.Count > 0)
             {
@@ -265,7 +272,7 @@ internal static class MailContextFlyoutBuilder
         => new()
         {
             Text = text,
-            SearchKeywords = $"folder destination {folder.FolderName}",
+            SearchKeywords = $"folder destination {folder.ResolvedDisplayName}",
             Icon = CreateIcon(XamlHelpers.GetSpecialFolderPathIconGeometry(folder.SpecialFolderType)),
             Command = CreateCommand(() => selected(new MailContextFlyoutSelection(
                 Operation: moveAction,
@@ -295,6 +302,7 @@ internal static class MailContextFlyoutBuilder
         {
             Text = Translator.MailCategoryMenuItem,
             Icon = CreateIcon(WinoIconGlyph.SpecialFolderCategory),
+            IsSearchable = true,
             Items = categoryItems,
             AutomationId = "MailContextCategories"
         };
@@ -365,4 +373,5 @@ internal sealed record MailContextFlyoutSelection(
     bool IsCategoryAssignedToAll = false,
     bool? PinState = null,
     bool CreateTestNotification = false,
-    IMailItemFolder? MoveTargetFolder = null);
+    IMailItemFolder? MoveTargetFolder = null,
+    bool OpenAssistant = false);

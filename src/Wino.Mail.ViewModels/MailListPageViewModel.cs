@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -47,6 +47,7 @@ namespace Wino.Mail.ViewModels;
 public partial class MailListPageViewModel : MailBaseViewModel,
     IShellMenuOwner,
     IRecipient<MailItemNavigationRequested>,
+    IRecipient<MailSearchRequested>,
     IRecipient<ActiveMailFolderChangedEvent>,
     IRecipient<AccountSynchronizationCompleted>,
     IRecipient<NewMailSynchronizationRequested>,
@@ -118,6 +119,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private readonly IDraftSyncRetryService _draftSyncRetryService;
     private MailItemViewModel _activeMailItem;
     private CancellationTokenSource markAsReadDelayCancellationTokenSource;
+    private CancellationTokenSource? _dayChangeWatchCancellationTokenSource;
     private IReadOnlyList<MailItemViewModel> _selectedItems = [];
     private IReadOnlySet<Guid> _selectedItemIds = new HashSet<Guid>();
     private IReadOnlySet<string> _fullySelectedThreadKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -426,12 +428,19 @@ public partial class MailListPageViewModel : MailBaseViewModel,
     private void UpdateAccountNicknamePositionForItems()
         => MailCollection.UpdateAccountNicknamePosition(CurrentAccountNicknamePosition);
 
+    public override void OnNavigatedTo(NavigationMode mode, object? parameters)
+    {
+        base.OnNavigatedTo(mode, parameters);
+        StartDayChangeWatch();
+    }
+
     public override async void OnNavigatedFrom(NavigationMode mode, object? parameters)
         => await DeactivateAsync(mode, parameters);
 
     public async Task DeactivateAsync(NavigationMode mode, object? parameters)
     {
         base.OnNavigatedFrom(mode, parameters);
+        StopDayChangeWatch();
 
         CancelPendingMarkAsRead();
         CancelActiveMailLoad();
@@ -790,7 +799,8 @@ public partial class MailListPageViewModel : MailBaseViewModel,
             return;
         }
 
-        if (propertyName == nameof(IPreferencesService.IsNewestThreadMailFirst))
+        if (propertyName is nameof(IPreferencesService.IsNewestThreadMailFirst)
+            or nameof(IPreferencesService.MailListDateGroupingType))
         {
             RefreshMailListOptions();
             return;
@@ -1505,6 +1515,50 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         }
     }
 
+    // A per-minute compare instead of a timer due at midnight also catches resume from sleep
+    // and time-zone changes.
+    private void StartDayChangeWatch()
+    {
+        StopDayChangeWatch();
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        _dayChangeWatchCancellationTokenSource = cancellationTokenSource;
+        _ = WatchDayChangeAsync(cancellationTokenSource.Token);
+    }
+
+    private void StopDayChangeWatch()
+    {
+        _dayChangeWatchCancellationTokenSource?.Cancel();
+        _dayChangeWatchCancellationTokenSource?.Dispose();
+        _dayChangeWatchCancellationTokenSource = null;
+    }
+
+    private async Task WatchDayChangeAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (MailListOptions.ReferenceDate == DateTime.Today)
+                {
+                    continue;
+                }
+
+                await ExecuteUIThread(() =>
+                {
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RefreshMailListOptions();
+                    }
+                }).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     private void RefreshMailListOptions()
     {
         var sortByName = SelectedSortingOption?.Type == SortingOptionType.Sender;
@@ -1515,7 +1569,10 @@ public partial class MailListPageViewModel : MailBaseViewModel,
                 ? MailListGroupMode.None
                 : sortByName
                     ? MailListGroupMode.Name
-                    : MailListGroupMode.Date,
+                    : PreferencesService.MailListDateGroupingType == MailListDateGroupingType.DayGroups
+                        ? MailListGroupMode.DayGroups
+                        : MailListGroupMode.Date,
+            ReferenceDate = DateTime.Today,
             IsThreadingEnabled = PreferencesService.IsThreadingEnabled,
             ThreadMessageOrder = PreferencesService.IsNewestThreadMailFirst
                 ? ThreadMessageOrder.NewestFirst
@@ -2776,6 +2833,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
             RequireAttachments = context.SearchCriteria.HasAttachments,
             ReadStatus = context.SearchCriteria.ReadStatus,
             RequireFlagged = context.SearchCriteria.IsFlagged,
+            SenderKind = context.SearchCriteria.SenderKind,
         };
 
         if (context.CategoryIds.Count == 0)
@@ -3536,11 +3594,22 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         });
     }
 
+    /// <summary>Runs a search another surface asked for (voice control), the same way the search box does.</summary>
+    public void Receive(MailSearchRequested message)
+    {
+        _ = ExecuteUIThread(() =>
+        {
+            SetSearchCriteria(message.Criteria, message.Folders);
+            if (PerformSearchCommand.CanExecute(null))
+                PerformSearchCommand.Execute(null);
+        });
+    }
     protected override void RegisterRecipients()
     {
         base.RegisterRecipients();
 
         Messenger.Register<MailItemNavigationRequested>(this);
+        Messenger.Register<MailSearchRequested>(this);
         Messenger.Register<ActiveMailFolderChangedEvent>(this);
         Messenger.Register<AccountSynchronizationCompleted>(this);
         Messenger.Register<NewMailSynchronizationRequested>(this);
@@ -3562,6 +3631,7 @@ public partial class MailListPageViewModel : MailBaseViewModel,
         base.UnregisterRecipients();
 
         Messenger.Unregister<MailItemNavigationRequested>(this);
+        Messenger.Unregister<MailSearchRequested>(this);
         Messenger.Unregister<ActiveMailFolderChangedEvent>(this);
         Messenger.Unregister<AccountSynchronizationCompleted>(this);
         Messenger.Unregister<NewMailSynchronizationRequested>(this);

@@ -291,6 +291,7 @@ VALUES
             Connection.CreateTableAsync<ContactListMember>(),
             Connection.CreateTableAsync<ContactCategoryAssignment>(),
             Connection.CreateTableAsync<RecipientHistory>(),
+            Connection.CreateTableAsync<RemoteContentSenderRule>(),
             Connection.CreateTableAsync<CardDavAccountState>(),
             Connection.CreateTableAsync<CardDavAddressBookState>(),
             Connection.CreateTableAsync<CardDavResourceShadow>(),
@@ -490,6 +491,13 @@ WHERE ImapUid > 0 AND COALESCE(ImapUidValidity, 0) = 0
         {
             await Connection
                 .ExecuteAsync($"ALTER TABLE {nameof(MailAccount)} ADD COLUMN {nameof(MailAccount.AuthenticationAddress)} TEXT NULL")
+                .ConfigureAwait(false);
+        }
+
+        if (!accountColumns.Any(c => c.Name == nameof(MailAccount.OutlookClientId)))
+        {
+            await Connection
+                .ExecuteAsync($"ALTER TABLE {nameof(MailAccount)} ADD COLUMN {nameof(MailAccount.OutlookClientId)} TEXT NULL")
                 .ConfigureAwait(false);
         }
 

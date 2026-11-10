@@ -44,6 +44,7 @@ internal interface IAppNotificationHandlerHost
     Task HandleMailToastComposeActionAsync(MailOperation action, Guid mailItemUniqueId);
     Task HandleMailToastBackgroundActionAsync(MailOperation action, Guid mailItemUniqueId);
     Task HandleNotificationModeActivationAsync(WinoApplicationMode mode);
+    Task HandleWidgetActionAsync(string action, string? value);
 }
 
 public partial class App : IAppActivationHandlerHost, IAppNotificationHandlerHost
@@ -74,8 +75,8 @@ public partial class App : IAppActivationHandlerHost, IAppNotificationHandlerHos
     Task IAppActivationHandlerHost.ActivateRedirectedShellAsync(RedirectedActivationRoute route)
         => ActivateRedirectedShellAsync(route);
 
-    // A process kept alive in the background after its shell closed is still running and must not exit.
-    bool IAppNotificationHandlerHost.IsAppRunning() => IsAppRunning() || _backgroundLifetimeWindow != null;
+    // A process kept alive in the background, after its shell closed or since a logon start, is still running and must not exit.
+    bool IAppNotificationHandlerHost.IsAppRunning() => IsAppRunning() || _backgroundLifetimeWindow != null || _isResidentBackgroundStart;
     void IAppNotificationHandlerHost.ExitApplication() => ExitApplication();
     void IAppNotificationHandlerHost.LogActivation(string message) => LogActivation(message);
     Task IAppNotificationHandlerHost.HandleStoreUpdateToastAsync() => HandleStoreUpdateToastAsync();
@@ -98,4 +99,6 @@ public partial class App : IAppActivationHandlerHost, IAppNotificationHandlerHos
         => HandleToastActionAsync(action, mailItemUniqueId);
     Task IAppNotificationHandlerHost.HandleNotificationModeActivationAsync(WinoApplicationMode mode)
         => EnsureShellWindowAsync(mode, activateWindow: true);
+    Task IAppNotificationHandlerHost.HandleWidgetActionAsync(string action, string? value)
+        => HandleWidgetActionAsync(action, value);
 }

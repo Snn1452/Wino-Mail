@@ -62,6 +62,10 @@ public static class ServicesContainerSetup
         services.AddTransient<IContactService, ContactService>();
         services.AddTransient<IContactQueryService>(provider => provider.GetRequiredService<IContactService>());
         services.AddTransient<IRecipientHistoryService, RecipientHistoryService>();
+        services.AddTransient<IRemoteContentRuleStore, RemoteContentRuleStore>();
+        services.AddSingleton<IRemoteContentSessionService, RemoteContentSessionService>();
+        services.AddTransient<IRemoteContentPolicyService, RemoteContentPolicyService>();
+        services.AddSingleton<ILinkSanitizer, LinkSanitizer>();
         services.AddTransient<IRecipientSuggestionService, RecipientSuggestionService>();
         services.AddTransient<ITaskService, TaskService>();
         services.AddTransient<ITaskQueryService>(provider => provider.GetRequiredService<ITaskService>());
@@ -74,6 +78,12 @@ public static class ServicesContainerSetup
         services.AddSingleton<IKeyboardShortcutService, KeyboardShortcutService>();
         services.AddSingleton<IWinoAccountSessionService>(provider => WinoAccountSessionService.For(provider.GetRequiredService<IDatabaseService>(), provider.GetRequiredService<IAccountCredentialPersistence>()));
         services.AddSingleton<IWinoAccountApiClient, WinoAccountApiClient>();
+        services.AddSingleton<IVoiceCommandService, Voice.VoiceCommandService>();
+        services.AddSingleton<IVoicePlanPreviewService, Voice.VoicePlanPreviewService>();
+        services.AddTransient<Voice.VoiceBrainSectionBuilder>();
+        services.AddSingleton<IVoiceBrainService, Voice.VoiceBrainService>();
+        services.AddTransient<IVoiceQuestionService, Voice.VoiceQuestionService>();
+        services.AddSingleton<IVoiceBrainStore>(provider => provider.GetRequiredService<MailIntelligenceStore>());
         services.AddSingleton<IIntelligenceBackend, CloudIntelligenceBackend>();
         services.AddSingleton<IWinoAccountProfileService, WinoAccountProfileService>();
         RegisterPushRelayServices(services);
@@ -107,7 +117,7 @@ public static class ServicesContainerSetup
         services.AddSingleton<AccountProfilePictureMaintenance>();
         services.AddSingleton<AccountSenderPictureDirectory>();
 
-        services.AddSingleton<IDavTransport>(_ => new DavTransport());
+        services.AddSingleton<IDavTransport>(provider => new DavTransport(provider.GetRequiredService<IServerCertificateTrustService>()));
         services.AddSingleton<IDavMultistatusReader, DavMultistatusReader>();
         services.AddSingleton<IDavResponseHandler, DavResponseHandler>();
         services.AddSingleton<IDavCredentialStore, DavCredentialStore>();
@@ -143,6 +153,7 @@ public static class ServicesContainerSetup
             provider.GetRequiredService<IPushRelayRegistrationService>(),
             provider.GetRequiredService<ISynchronizationManager>(),
             provider.GetRequiredService<IMessenger>(),
+            provider.GetRequiredService<ITaskService>(),
             provider.GetService<IRelayIntroductionService>(),
             provider.GetService<IRelaySocketCoordinator>()));
         services.AddSingleton<IRelayHealth>(provider => provider.GetRequiredService<ISyncCoordinator>());
@@ -196,6 +207,7 @@ public static class ServicesContainerSetup
             () => provider.GetService<INotificationBuilder>(),
             provider.GetService<IPushRelayAppManagedRegistrationStore>(),
             provider.GetRequiredService<IRelayAlertCoverage>(),
-            provider.GetService<IPushRelayDeviceInfo>()));
+            provider.GetService<IPushRelayDeviceInfo>(),
+            provider.GetService<IPushRelayClient>()));
     }
 }

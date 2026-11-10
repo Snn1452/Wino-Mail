@@ -198,11 +198,11 @@ internal sealed class ConsoleNativeAppService : IAppMetadataService
     public Func<IntPtr> GetCoreWindowHwnd { get; set; }
     public string AppVersion => typeof(ConsoleNativeAppService).Assembly.GetName().Version?.ToString() ?? "1.0.0";
     public string PackageName => "Wino.Intelligence.Console";
+    public string PlatformDisplayName => "Windows";
     public string BuildConfiguration => "Debug";
     public string SentryEnvironment => "intelligence-console";
     public string SentryRelease => $"{PackageName}@{AppVersion}";
     public string SentryDist => AppVersion;
-    public string PlatformDisplayName => "Windows";
 
     public string GetWebAuthenticationBrokerUri() => string.Empty;
 

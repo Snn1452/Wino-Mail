@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Wino.Core.Domain.Interfaces;
 using Wino.Mail.WinUI.Interfaces;
 using Wino.Mail.WinUI.Services;
+using Wino.Mail.WinUI.Services.WidgetsAndTiles;
 using Wino.Services;
 using Wino.Platform.Windows;
 using Wino.Platform.Windows.Authentication;
@@ -39,19 +40,23 @@ public static class CoreUWPContainerSetup
         services.AddSingleton<IUserPresenceStateProvider>(provider => provider.GetRequiredService<NativeAppService>());
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<WindowsShellPreferences>();
+        services.AddSingleton<ContactPictureThumbnailer>();
+        services.AddSingleton<WidgetsAndTilesService>();
         services.AddSingleton<ISecretProtector, DpapiSecretProtector>();
         services.AddSingleton<IAccountCredentialPersistence, WindowsAccountCredentialPersistence>();
         services.AddSingleton<IApplicationResourceResolver, WindowsApplicationResourceResolver>();
         services.AddSingleton<IStartupIntegrationService, WindowsStartupIntegrationService>();
         services.AddSingleton<IReaderRuntimeService, WindowsReaderRuntimeService>();
         services.AddSingleton<IInstalledBrowserService, WindowsInstalledBrowserService>();
+        services.AddSingleton<IMicrophoneService, WindowsMicrophoneService>();
         services.AddSingleton<IPlatformCapabilities>(_ => new PlatformCapabilities(
             Printing: Windows.Graphics.Printing.PrintManager.IsSupported(), PdfExport: true,
             Smime: true, AdditionalWindows: true, Notifications: true, NotificationActions: true,
             StartupIntegration: true, Tray: true, GlobalHotkeys: true, GeneralActivation: true,
             MicrosoftStore: true, RemoteNotifications: false, KeyboardShortcuts: true, FileBackup: true, Purchases: true,
             AppModeTaskbarIdentity: true, PointerHover: true, MailListDensity: true, PresentationDetection: true,
-            ConfigurableSyncIntervals: true, BadgeLaunchNavigation: true));
+            ConfigurableSyncIntervals: true, BadgeLaunchNavigation: true, WidgetsAndLiveTiles: true,
+            AttachmentSecurityCheck: true, VoiceControl: true));
         services.AddSingleton<IPushRelayDeviceIdentityStore, WindowsPushRelayDeviceIdentityStore>();
         services.AddSingleton<IPushRelayDeviceInfo, WindowsPushRelayDeviceInfo>();
         services.AddSingleton<IPushTokenProvider, NullPushTokenProvider>();

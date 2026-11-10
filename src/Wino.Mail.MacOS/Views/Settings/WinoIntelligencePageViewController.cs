@@ -64,7 +64,7 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
         });
         AddContent(updating);
         AddContent(CommandBar(WinoInfoBarSeverity.Informational, nameof(vm.PurchaseStatusMessage), s => s.PurchaseStatusMessage,
-            Translator.WinoAccount_Management_RefreshPurchases, vm.RefreshPurchasesCommand));
+            vm.RefreshPurchasesText, vm.RefreshPurchasesCommand));
         // Windows: the refresh error bar is IsClosable="True"; the purchase status bar is not closable.
         var refreshError = CommandBar(WinoInfoBarSeverity.Warning, nameof(vm.IntelligenceRefreshError), s => s.IntelligenceRefreshError,
             Translator.Buttons_Retry, vm.RetryIntelligenceRefreshCommand);
@@ -84,12 +84,15 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
         var promo = NotSubscribedPromo();
         Bind.Bind(vm.AiPackAddOn, nameof(WinoAddOnItemViewModel.IsPurchased), a => a.IsNotPurchased, show => promo.Hidden = !show);
         AddSigned(promo);
+        AddSigned(Bar(WinoInfoBarSeverity.Informational, nameof(vm.SubscriptionEndedText), s => s.IsAiPackEnded ? s.SubscriptionEndedText : null));
         AddSigned(SubscriptionCard());
+        AddSigned(Bar(WinoInfoBarSeverity.Warning, nameof(vm.ExhaustedBucketsText), s => s.HasExhaustedBuckets ? s.ExhaustedBucketsText : null));
         AddSigned(Bar(WinoInfoBarSeverity.Error, nameof(vm.ConsentErrorMessage), s => s.HasConsentError ? s.ConsentErrorMessage : null));
         AddSigned(Bar(WinoInfoBarSeverity.Warning, nameof(vm.ConsentDataDeletionStatus), s => s.IsConsentDeletionPending ? Translator.WinoAccount_IntelligenceConsentDeletionPending : null));
         AddSigned(Bar(WinoInfoBarSeverity.Error, nameof(vm.ConsentDataDeletionStatus), s => s.IsConsentDeletionFailed ? Translator.WinoAccount_IntelligenceConsentDeletionFailed : null));
         AddSigned(MailboxesExpander());
         AddSigned(Bind.Visible(TranslationsExpander(), vm, nameof(vm.HasIntelligenceAccess), s => s.HasIntelligenceAccess));
+        AddSigned(VoiceCommandsCard());
         AddContent(Bind.Visible(signedIn, vm, nameof(vm.IsSignedIn), s => s.IsSignedIn));
 
         // A snapshot apply clears and refills the mailbox collection; rebuild the rows once per batch.
@@ -197,7 +200,7 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
             WinoIntelligenceBrand.Chip(WinoIconGlyph.Translate, Translator.WinoAccount_Management_AiPackFeatureTranslate),
             WinoIntelligenceBrand.Chip(WinoIconGlyph.Edit, Translator.WinoAccount_Management_AiPackFeatureRewrite),
             WinoIntelligenceBrand.Chip(WinoIconGlyph.Tag, Translator.WinoAccount_Management_AiPackFeatureLabels),
-        ], 8, 420);
+        ], 8, WinoAccountManagementPageViewController.ChipFlowWidth);
         var note = Secondary(Translator.WinoAccount_Management_AiPackLocalNote, 11);
         var column = WinoLayout.VStack(12, text, chips, note);
         column.Alignment = NSLayoutAttribute.Leading;
@@ -208,7 +211,9 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
         var learn = new NSButton { Bordered = false, TranslatesAutoresizingMaskIntoConstraints = false };
         learn.AttributedTitle = new NSAttributedString(Translator.Buttons_LearnMore, new NSStringAttributes { ForegroundColor = WinoStyle.Accent, Font = NSFont.SystemFontOfSize(12) });
         Bind.OnActivated(learn, () => NSWorkspace.SharedWorkspace.OpenUrl(new NSUrl(LearnMoreUrl)));
-        var price = Secondary(Translator.WinoAccount_Management_AiPackPriceAtCheckout, 11);
+        var price = vm.UsesAppStorePurchases
+            ? Bind.Label(vm, nameof(vm.AppStoreAiPackPriceText), s => s.AppStoreAiPackPriceText, NSFont.SystemFontOfSize(11), WinoStyle.SecondaryText, 0)
+            : Secondary(Translator.WinoAccount_Management_AiPackPriceAtCheckout, 11);
         price.Alignment = NSTextAlignment.Right;
         var side = WinoLayout.VStack(8, get, learn, price);
         side.Alignment = NSLayoutAttribute.CenterX;
@@ -216,9 +221,14 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
         get.WidthAnchor.ConstraintEqualTo(side.WidthAnchor).Active = true;
         price.WidthAnchor.ConstraintEqualTo(side.WidthAnchor).Active = true;
 
-        var row = WinoLayout.HStack(20, art, column, side);
-        row.Alignment = NSLayoutAttribute.CenterY;
-        return IntelligenceViews.Surface(row);
+        var row = SettingsAdaptiveRow.IntelligencePromo(art, column, side, WinoAccountManagementPageViewController.PromoBreakpoint);
+        if (!vm.UsesAppStorePurchases) return IntelligenceViews.Surface(row);
+
+        // Guideline 3.1.2: the length, renewal and the Terms of Use and Privacy Policy links sit next to the purchase.
+        var stack = WinoLayout.VStack(14, row, AppStoreSubscriptionTerms.Create());
+        stack.Alignment = NSLayoutAttribute.Leading;
+        row.WidthAnchor.ConstraintEqualTo(stack.WidthAnchor).Active = true;
+        return IntelligenceViews.Surface(stack);
     }
 
     /// <summary>Subscription and AI credits, with the "Available quota" pull-down that opens the usage flyout.</summary>
@@ -241,10 +251,27 @@ public sealed class WinoIntelligencePageViewController(WinoAccountManagementPage
 #if DEBUG
         WinoIntelligenceDebug.OpenQuota = () => quota.PerformClick(quota);
 #endif
-        var card = Card(Translator.WinoIntelligence_SubscriptionTitle, null, WinoIconGlyph.None, quota);
+        var limitReached = WinoStyle.Label(Translator.WinoIntelligence_Status_LimitReached, WinoStyle.BodyStrong, WinoStyle.Critical);
+        Bind.Visible(limitReached, vm, nameof(vm.IsLimitReached), s => s.IsLimitReached);
+        // Stripe subscriptions only; App Store subscriptions are managed in the App Store.
+        var manage = Bind.Button(Translator.WinoIntelligence_ManageSubscription, vm.ManageSubscriptionCommand);
+        Bind.Visible(manage, vm, nameof(vm.CanManageSubscription), s => s.CanManageSubscription);
+        var card = Card(Translator.WinoIntelligence_SubscriptionTitle, null, WinoIconGlyph.None, Row(limitReached, manage, quota));
         card.LeadingView = new BrandIconView(WinoIconGlyph.WinoIntelligence, 20);
-        Bind.Bind(vm, nameof(vm.AiPackRenewalOrCancellationText), s => s.AiPackRenewalOrCancellationText, text => card.Description = text);
+        void UpdateDescription() => card.Description = string.IsNullOrWhiteSpace(vm.SubscriptionRenewalLine) ? vm.AiPackRenewalOrCancellationText : vm.SubscriptionRenewalLine;
+        Bind.Bind(vm, nameof(vm.AiPackRenewalOrCancellationText), s => s.AiPackRenewalOrCancellationText, _ => UpdateDescription());
+        Bind.Bind(vm, nameof(vm.SubscriptionRenewalLine), s => s.SubscriptionRenewalLine, _ => UpdateDescription());
         return Bind.Visible(card, vm, nameof(vm.HasIntelligenceAccess), s => s.HasIntelligenceAccess);
+    }
+
+    /// <summary>Windows VoiceCommandsCard: this month's voice commands and a way to Voice Control settings.</summary>
+    private NSView VoiceCommandsCard()
+    {
+        var vm = ViewModel;
+        var open = Bind.Button(Translator.WinoIntelligence_Voice_OpenSettings, vm.OpenVoiceControlCommand);
+        var card = Card(Translator.WinoIntelligence_Voice_Title, null, WinoIconGlyph.Microphone, open);
+        Bind.Bind(vm, nameof(vm.VoiceUsageText), s => s.VoiceUsageText, text => card.Description = text);
+        return Bind.Visible(card, vm, nameof(vm.HasIntelligenceAccess), s => s.ShowVoiceCommandsCard);
     }
 
     /// <summary>Mailboxes: the account-wide consent switch, then one row per mailbox while consent is granted.</summary>

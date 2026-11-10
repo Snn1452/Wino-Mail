@@ -57,6 +57,10 @@ public sealed class MacStatusItemController : IDisposable
     /// <summary>True while the icon is in the menu bar.</summary>
     public bool IsVisible => _item is not null;
 
+    /// <summary>The menu bar icon's frame in screen coordinates, or null without an icon.</summary>
+    public CGRect? ButtonScreenFrame
+        => _item?.Button is { Window: { } window } button ? window.ConvertRectToScreen(button.ConvertRectToView(button.Bounds, null)) : null;
+
     /// <summary>True while the companion popover is shown.</summary>
     public bool IsCompanionShown => _popover?.Shown == true;
 
@@ -142,7 +146,7 @@ public sealed class MacStatusItemController : IDisposable
             await _viewModel!.OpenAsync(_readiness, CancellationToken.None);
             if (_item?.Button is null || _popover is null) return;
             // The popover takes keyboard focus (snooze menu, Escape) only while Wino is active.
-            NSApplication.SharedApplication.ActivateIgnoringOtherApps(true);
+            NSApplication.SharedApplication.Activate();
             _content!.RefreshNow();
             _popover.ContentSize = _content.PreferredContentSize;
             _popover.Show(button.Bounds, button, NSRectEdge.MinYEdge);

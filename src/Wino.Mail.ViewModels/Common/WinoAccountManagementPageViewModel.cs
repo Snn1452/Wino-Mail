@@ -15,6 +15,7 @@ using Wino.Core.Domain.Interfaces;
 using Wino.Core.Domain.Models.Accounts;
 using Wino.Core.Domain.Models.Ai;
 using Wino.Core.Domain.Models.Navigation;
+using Wino.Core.Domain.Models.Settings;
 using Wino.Core.Domain.Models.Intelligence;
 using Wino.Core.ViewModels.Data;
 using Wino.Mail.Api.Contracts.Billing;
@@ -53,6 +54,9 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     private readonly IWinoAppStorePurchaseService? _appStorePurchases;
     private WinoStoreRedeemCandidate? _storeRedeemCandidate;
     private string _intelligencePolicyVersion = string.Empty;
+    private WinoIntelligenceEntitlementState _entitlementState = WinoIntelligenceEntitlementState.SignedOut;
+    private AiPackBillingStatusDto? _aiPackBilling;
+    private DateTimeOffset? _usageResetsAtUtc;
     public string IntelligencePolicyVersion => _intelligencePolicyVersion;
     public string IntelligencePolicyVersionText => string.Format(Translator.MacOSMail_ConsentPolicyVersion, _intelligencePolicyVersion);
 
@@ -70,6 +74,60 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     /// </summary>
     public ObservableCollection<WinoAccountBenefitItemViewModel> Benefits { get; } = [];
 
+    /// <summary>The features of the subscription, with live usage in place of the allowance once the API reports it.</summary>
+    public ObservableCollection<IntelligencePerk> OfferPerks { get; } = [];
+
+    /// <summary>The Wino Intelligence row on the Wino Account page: active or not and the renewal date, never usage.</summary>
+    [ObservableProperty]
+    public partial string AiPackStatusText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsAiPackEnded { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsAiPackNotActive { get; set; }
+
+    [ObservableProperty]
+    public partial string SubscriptionEndedText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string SubscriptionRenewalLine { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsWithinLimits))]
+    public partial bool IsLimitReached { get; set; }
+
+    public bool IsWithinLimits => !IsLimitReached;
+
+    [ObservableProperty]
+    public partial bool HasExhaustedBuckets { get; set; }
+
+    [ObservableProperty]
+    public partial string ExhaustedBucketsText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string MailClassificationSummary { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string VoiceUsageText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string IntelligenceCtaTitle { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string IntelligenceCtaButtonText { get; set; } = string.Empty;
+
+    /// <summary>The subscription is billed through Stripe, so the Customer Portal can manage it.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ManageSubscriptionCommand))]
+    public partial bool CanManageSubscription { get; set; }
+
+    public bool IsVoiceControlAvailable => _platformCapabilities.VoiceControl;
+
+    public bool HasNoIntelligenceAccess => !HasIntelligenceAccess;
+
+    public bool ShowVoiceCommandsCard => HasIntelligenceAccess && IsVoiceControlAvailable;
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RefreshPurchasesCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteIntelligenceCommand))]
@@ -82,12 +140,16 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     [ObservableProperty]
     public partial string AccountEmail { get; set; } = string.Empty;
 
+    partial void OnAccountEmailChanged(string value) => ApplyCtaTexts();
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PurchaseAddOnCommand))]
     public partial bool IsCheckoutInProgress { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IntelligenceStatusShortText))]
+    [NotifyPropertyChangedFor(nameof(HasNoIntelligenceAccess))]
+    [NotifyPropertyChangedFor(nameof(ShowVoiceCommandsCard))]
     public partial bool HasIntelligenceAccess { get; set; }
 
     [ObservableProperty]
@@ -174,6 +236,13 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
     [ObservableProperty]
     public partial string UnlimitedAccountsSubtitleText { get; set; } = string.Empty;
+
+    /// <summary>The App Store price line for Wino Intelligence; empty outside App Store builds or until StoreKit answers.</summary>
+    [ObservableProperty]
+    public partial string AppStoreAiPackPriceText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string AppStoreUnlimitedAccountsPriceText { get; set; } = string.Empty;
 
     /// <summary>
     /// Shown when this device has a Microsoft Store Unlimited Accounts purchase that the signed-in
@@ -299,9 +368,8 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     }
 
     /// <summary>
-    /// Builds the four signed-out offers. Every call to action starts with sign-in,
-    /// including the two add-ons: a purchase cannot begin without an authenticated Wino
-    /// Account, which is what <see cref="PurchaseAddOnAsync"/> enforces anyway.
+    /// Builds the four signed-out offers. Every call to action starts with sign-in, except Unlimited Accounts on
+    /// App Store builds: the App Store sells it without a Wino Account, and it can be redeemed onto one later.
     /// </summary>
     private void SeedBenefits()
     {
@@ -379,7 +447,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             ],
             Translator.WinoAccount_Management_Benefit_Unlimited_Cta,
             WinoIconGlyph.BenefitUnlimitedAccounts)
-        { CtaCommand = SignInCommand });
+        { CtaCommand = IsAppStoreAvailable ? PurchaseUnlimitedAccountsFromAppStoreCommand : SignInCommand });
 
         SelectedBenefit = Benefits[0];
     }
@@ -576,16 +644,30 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         }
 
         WinoAccount? authenticatedAccount;
-        try
+        if (addOn.ProductType == WinoAddOnProductType.AI_PACK)
         {
-            authenticatedAccount = await _profileService.GetAuthenticatedAccountAsync().ConfigureAwait(false);
+            // Still on the UI thread here: Wino Intelligence has no channel picker, so the sign-in dialog can open.
+            authenticatedAccount = await WinoIntelligenceCheckout.EnsureSignedInAsync(_profileService, _dialogService);
+            if (authenticatedAccount == null)
+                return;
+
+            if (_snapshotService != null &&
+                (await _snapshotService.RefreshEntitlementAsync().ConfigureAwait(false)).CanAccessSurfaces)
+                return;
         }
-        catch (WinoAccountApiException ex)
+        else
         {
-            _dialogService.InfoBarMessage(Translator.GeneralTitle_Error,
-                                          WinoAccountApiErrorTranslator.Translate(ex.ErrorCode),
-                                          InfoBarMessageType.Error);
-            return;
+            try
+            {
+                authenticatedAccount = await _profileService.GetAuthenticatedAccountAsync().ConfigureAwait(false);
+            }
+            catch (WinoAccountApiException ex)
+            {
+                _dialogService.InfoBarMessage(Translator.GeneralTitle_Error,
+                                              WinoAccountApiErrorTranslator.Translate(ex.ErrorCode),
+                                              InfoBarMessageType.Error);
+                return;
+            }
         }
 
         if (authenticatedAccount == null)
@@ -644,6 +726,24 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         }
     }
 
+    [RelayCommand]
+    private async Task GetWinoIntelligenceAsync()
+    {
+        if (IsAppStoreAvailable || _snapshotService == null)
+        {
+            await PurchaseAddOnAsync(_aiPackAddOn);
+            return;
+        }
+
+        var outcome = await WinoIntelligenceCheckout.StartAsync(_profileService, _dialogService, _billingService, _snapshotService);
+        if (outcome == WinoIntelligenceCheckoutOutcome.CheckoutOpened)
+        {
+            _dialogService.InfoBarMessage(Translator.GeneralTitle_Info,
+                                          Translator.WinoAccount_Management_CheckoutOpened,
+                                          InfoBarMessageType.Information);
+        }
+    }
+
     private bool CanPurchaseAddOn(WinoAddOnItemViewModel? addOn)
         => IsPurchaseAvailable && addOn != null && !addOn.IsPurchased && !addOn.IsLoading && !IsCheckoutInProgress;
 
@@ -651,6 +751,14 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     public bool IsPurchaseAvailable => _platformCapabilities.Purchases;
 
     private bool IsAppStoreAvailable => _platformCapabilities.AppleAppStore && _appStorePurchases?.IsAvailable == true;
+
+    /// <summary>The build sells add-ons through the App Store, which shows prices and subscription terms in the app.</summary>
+    public bool UsesAppStorePurchases => _platformCapabilities.AppleAppStore;
+
+    /// <summary>App Store builds call the refresh "Restore Purchases", the wording App Review looks for.</summary>
+    public string RefreshPurchasesText => _platformCapabilities.AppleAppStore
+        ? Translator.WinoAccount_Management_RestorePurchases
+        : Translator.WinoAccount_Management_RefreshPurchases;
 
     /// <summary>
     /// App Store builds offer other channels only where Apple allows it (the United States storefront);
@@ -664,6 +772,10 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
 
         return await _dialogService.ShowUnlimitedAccountsPurchaseChannelDialogAsync();
     }
+
+    [RelayCommand]
+    private Task PurchaseUnlimitedAccountsFromAppStoreAsync()
+        => IsCheckoutInProgress ? Task.CompletedTask : PurchaseFromAppStoreAsync(_unlimitedAccountsAddOn);
 
     private async Task PurchaseFromAppStoreAsync(WinoAddOnItemViewModel addOn)
     {
@@ -731,6 +843,40 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     {
         if (HasIntelligenceAccess)
             Messenger.Send(new SettingsRootNavigationRequested(WinoPage.WinoIntelligencePage));
+    }
+
+    /// <summary>The Wino Intelligence page explains the subscription, so it opens with or without access.</summary>
+    [RelayCommand]
+    private void OpenIntelligencePage()
+        => Messenger.Send(new SettingsRootNavigationRequested(WinoPage.WinoIntelligencePage));
+
+    [RelayCommand]
+    private void OpenVoiceControl()
+    {
+        if (IsVoiceControlAvailable)
+            Messenger.Send(new BreadcrumbNavigationRequested(SettingsCatalog.Title(WinoPage.VoiceControlSettingsPage), WinoPage.VoiceControlSettingsPage));
+    }
+
+    [RelayCommand(CanExecute = nameof(CanManageSubscription))]
+    private async Task ManageSubscriptionAsync()
+    {
+        try
+        {
+            if (await _billingService.OpenCustomerPortalAsync().ConfigureAwait(false))
+                return;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            _logger?.CaptureException(exception, nameof(ManageSubscriptionAsync));
+        }
+
+        _dialogService.InfoBarMessage(Translator.GeneralTitle_Error,
+                                      Translator.WinoAccount_Management_ManageSubscriptionFailed,
+                                      InfoBarMessageType.Error);
     }
 
     /// <summary>
@@ -1144,6 +1290,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     {
         if (IsAppStoreAvailable && _appStorePurchases is not null)
         {
+            await RefreshAppStorePricesAsync(_appStorePurchases, session).ConfigureAwait(false);
             await RefreshAppStoreRedeemCandidateAsync(_appStorePurchases, session).ConfigureAwait(false);
             return;
         }
@@ -1174,6 +1321,24 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     /// The service returns no candidate when signed out, when the account already has the add-on, or when
     /// the user already tried that purchase.
     /// </summary>
+    private async Task RefreshAppStorePricesAsync(IWinoAppStorePurchaseService appStorePurchases, WinoAccountSession? session)
+    {
+        var cancellationToken = session?.CancellationToken ?? default;
+        string? aiPackPrice, unlimitedPrice;
+        try
+        {
+            aiPackPrice = await appStorePurchases.GetDisplayPriceAsync(WinoAddOnProductType.AI_PACK, cancellationToken).ConfigureAwait(false);
+            unlimitedPrice = await appStorePurchases.GetDisplayPriceAsync(WinoAddOnProductType.UNLIMITED_ACCOUNTS, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { return; }
+
+        await ApplySessionUIAsync(session, () =>
+        {
+            AppStoreAiPackPriceText = aiPackPrice is null ? string.Empty : string.Format(Translator.WinoAccount_Management_AiPackAppStorePrice, aiPackPrice);
+            AppStoreUnlimitedAccountsPriceText = unlimitedPrice is null ? string.Empty : string.Format(Translator.WinoAccount_Management_UnlimitedAppStorePrice, unlimitedPrice);
+        });
+    }
+
     private async Task RefreshAppStoreRedeemCandidateAsync(IWinoAppStorePurchaseService appStorePurchases, WinoAccountSession? session)
     {
         var hasCandidate = false;
@@ -1313,6 +1478,8 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             _unlimitedAccountsAddOn.IsLoading = false;
             ApplyAccountUsage(localAccounts.Count, hasUnlimitedAccounts);
             var entitlement = ResolveEntitlement(snapshot);
+            _entitlementState = entitlement.State;
+            _aiPackBilling = aiPack;
             _aiPackAddOn.IsPurchased = entitlement.CanAccessSurfaces;
             _aiPackAddOn.IsLoading = false;
             _aiPackAddOn.ErrorText = string.Empty;
@@ -1329,6 +1496,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             ApplyIntelligenceUsage(usage);
             IntelligenceResetText = usage?.ResetsAtUtc is DateTimeOffset reset ? string.Format(Translator.WinoAccount_Management_IntelligenceResets, reset.LocalDateTime) : string.Empty;
             IntelligenceMailboxesSummary = DescribeBriefingMailboxes(mailboxItems);
+            MailClassificationSummary = DescribeMailClassification(mailboxItems);
             IntelligenceLastUpdatedText = snapshot.LastSuccessfulRefreshUtc is DateTimeOffset updated ? updated.LocalDateTime.ToString("g") : string.Empty;
             IntelligenceRefreshError = string.IsNullOrWhiteSpace(refreshError) ? string.Empty : string.Format(
                 Translator.WinoIntelligence_CachedRefreshFailed,
@@ -1367,6 +1535,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         await ExecuteUIThread(() =>
         {
             IsSignedIn = false;
+            _entitlementState = WinoIntelligenceEntitlementState.SignedOut;
             PurchaseStatusMessage = string.Empty;
             AccountEmail = string.Empty;
             ApplyProfileEditor(null);
@@ -1397,6 +1566,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
             ResetAddOnItem(_unlimitedAccountsAddOn);
             AiPackBillingPeriodText = string.Empty;
             AiPackRenewalOrCancellationText = string.Empty;
+            _aiPackBilling = null;
             ApplySubtitleTexts();
             PurchaseAddOnCommand.NotifyCanExecuteChanged();
         });
@@ -1446,6 +1616,122 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         UnlimitedAccountsSubtitleText = _unlimitedAccountsAddOn.IsPurchased
             ? Translator.WinoAccount_Management_UnlimitedOwnedSubtitle
             : string.Format(Translator.WinoAccount_Management_UnlimitedUnownedSubtitle, Constants.FreeAccountLimit);
+
+        ApplySubscriptionTexts();
+    }
+
+    private void ApplySubscriptionTexts()
+    {
+        var aiPack = _aiPackBilling;
+        var isActive = _aiPackAddOn.IsPurchased;
+        var isEnded = !isActive && _entitlementState == WinoIntelligenceEntitlementState.Expired;
+        var endedAt = aiPack?.CurrentPeriodEndUtc;
+
+        IsAiPackEnded = isEnded;
+        IsAiPackNotActive = !isActive && !isEnded && !_aiPackAddOn.IsLoading;
+
+        AiPackStatusText = _aiPackAddOn.IsLoading ? Translator.WinoAccount_Management_AiPackCheckingSubtitle
+            : isActive ? DescribeActiveSubscription(aiPack)
+            : isEnded && endedAt is DateTimeOffset ended ? string.Format(Translator.WinoAccount_Management_AiPackEndedSubtitle, ended.LocalDateTime)
+            : Translator.WinoAccount_Management_AiPackNotActiveSubtitle;
+
+        SubscriptionEndedText = isEnded && endedAt is DateTimeOffset endedOn
+            ? string.Format(Translator.WinoIntelligence_SubscriptionEndedInfo, endedOn.LocalDateTime)
+            : string.Empty;
+
+        SubscriptionRenewalLine = isActive ? DescribeRenewalLine(aiPack) : string.Empty;
+
+        var exhaustedNames = IntelligenceUsageItems.Where(item => item.IsExhausted).Select(item => item.DisplayName).ToArray();
+        var resetsAt = _usageResetsAtUtc ?? aiPack?.CurrentPeriodEndUtc;
+        ExhaustedBucketsText = isActive && exhaustedNames.Length > 0 && resetsAt is DateTimeOffset resets
+            ? string.Format(Translator.WinoIntelligence_QuotaExhaustedInfo, string.Join(", ", exhaustedNames), resets.LocalDateTime)
+            : string.Empty;
+        HasExhaustedBuckets = !string.IsNullOrEmpty(ExhaustedBucketsText);
+
+        IsLimitReached = isActive &&
+            (exhaustedNames.Length > 0 || _entitlementState == WinoIntelligenceEntitlementState.QuotaExhausted);
+
+        CanManageSubscription = isActive &&
+            !_platformCapabilities.AppleAppStore &&
+            !string.Equals(aiPack?.Source, AiPackBillingSources.AppStore, StringComparison.OrdinalIgnoreCase);
+
+        var assistantUsage = IntelligenceUsageItems.FirstOrDefault(item => item.Bucket == IntelligenceUsage.AssistantBucket);
+        var voiceUsage = IntelligenceUsageItems.FirstOrDefault(item => item.Bucket == IntelligenceUsage.VoiceBucket);
+        VoiceUsageText = (assistantUsage, voiceUsage) switch
+        {
+            ({ } requests, { } spoken) => string.Format(Translator.WinoIntelligence_Voice_UsageDescription, requests.Used, requests.Limit, spoken.Used, spoken.Limit),
+            ({ } requests, null) => string.Format(Translator.WinoIntelligence_Voice_RequestsDescription, requests.Used, requests.Limit),
+            (null, { } spoken) => string.Format(Translator.WinoIntelligence_Voice_SpokenDescription, spoken.Used, spoken.Limit),
+            _ => Translator.WinoIntelligence_Voice_Description
+        };
+
+        ApplyOfferPerks();
+        ApplyCtaTexts();
+    }
+
+    private static string DescribeActiveSubscription(AiPackBillingStatusDto? aiPack)
+    {
+        if (aiPack?.CancelAtPeriodEnd == true && aiPack.CurrentPeriodEndUtc is DateTimeOffset cancelsAt)
+            return string.Format(Translator.WinoAccount_Management_AiPackCancelsSubtitle, cancelsAt.LocalDateTime);
+
+        return aiPack?.RenewsAtUtc is DateTimeOffset renewsAt
+            ? string.Format(Translator.WinoAccount_Management_AiPackActiveSubtitle, renewsAt.LocalDateTime)
+            : Translator.WinoAccount_Management_AiPackActiveNoDateSubtitle;
+    }
+
+    private string DescribeRenewalLine(AiPackBillingStatusDto? aiPack)
+    {
+        if (aiPack?.CancelAtPeriodEnd == true && aiPack.CurrentPeriodEndUtc is DateTimeOffset cancelsAt)
+            return string.Format(Translator.WinoIntelligence_CancelsAndUsageUntilThen, cancelsAt.LocalDateTime);
+
+        if (aiPack?.RenewsAtUtc is not DateTimeOffset renewsAt)
+            return IntelligenceResetText;
+
+        if (_usageResetsAtUtc is not DateTimeOffset resetsAt || resetsAt.LocalDateTime.Date == renewsAt.LocalDateTime.Date)
+            return string.Format(Translator.WinoIntelligence_RenewalAndResetSameDay, renewsAt.LocalDateTime);
+
+        return string.Format(Translator.WinoIntelligence_RenewalAndResetDifferentDays, renewsAt.LocalDateTime, resetsAt.LocalDateTime);
+    }
+
+    private void ApplyOfferPerks()
+    {
+        var perks = IntelligenceOfferCatalog.CreatePerks();
+        for (var index = 0; index < perks.Length; index++)
+        {
+            var perk = perks[index];
+            var usage = string.IsNullOrEmpty(perk.Bucket)
+                ? null
+                : IntelligenceUsageItems.FirstOrDefault(item => item.Bucket == perk.Bucket);
+
+            if (usage is not null)
+                perks[index] = perk with { TrailingText = usage.Value };
+        }
+
+        if (OfferPerks.Count != perks.Length)
+        {
+            OfferPerks.Clear();
+            foreach (var perk in perks)
+                OfferPerks.Add(perk);
+
+            return;
+        }
+
+        for (var index = 0; index < perks.Length; index++)
+        {
+            if (OfferPerks[index] != perks[index])
+                OfferPerks[index] = perks[index];
+        }
+    }
+
+    private void ApplyCtaTexts()
+    {
+        IntelligenceCtaTitle = IsSignedIn
+            ? string.Format(Translator.WinoIntelligence_Cta_SignedIn_Title, AccountEmail)
+            : Translator.WinoIntelligence_Cta_SignedOut_Title;
+
+        IntelligenceCtaButtonText = IsAiPackEnded
+            ? Translator.WinoIntelligence_Cta_Renew
+            : Translator.WinoAccount_Management_AiPackGetButton;
     }
 
     private static void ResetAddOnItem(WinoAddOnItemViewModel addOn)
@@ -1492,6 +1778,8 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
                         DateTimeOffset.UtcNow,
                         isFreshBilling: true)
                     : WinoIntelligenceEntitlementSnapshot.SignedOut(DateTimeOffset.UtcNow);
+                _entitlementState = entitlement.State;
+                _aiPackBilling = aiPack;
                 _aiPackAddOn.IsPurchased = entitlement.CanAccessSurfaces;
                 hasIntelligenceAccess = _aiPackAddOn.IsPurchased;
                 HasIntelligenceAccess = hasIntelligenceAccess;
@@ -1595,7 +1883,9 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
                 ? string.Format(Translator.WinoAccount_Management_IntelligenceResets, resetsAtUtc.LocalDateTime)
                 : string.Empty;
             IntelligenceMailboxesSummary = DescribeBriefingMailboxes(mailboxItems);
+            MailClassificationSummary = DescribeMailClassification(mailboxItems);
             IntelligenceDataError = mailboxError;
+            ApplySubscriptionTexts();
             if (consent != null)
                 ApplyIntelligenceConsent(consent);
             else
@@ -1674,6 +1964,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         }
 
         IsIntelligenceUsageAvailable = items.Count > 0;
+        _usageResetsAtUtc = usage?.ResetsAtUtc;
 
         var headline = IntelligenceUsage.Headline(usage);
         IntelligenceUsagePercentage = headline?.Percentage ?? 0;
@@ -1693,6 +1984,7 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
         IntelligenceUsageSummary = string.Empty;
         IntelligenceResetText = string.Empty;
         IntelligenceMailboxesSummary = string.Empty;
+        MailClassificationSummary = string.Empty;
         IntelligenceConsentStatusText = string.Empty;
         IsConsentGranted = false;
         IsConsentBusy = false;
@@ -1721,7 +2013,9 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     {
         var canAccess = entitlement.CanAccessSurfaces;
         HasIntelligenceAccess = canAccess;
+        _entitlementState = entitlement.State;
         _aiPackAddOn.IsPurchased = canAccess;
+        ApplySubtitleTexts();
         PurchaseAddOnCommand.NotifyCanExecuteChanged();
     }
 
@@ -1741,6 +2035,12 @@ public partial class WinoAccountManagementPageViewModel : CoreBaseViewModel,
     private static bool IsCurrentIntelligenceConsent(IntelligenceConsentDto consent)
         => consent.Status == ConsentStatuses.Active &&
            consent.AcceptedPolicyVersion == consent.CurrentPolicyVersion;
+
+    private static string DescribeMailClassification(IReadOnlyCollection<IntelligenceMailboxData> mailboxes)
+        => string.Format(
+            Translator.WinoIntelligence_MailClassification_Summary,
+            mailboxes.Count(mailbox => mailbox.IsEnabled),
+            mailboxes.Count);
 
     private static string DescribeBriefingMailboxes(IReadOnlyCollection<IntelligenceMailboxData> mailboxes)
         => string.Format(

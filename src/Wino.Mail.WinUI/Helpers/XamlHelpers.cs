@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -103,6 +104,14 @@ public static class XamlHelpers
 
     public static Brush GetSelectionBorderBrush(bool isSelected)
         => GetThemeBrush(isSelected ? "AccentFillColorDefaultBrush" : "CardStrokeColorDefaultBrush");
+
+    public static Brush GetRemoteContentPolicyBrush(RemoteContentSenderPolicy? policy) => GetThemeBrush(policy switch
+    {
+        RemoteContentSenderPolicy.LoadEverything => "SystemFillColorSuccessBrush",
+        RemoteContentSenderPolicy.ImagesOnly => "SystemFillColorCautionBrush",
+        RemoteContentSenderPolicy.Block => "SystemFillColorCriticalBrush",
+        _ => "SubtleFillColorTransparentBrush"
+    });
 
     public static int GetManagementCardSpan(bool isProviderAvailable) => isProviderAvailable ? 1 : 2;
 
@@ -238,6 +247,26 @@ public static class XamlHelpers
     public static bool GetGravatarEnabled() => PreferencesService?.IsGravatarEnabled ?? true;
     public static bool GetFaviconEnabled() => PreferencesService?.IsFaviconEnabled ?? true;
 
+    public static string GetPrivacyMenuItemHint(string? hint)
+        => string.IsNullOrEmpty(hint) ? string.Empty : $"  {hint}";
+
+    /// <summary>
+    /// The sender's name, followed by the address when the privacy setting asks to always show it,
+    /// so a forged display name is easier to spot.
+    /// </summary>
+    public static string GetSenderDisplayName(string? fromName, string? fromAddress)
+    {
+        if (PreferencesService?.AlwaysShowSenderAddress != true ||
+            string.IsNullOrWhiteSpace(fromName) ||
+            string.IsNullOrWhiteSpace(fromAddress) ||
+            string.Equals(fromName.Trim(), fromAddress.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return fromName ?? string.Empty;
+        }
+
+        return $"{fromName} <{fromAddress}>";
+    }
+
     /// <summary>
     /// Every shell pane draws account identity at one size, so a row reads the same
     /// in mail, contacts and tasks.
@@ -299,6 +328,24 @@ public static class XamlHelpers
     /// </summary>
     public static object GetRowContactPicture(object? sourceItem)
         => GetContactPicture(sourceItem as IMailItemDisplayInformation);
+
+    public static object GetThreadHeadContactPicture(IReadOnlyList<IMailListSourceItem>? leaves, object? sourceItem)
+        => GetContactPicture(GetThreadHeadParty(leaves, sourceItem) ?? sourceItem as IMailItemDisplayInformation);
+
+    /// <summary>
+    /// The sender a thread head shows in place of its newest mail's sender, or null when that mail's own
+    /// sender is the right one.
+    /// </summary>
+    public static string? GetThreadHeadSender(IReadOnlyList<IMailListSourceItem>? leaves, object? sourceItem)
+        => GetThreadHeadParty(leaves, sourceItem)?.FromName;
+
+    private static MailItemViewModel? GetThreadHeadParty(IReadOnlyList<IMailListSourceItem>? leaves, object? sourceItem)
+    {
+        if (leaves is null) return null;
+
+        var party = Wino.Mail.ViewModels.Collections.MailRowPresentation.DisplayParty(leaves.OfType<MailItemViewModel>());
+        return party is null || ReferenceEquals(party, sourceItem) ? null : party;
+    }
 
     public static object GetContactPicture(IContactDisplayItem? item)
         => item is null
@@ -633,6 +680,9 @@ public static class XamlHelpers
 
         if (groupObject is string stringObject)
             return stringObject;
+
+        if (groupObject is global::Wino.Mail.Controls.Core.MailListDateBucket dateBucket)
+            return global::Wino.Mail.ViewModels.Collections.MailRowPresentation.DateBucketTitle(dateBucket);
 
         object? dateObject = null;
 

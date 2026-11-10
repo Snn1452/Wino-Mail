@@ -19,6 +19,10 @@ public sealed partial class MailListItemTemplates
         InitializeComponent();
     }
 
+    [DynamicWindowsRuntimeCast(typeof(DependencyObject))]
+    private void ThreadSenderTextLoaded(object sender, RoutedEventArgs e)
+        => Wino.Helpers.MailRowSender.ApplyFrom((DependencyObject)sender);
+
     [DynamicWindowsRuntimeCast(typeof(ContentPresenter))]
     private void ThreadChevronLoaded(object sender, RoutedEventArgs e)
     {
