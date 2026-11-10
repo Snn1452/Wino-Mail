@@ -587,50 +587,119 @@ jobs:
           MSIXBundle SHA-256: $bundleHash
           Test certificate SHA-256: $certificateHash
           "@ | Set-Content -LiteralPath $notes -Encoding utf8
-          # Only decide whether to skip an existing publication after all artifact provenance
-          # and SHA-256 checks above have passed. Never replace existing Release assets or move tags.
-          $existingJson = gh release view $tag --json assets,tagName 2>$null
-          $releaseExitCode = $LASTEXITCODE
-          $global:LASTEXITCODE = 0
+          # Existing versions are updated in place, matching the established Beta publishing behavior.
+          # Before mutating an existing Release, prove its tag can be safely fast-forwarded to this commit.
+          $releaseResponse = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
+          $releaseQueryExitCode = $LASTEXITCODE
+          $releaseExists = $false
+          $existing = $null
 
-          if ($releaseExitCode -eq 0) {
-            $existing = $existingJson | ConvertFrom-Json
-            $tagInfoJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
-            if ($LASTEXITCODE -ne 0) { throw "Release '$tag' exists but its tag cannot be verified; refusing to modify it." }
-            $tagInfo = $tagInfoJson | ConvertFrom-Json
-            if ([string]$tagInfo.object.type -cne 'commit' -or [string]$tagInfo.object.sha -cne $env:COMMIT_SHA) {
-              Write-Warning "Beta version $version is already published from commit $($tagInfo.object.sha). The validated commit $env:COMMIT_SHA will not replace or move that Release. Increment Package.appxmanifest to publish a new version."
-              exit 0
-            }
-
-            $assetNames = @($existing.assets | ForEach-Object { [string]$_.name })
-            if (-not ($assetNames -ccontains "WinoMail_Beta_$version.msixbundle") -or
-                -not ($assetNames -ccontains 'WinoMail_Beta_TestCertificate.cer')) {
-              throw "Release '$tag' is missing expected assets for its own commit; refusing to overwrite or repair an existing publication."
-            }
-
-            Write-Host "Release '$tag' already points to verified commit $env:COMMIT_SHA and has the expected assets. All new-artifact checks passed; skipping duplicate publication without modifying the Release."
-            exit 0
-          }
-
-          # A pre-existing tag may be used only if it already points to this exact commit.
-          # Never create, move, or overwrite a tag as a side effect of publication.
-          $remoteTag = git ls-remote --refs origin "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0) { throw "Could not check whether tag '$tag' already exists; refusing to publish." }
-          if ($remoteTag) {
-            $remoteTagSha = (($remoteTag.Trim() -split '\s+')[0])
-            if ($remoteTagSha -cne $env:COMMIT_SHA) {
-              throw "Tag '$tag' already exists at $remoteTagSha, not $env:COMMIT_SHA; refusing to overwrite the tag."
+          if ($releaseQueryExitCode -eq 0) {
+            $existing = ($releaseResponse -join "`n") | ConvertFrom-Json
+            $releaseExists = $true
+          } else {
+            $releaseQueryError = $releaseResponse | Out-String
+            if ($releaseQueryError -notmatch '(?i)HTTP 404|Not Found') {
+              throw "Could not determine whether Release '$tag' exists: $releaseQueryError"
             }
           }
 
-          # The branch may have advanced during artifact validation or tag inspection.
-          # Re-check immediately before the only Release-creation operation.
+          # Re-check the branch before any Release or asset mutation.
           $finalBranchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
           if ($LASTEXITCODE -ne 0) { throw 'Could not re-check integration branch head before publication; refusing to publish.' }
           if ($finalBranchHead -cne $env:COMMIT_SHA) {
-            throw "Commit $env:COMMIT_SHA became stale before publication; current branch head is $finalBranchHead. Refusing to create a Release."
+            throw "Commit $env:COMMIT_SHA became stale before publication; current branch head is $finalBranchHead. Refusing to publish."
           }
 
-          gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
-          if ($LASTEXITCODE -ne 0) { throw "Failed to create versioned Release '$tag'; existing tags and Release assets were not overwritten." }
+          if ($releaseExists) {
+            $tagRefJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Release '$tag' exists but its tag cannot be read; refusing to modify its assets or metadata. $($tagRefJson | Out-String)" }
+            $tagInfo = ($tagRefJson -join "`n") | ConvertFrom-Json
+            if ([string]$tagInfo.object.type -cne 'commit') {
+              throw "Release tag '$tag' is not a direct commit reference; refusing to rewrite it."
+            }
+
+            $existingTagSha = [string]$tagInfo.object.sha
+            if ($existingTagSha -cne $env:COMMIT_SHA) {
+              $comparisonStatus = gh api "repos/$env:GITHUB_REPOSITORY/compare/$existingTagSha...$env:COMMIT_SHA" --jq .status
+              if ($LASTEXITCODE -ne 0) { throw "Could not verify whether Release tag '$tag' can be fast-forwarded to $env:COMMIT_SHA." }
+              if ($comparisonStatus -cnotin @('ahead', 'identical')) {
+                throw "Release tag '$tag' points to $existingTagSha, which is not an ancestor of $env:COMMIT_SHA (comparison: $comparisonStatus). No Release assets, metadata, or tag were changed. Increment the package version or reconcile the branch history first."
+              }
+            }
+
+            $bundleAsset = $existing.assets | Where-Object { $_.name -ceq $bundle.Name } | Select-Object -First 1
+            $certificateAsset = $existing.assets | Where-Object { $_.name -ceq $certificate.Name } | Select-Object -First 1
+            $bundleAssetDigest = [string]$bundleAsset.digest
+            $certificateAssetDigest = [string]$certificateAsset.digest
+            $expectedBundleDigest = "sha256:$bundleHash"
+            $expectedCertificateDigest = "sha256:$certificateHash"
+
+            $assetsToUpload = @()
+            if (-not $bundleAsset -or $bundleAssetDigest -cne $expectedBundleDigest) {
+              $assetsToUpload += $bundle.FullName
+            }
+            if (-not $certificateAsset -or $certificateAssetDigest -cne $expectedCertificateDigest) {
+              $assetsToUpload += $certificate.FullName
+            }
+
+            if ($assetsToUpload.Count -gt 0) {
+              gh release upload $tag @assetsToUpload --clobber
+              if ($LASTEXITCODE -ne 0) { throw "Failed to update existing Release '$tag' assets." }
+            } else {
+              Write-Host "Release '$tag' already has both assets with the expected SHA-256 digests."
+            }
+
+            # Verify the uploaded/reused assets before changing Release notes or its tag.
+            $updatedReleaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+            if ($LASTEXITCODE -ne 0) { throw "Could not verify updated Release '$tag'." }
+            $updatedRelease = $updatedReleaseJson | ConvertFrom-Json
+            $updatedBundle = $updatedRelease.assets | Where-Object { $_.name -ceq $bundle.Name } | Select-Object -First 1
+            $updatedCertificate = $updatedRelease.assets | Where-Object { $_.name -ceq $certificate.Name } | Select-Object -First 1
+            if ([string]$updatedBundle.digest -cne $expectedBundleDigest -or
+                [string]$updatedCertificate.digest -cne $expectedCertificateDigest) {
+              throw "Release '$tag' asset digests do not match the validated artifact; refusing to update Release metadata or tag."
+            }
+
+            gh release edit $tag --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update existing Release '$tag' metadata." }
+
+            # Preserve the old fast-forward-only tag behavior. Never force-move a tag.
+            if ($existingTagSha -cne $env:COMMIT_SHA) {
+              $branchHeadBeforeTagUpdate = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
+              if ($LASTEXITCODE -ne 0 -or $branchHeadBeforeTagUpdate -cne $env:COMMIT_SHA) {
+                throw "Integration branch advanced while updating Release '$tag'; refusing to move its tag to a stale commit."
+              }
+
+              gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" -f "sha=$env:COMMIT_SHA" -F force=false
+              if ($LASTEXITCODE -ne 0) { throw "Could not fast-forward existing Release tag '$tag' to $env:COMMIT_SHA." }
+              $updatedTagJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+              if ($LASTEXITCODE -ne 0) { throw "Could not verify the updated Release tag '$tag'." }
+              $updatedTag = $updatedTagJson | ConvertFrom-Json
+              if ([string]$updatedTag.object.type -cne 'commit' -or [string]$updatedTag.object.sha -cne $env:COMMIT_SHA) {
+                throw "Release tag '$tag' did not resolve to $env:COMMIT_SHA after the fast-forward update."
+              }
+            }
+
+            Write-Host "Updated existing Beta Release '$tag' assets and metadata from verified commit $env:COMMIT_SHA."
+          } else {
+            # A tag without a Release is occupied; do not silently reuse or move it.
+            $tagCheck = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1
+            $tagCheckExitCode = $LASTEXITCODE
+            if ($tagCheckExitCode -eq 0) {
+              throw "Tag '$tag' already exists without a Release. Refusing to reuse or move it."
+            }
+            $tagCheckError = $tagCheck | Out-String
+            if ($tagCheckError -notmatch '(?i)HTTP 404|Not Found') {
+              throw "Could not determine whether tag '$tag' exists: $tagCheckError"
+            }
+
+            # Re-check immediately before creating a new Release.
+            $finalBranchHead = gh api "repos/$env:GITHUB_REPOSITORY/commits/integration/msix-release-upstream-main" --jq .sha
+            if ($LASTEXITCODE -ne 0 -or $finalBranchHead -cne $env:COMMIT_SHA) {
+              throw "Commit $env:COMMIT_SHA is no longer the current integration branch head; refusing to create Release '$tag'."
+            }
+
+            gh release create $tag $bundle.FullName $certificate.FullName --target $env:COMMIT_SHA --title "Wino Mail Beta $version" --notes-file $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create versioned Release '$tag'." }
+          }
