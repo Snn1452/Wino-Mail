@@ -8,10 +8,10 @@ namespace Wino.NotificationHost.Tests;
 public sealed class NotificationHostIdentityTests
 {
     [Theory]
-    [InlineData("family!MailNotificationHost", NotificationHostApplication.Mail)]
-    [InlineData("family!CalendarNotificationHost", NotificationHostApplication.Calendar)]
-    [InlineData("family!PeopleNotificationHost", NotificationHostApplication.People)]
-    [InlineData("family!ToDoNotificationHost", NotificationHostApplication.Tasks)]
+    [InlineData("family!App", NotificationHostApplication.Mail)]
+    [InlineData("family!CalendarApp", NotificationHostApplication.Calendar)]
+    [InlineData("family!ContactsApp", NotificationHostApplication.People)]
+    [InlineData("family!ToDoApp", NotificationHostApplication.Tasks)]
     public void ResolveFromAppUserModelId_MapsKnownHost(string value, NotificationHostApplication expected)
     {
         NotificationHostApplicationIds.TryResolveFromAppUserModelId(value, out var actual).Should().BeTrue();
